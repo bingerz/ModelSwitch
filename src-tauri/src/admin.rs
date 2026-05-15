@@ -1,0 +1,593 @@
+use crate::channel::{Channel, ChannelStatus, Credential, CredentialType, Provider};
+use crate::log::DispatchLog;
+use crate::middleware::error::ApiError;
+use crate::proxy::openai::AppState;
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use axum::Json;
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::Arc;
+use uuid::Uuid;
+
+#[derive(Debug, Deserialize)]
+pub struct PaginationParams {
+    #[serde(default = "default_offset")]
+    pub offset: usize,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+fn default_offset() -> usize {
+    0
+}
+fn default_limit() -> usize {
+    50
+}
+
+fn default_hours() -> u64 {
+    24
+}
+
+// ─── Channel CRUD ─────────────────────────────────────
+
+pub async fn list_channels(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<Channel>> {
+    let channels = state.channel_mgr.list().await;
+    Json(channels)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateChannelRequest {
+    pub name: String,
+    pub provider: String,
+    #[serde(default = "default_priority")]
+    pub priority: u8,
+    #[serde(default = "default_weight")]
+    pub weight: u32,
+    pub cost_per_token: Option<f64>,
+    #[serde(default = "default_credential_type")]
+    pub credential_type: String,
+    #[serde(default)]
+    pub credential_value: String,
+    pub base_url: String,
+    #[serde(default)]
+    pub model_mapping: HashMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateChannelRequest {
+    pub name: String,
+    pub provider: String,
+    pub priority: u8,
+    pub weight: u32,
+    pub cost_per_token: Option<f64>,
+    pub base_url: String,
+    pub enabled: bool,
+    #[serde(default)]
+    pub model_mapping: HashMap<String, String>,
+    pub cooldown_minutes: Option<u64>,
+    /// If provided, update the stored API key credential
+    #[serde(default)]
+    pub credential_value: Option<String>,
+    pub input_cost_per_mtok: Option<f64>,
+    pub output_cost_per_mtok: Option<f64>,
+    pub rpm_limit: Option<u64>,
+    pub tpm_limit: Option<u64>,
+}
+
+fn default_priority() -> u8 {
+    1
+}
+fn default_weight() -> u32 {
+    100
+}
+fn default_credential_type() -> String {
+    "api_key".to_string()
+}
+
+pub async fn create_channel(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateChannelRequest>,
+) -> Result<axum::response::Response, axum::response::Response> {
+    let cred_type = match req.credential_type.as_str() {
+        "web_session" => CredentialType::WebSession,
+        _ => CredentialType::ApiKey,
+    };
+
+    let id = Uuid::new_v4();
+    let key_ref = format!("{}_{}", req.provider, id);
+
+    // Store credential via CredentialStore abstraction
+    state
+        .credential_store
+        .set("modelswitch", &key_ref, &req.credential_value)
+        .map_err(|e| {
+            tracing::error!("Failed to store credential: {}", e);
+            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to store credential")
+        })?;
+
+    let channel = Channel {
+        id,
+        name: req.name,
+        provider: Provider::from_str(&req.provider),
+        priority: req.priority,
+        weight: req.weight,
+        cost_per_token: req.cost_per_token,
+        input_cost_per_mtok: None,
+        output_cost_per_mtok: None,
+        credential: Credential {
+            cred_type,
+            key_ref,
+            api_key: None,
+            expires_at: None,
+        },
+        enabled: true,
+        status: ChannelStatus::Healthy,
+        circuit_open_until: None,
+        base_url: req.base_url,
+        model_mapping: req.model_mapping,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        avg_latency_ms: 0,
+        consecutive_failures: 0,
+        cooldown_minutes: None,
+        rpm_limit: None,
+        tpm_limit: None,
+    };
+
+    let created = state.channel_mgr.create(channel).await;
+    state.channel_mgr.persist().await;
+    Ok((StatusCode::CREATED, Json(created)).into_response())
+}
+
+pub async fn update_channel(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(req): Json<UpdateChannelRequest>,
+) -> Result<axum::response::Response, axum::response::Response> {
+    let mut existing = state
+        .channel_mgr
+        .get(id)
+        .await
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Channel not found"))?;
+
+    existing.name = req.name;
+    existing.provider = Provider::from_str(&req.provider);
+    existing.priority = req.priority;
+    existing.weight = req.weight;
+    existing.cost_per_token = req.cost_per_token;
+    existing.input_cost_per_mtok = req.input_cost_per_mtok;
+    existing.output_cost_per_mtok = req.output_cost_per_mtok;
+    existing.rpm_limit = req.rpm_limit;
+    existing.tpm_limit = req.tpm_limit;
+    existing.base_url = req.base_url;
+    if !req.enabled && existing.enabled {
+        existing.status = ChannelStatus::Disabled;
+    } else if req.enabled && !existing.enabled {
+        existing.status = ChannelStatus::Healthy;
+    }
+    existing.enabled = req.enabled;
+    existing.model_mapping = req.model_mapping;
+    existing.cooldown_minutes = req.cooldown_minutes;
+    existing.updated_at = chrono::Utc::now();
+
+    // Update credential if a new value is provided
+    if let Some(ref new_key) = req.credential_value {
+        if !new_key.is_empty() {
+            let username = &existing.credential.key_ref;
+            state
+                .credential_store
+                .set("modelswitch", username, new_key)
+                .map_err(|e| {
+                    tracing::error!("Failed to update credential: {}", e);
+                    ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to update credential")
+                })?;
+            tracing::info!(channel = %existing.name, "Credential updated");
+        }
+    }
+
+    let result = state
+        .channel_mgr
+        .update(id, existing)
+        .await;
+
+    match result {
+        Some(channel) => {
+            state.channel_mgr.persist().await;
+            Ok(Json(channel).into_response())
+        }
+        None => Err(ApiError::new(StatusCode::NOT_FOUND, "Channel not found")),
+    }
+}
+
+pub async fn delete_channel(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> axum::response::Response {
+    // Clean up credential before deleting
+    if let Some(channel) = state.channel_mgr.get(id).await {
+        let username = &channel.credential.key_ref;
+        if let Err(e) = state.credential_store.delete("modelswitch", username) {
+            tracing::warn!("Failed to delete credential for {}: {}", username, e);
+        }
+    }
+
+    if state.channel_mgr.delete(id).await {
+        state.quota_store.delete(id).await;
+        state.channel_mgr.persist().await;
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        ApiError::new(StatusCode::NOT_FOUND, "Channel not found")
+    }
+}
+
+// ─── Channel Actions ──────────────────────────────────
+
+pub async fn ping_channel(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<axum::response::Response, axum::response::Response> {
+    let channel = state
+        .channel_mgr
+        .get(id)
+        .await
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Channel not found"))?;
+
+    let api_key = state
+        .channel_mgr
+        .get_credential(id)
+        .await
+        .ok_or_else(|| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to retrieve credential"))?;
+
+    // Use provider-appropriate ping endpoint and auth
+    let (url, auth_headers) = match &channel.provider {
+        Provider::Anthropic => (
+            format!("{}/v1/messages", channel.base_url.trim_end_matches('/')),
+            vec![("x-api-key", api_key.clone()), ("anthropic-version", "2023-06-01".to_string())],
+        ),
+        _ => (
+            format!("{}/v1/models", channel.base_url.trim_end_matches('/')),
+            vec![("Authorization", format!("Bearer {}", api_key))],
+        ),
+    };
+
+    let mut req_builder = state
+        .http_client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10));
+
+    for (key, value) in &auth_headers {
+        req_builder = req_builder.header(*key, value.as_str());
+    }
+
+    let start = std::time::Instant::now();
+    let resp = req_builder.send().await;
+
+    match resp {
+        Ok(r) => {
+            let latency = start.elapsed().as_millis() as u64;
+            let success = r.status().is_success();
+            Ok(Json(serde_json::json!({
+                "success": success,
+                "status": r.status().as_u16(),
+                "latency_ms": latency,
+            })).into_response())
+        }
+        Err(e) => Ok(Json(serde_json::json!({
+            "success": false,
+            "error": e.to_string(),
+        })).into_response()),
+    }
+}
+
+pub async fn channel_status(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<axum::response::Response, axum::response::Response> {
+    let channel = state
+        .channel_mgr
+        .get(id)
+        .await
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Channel not found"))?;
+
+    Ok(Json(serde_json::json!({
+        "id": channel.id,
+        "name": channel.name,
+        "status": channel.status,
+        "enabled": channel.enabled,
+        "circuit_open_until": channel.circuit_open_until,
+    })).into_response())
+}
+
+/// Set payload rules for a channel at runtime.
+pub async fn set_payload_rules(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Json(rules): Json<crate::config::PayloadRulesConfig>,
+) -> Result<axum::response::Response, axum::response::Response> {
+    // Verify channel exists
+    state
+        .channel_mgr
+        .get(id)
+        .await
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Channel not found"))?;
+
+    use crate::proxy::payload_rules::PayloadRules;
+    state.payload_rules.add(id, PayloadRules {
+        defaults: rules.defaults,
+        overrides: rules.overrides,
+        strip: rules.strip,
+    });
+
+    Ok(Json(serde_json::json!({
+        "channel_id": id,
+        "updated": true
+    })).into_response())
+}
+
+// ─── Logs & Stats ─────────────────────────────────────
+
+pub async fn get_logs(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<PaginationParams>,
+) -> Json<Vec<DispatchLog>> {
+    let logs = state.logger.list(params.offset, params.limit).await;
+    Json(logs)
+}
+
+pub async fn get_stats(
+    State(state): State<Arc<AppState>>,
+) -> Json<crate::log::DispatchStats> {
+    let stats = state.logger.stats().await;
+    Json(stats)
+}
+
+pub async fn get_cost_stats(
+    State(state): State<Arc<AppState>>,
+) -> Json<crate::log::CostStats> {
+    let stats = state.logger.cost_stats().await;
+    Json(stats)
+}
+
+pub async fn get_quota(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<crate::quota::QuotaInfo>> {
+    let quotas = state.quota_store.list().await;
+    Json(quotas)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UsageParams {
+    #[serde(default = "default_hours")]
+    pub hours: u64,
+}
+
+pub async fn get_usage_history(
+    Query(params): Query<UsageParams>,
+    State(state): State<Arc<AppState>>,
+) -> Json<crate::log::UsageHistory> {
+    let history = state.logger.usage_history(params.hours).await;
+    Json(history)
+}
+
+// ─── Operational Endpoints ────────────────────────────
+
+/// Reset a channel's circuit breaker, forcing it back to healthy state.
+pub async fn reset_circuit(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<axum::response::Response, axum::response::Response> {
+    let channel = state
+        .channel_mgr
+        .get(id)
+        .await
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Channel not found"))?;
+
+    state.channel_mgr.force_recover(id).await;
+
+    Ok(Json(serde_json::json!({
+        "id": channel.id,
+        "name": channel.name,
+        "status": "healthy",
+        "message": "Circuit breaker reset"
+    })).into_response())
+}
+
+/// Flush all cached responses.
+pub async fn flush_cache(
+    State(state): State<Arc<AppState>>,
+) -> axum::response::Response {
+    state.request_cache.flush();
+    let count = state.request_cache.len();
+    Json(serde_json::json!({
+        "flushed": true,
+        "remaining": count
+    })).into_response()
+}
+
+/// Reload configuration from disk and update channels.
+pub async fn reload_config(
+    State(state): State<Arc<AppState>>,
+) -> axum::response::Response {
+    match crate::config::AppConfig::load() {
+        Ok(new_config) => {
+            let channels = state.channel_mgr.list().await;
+            let mut created = 0u32;
+            let mut updated = 0u32;
+            let mut removed = 0u32;
+
+            // Update or create channels from new config
+            for cc in &new_config.channels {
+                let id = match Uuid::parse_str(&cc.id) {
+                    Ok(id) => id,
+                    Err(_) => continue,
+                };
+
+                if let Some(existing) = state.channel_mgr.get(id).await {
+                    let mut ch = existing;
+                    ch.name = cc.name.clone();
+                    ch.provider = Provider::from_str(&cc.provider);
+                    ch.priority = cc.priority;
+                    ch.weight = cc.weight;
+                    ch.cost_per_token = cc.cost_per_token;
+                    ch.input_cost_per_mtok = cc.input_cost_per_mtok;
+                    ch.output_cost_per_mtok = cc.output_cost_per_mtok;
+                    ch.base_url = cc.base_url.clone();
+                    ch.model_mapping = cc.model_mapping.clone();
+                    ch.enabled = cc.enabled;
+                    ch.cooldown_minutes = cc.cooldown_minutes;
+                    ch.rpm_limit = cc.rpm_limit;
+                    ch.tpm_limit = cc.tpm_limit;
+                    ch.updated_at = chrono::Utc::now();
+                    let _ = state.channel_mgr.update(id, ch).await;
+                    updated += 1;
+                } else {
+                    use crate::channel::{Channel, ChannelStatus, Credential, CredentialType};
+                    let cred_type = match cc.credential_type.as_str() {
+                        "web_session" => CredentialType::WebSession,
+                        _ => CredentialType::ApiKey,
+                    };
+                    let new_channel = Channel {
+                        id,
+                        name: cc.name.clone(),
+                        provider: Provider::from_str(&cc.provider),
+                        priority: cc.priority,
+                        weight: cc.weight,
+                        cost_per_token: cc.cost_per_token,
+                        input_cost_per_mtok: cc.input_cost_per_mtok,
+                        output_cost_per_mtok: cc.output_cost_per_mtok,
+                        credential: Credential {
+                            cred_type,
+                            key_ref: cc.credential_ref.clone(),
+                            api_key: cc.api_key.clone(),
+                            expires_at: None,
+                        },
+                        enabled: cc.enabled,
+                        status: ChannelStatus::Healthy,
+                        circuit_open_until: None,
+                        base_url: cc.base_url.clone(),
+                        model_mapping: cc.model_mapping.clone(),
+                        created_at: chrono::Utc::now(),
+                        updated_at: chrono::Utc::now(),
+                        avg_latency_ms: 0,
+                        consecutive_failures: 0,
+                        cooldown_minutes: cc.cooldown_minutes,
+                        rpm_limit: cc.rpm_limit,
+                        tpm_limit: cc.tpm_limit,
+                    };
+                    let _ = state.channel_mgr.create(new_channel).await;
+                    created += 1;
+                }
+            }
+
+            // Remove channels no longer in config
+            let config_ids: Vec<Uuid> = new_config
+                .channels
+                .iter()
+                .filter_map(|c| Uuid::parse_str(&c.id).ok())
+                .collect();
+            for ch in &channels {
+                if !config_ids.contains(&ch.id) {
+                    state.channel_mgr.delete(ch.id).await;
+                    state.quota_store.delete(ch.id).await;
+                    removed += 1;
+                }
+            }
+
+            // Update rate limits
+            for cc in &new_config.channels {
+                let id = match Uuid::parse_str(&cc.id) {
+                    Ok(id) => id,
+                    Err(_) => continue,
+                };
+                if let Some(rpm) = cc.rpm_limit {
+                    state.rate_limiter.set_channel_rpm_limit(id, rpm);
+                }
+                if let Some(tpm) = cc.tpm_limit {
+                    state.rate_limiter.set_channel_tpm_limit(id, tpm);
+                }
+            }
+
+            tracing::info!("Config reload: {updated} updated, {created} created, {removed} removed");
+            Json(serde_json::json!({
+                "reloaded": true,
+                "updated": updated,
+                "created": created,
+                "removed": removed
+            })).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Config reload failed: {}", e);
+            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to reload config").into_response()
+        }
+    }
+}
+
+/// Receive cookies from the WebView login flow.
+/// The WebView injects JS that POSTs cookies here after login succeeds.
+pub async fn receive_login_cookies(
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    let provider = body.get("provider").and_then(|v| v.as_str()).unwrap_or("");
+    let cookies = body.get("cookies").and_then(|v| v.as_str()).unwrap_or("");
+
+    if cookies.is_empty() {
+        tracing::warn!(provider, "WebView login returned empty cookies");
+        return ApiError::new(StatusCode::BAD_REQUEST, "Empty cookies");
+    }
+
+    tracing::info!(provider, cookie_len = cookies.len(), "Received login cookies from WebView");
+
+    // Store in a temporary file for the frontend to pick up
+    let dir = dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("modelswitch");
+    let _ = std::fs::create_dir_all(&dir);
+    let pending_file = dir.join("pending_cookies.json");
+
+    let data = serde_json::json!({
+        "provider": provider,
+        "cookies": cookies,
+        "received_at": chrono::Utc::now().to_rfc3339(),
+    });
+
+    if let Err(e) = std::fs::write(&pending_file, data.to_string()) {
+        tracing::error!("Failed to write pending cookies: {}", e);
+        return ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to write cookies");
+    }
+    // Restrict file permissions to owner-only (sensitive session cookies)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&pending_file, std::fs::Permissions::from_mode(0o600));
+    }
+
+    StatusCode::OK.into_response()
+}
+
+/// Return the most recent pending cookies from WebView login (one-shot read).
+pub async fn get_pending_cookies() -> Json<Option<serde_json::Value>> {
+    let dir = dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("modelswitch");
+    let pending_file = dir.join("pending_cookies.json");
+
+    if !pending_file.exists() {
+        return Json(None);
+    }
+
+    match std::fs::read_to_string(&pending_file) {
+        Ok(content) => {
+            // Delete after reading (one-shot)
+            let _ = std::fs::remove_file(&pending_file);
+            match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(v) => Json(Some(v)),
+                Err(_) => Json(None),
+            }
+        }
+        Err(_) => Json(None),
+    }
+}

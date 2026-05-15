@@ -1,0 +1,76 @@
+# ModelSwitch Configuration
+# Place at ~/.config/modelswitch/config.toml (or use --config /path/to/config.toml)
+
+[gateway]
+host = "127.0.0.1"
+port = 8080
+routing_strategy = "weighted_random"   # weighted_random | priority | round_robin
+max_retries = 3
+circuit_breaker_minutes = 5
+health_check_enabled = true
+health_check_interval_secs = 60
+drain_timeout_secs = 30
+
+# Credential store: "keyring" (default on desktop) or "file" (for Docker/headless)
+# credential_store = "file"
+
+# Admin API bearer token. Set to protect /api/* endpoints.
+# Also settable via MODELSWITCH_ADMIN_TOKEN env var.
+# admin_token = "your-secret-token"
+
+# Model fallback chains: when a model fails, try alternatives in order
+[gateway.model_fallbacks]
+"gpt-4o" = ["gpt-4o-mini", "gpt-3.5-turbo"]
+"claude-sonnet-4-20250514" = ["claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"]
+
+# ── Channel Definitions ──────────────────────────────────────
+
+# Option A: Inline API key directly in config (simplest, no keychain needed)
+[[channels]]
+id = "openai-primary"
+name = "OpenAI"
+provider = "openai"
+priority = 1
+weight = 100
+credential_type = "api_key"
+credential_ref = "openai_main"
+api_key = "sk-your-openai-key-here"     # Inline — bypasses keyring lookup
+base_url = "https://api.openai.com"
+enabled = true
+
+[channels.model_mapping]
+"gpt-4" = "gpt-4o"
+"gpt-3.5" = "gpt-4o-mini"
+
+# Option B: Use credential store (keyring/file) — api_key omitted, looked up by credential_ref
+[[channels]]
+id = "anthropic-primary"
+name = "Anthropic"
+provider = "anthropic"
+priority = 1
+weight = 100
+credential_type = "api_key"
+credential_ref = "anthropic_main"
+base_url = "https://api.anthropic.com"
+enabled = true
+
+[channels.model_mapping]
+"claude-3" = "claude-sonnet-4-20250514"
+
+[[channels]]
+id = "deepseek-primary"
+name = "DeepSeek"
+provider = "deepseek"
+priority = 2
+weight = 50
+credential_type = "api_key"
+credential_ref = "deepseek_main"
+api_key = "sk-your-deepseek-key-here"   # Inline API key
+base_url = "https://api.deepseek.com"
+enabled = true
+input_cost_per_mtok = 0.14
+output_cost_per_mtok = 0.28
+
+[channels.model_mapping]
+"gpt-4" = "deepseek-chat"
+"gpt-4o" = "deepseek-chat"

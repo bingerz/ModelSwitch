@@ -1,0 +1,27 @@
+[Unit]
+Description=ModelSwitch LLM Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/modelswitch serve --log-format json
+Restart=on-failure
+RestartSec=5
+
+Environment=MODELSWITCH_CREDENTIAL_STORE=file
+Environment=RUST_LOG=info
+Environment=MODELSWITCH_ADMIN_TOKEN=changeme
+
+WorkingDirectory=/etc/modelswitch
+StateDirectory=modelswitch
+LogsDirectory=modelswitch
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/etc/modelswitch /var/lib/modelswitch
+
+[Install]
+WantedBy=multi-user.target

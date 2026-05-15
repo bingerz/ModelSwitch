@@ -1,0 +1,63 @@
+.groupedtimelineinclude
+
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Build outputs
+dist/
+build/
+out/
+.nuxt/
+.next/
+.parcel-cache/
+.cache/
+
+# Rust / Tauri
+target/
+src-tauri/gen/
+src-tauri/target/
+Cargo.lock
+.rustup/
+.cargo/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# System files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# OS specific
+*.local
+.claude/
+
+# Tauri specific
+tauri.conf.json.bak
+src-tauri/.bundle/
+src-tauri/.cargo/

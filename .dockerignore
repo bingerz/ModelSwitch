@@ -1,0 +1,8 @@
+node_modules/
+target/
+reference/
+.git/
+dist/
+src-tauri/target/
+*.md
+.claude/

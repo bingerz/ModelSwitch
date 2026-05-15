@@ -1,0 +1,262 @@
+pub mod watcher;
+
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
+
+/// Per-channel payload rules configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PayloadRulesConfig {
+    #[serde(default)]
+    pub defaults: HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub overrides: HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub strip: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppConfig {
+    pub gateway: GatewayConfig,
+    pub channels: Vec<ChannelConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayConfig {
+    #[serde(default = "default_port")]
+    pub port: u16,
+    #[serde(default = "default_host")]
+    pub host: String,
+    #[serde(default = "default_circuit_breaker_minutes")]
+    pub circuit_breaker_minutes: u64,
+    #[serde(default = "default_max_retries")]
+    pub max_retries: u32,
+    #[serde(default)]
+    pub model_fallbacks: HashMap<String, Vec<String>>,
+    #[serde(default = "default_routing_strategy")]
+    pub routing_strategy: String,
+    #[serde(default = "default_health_check_interval_secs")]
+    pub health_check_interval_secs: u64,
+    #[serde(default = "default_health_check_enabled")]
+    pub health_check_enabled: bool,
+    /// Bearer token for /api/* endpoints. None = no auth. Env MODELSWITCH_ADMIN_TOKEN takes precedence.
+    #[serde(default)]
+    pub admin_token: Option<String>,
+    /// Maximum time (seconds) to wait for in-flight requests during shutdown.
+    #[serde(default = "default_drain_timeout_secs")]
+    pub drain_timeout_secs: u64,
+    /// Per-request timeout in seconds for the dispatch retry loop (default 120).
+    #[serde(default)]
+    pub request_timeout_secs: Option<u64>,
+    /// Streaming keepalive interval in seconds (emit SSE comments to prevent idle timeout).
+    #[serde(default)]
+    pub stream_keepalive_secs: Option<u64>,
+    /// Request cache TTL in seconds (default 300).
+    #[serde(default = "default_cache_ttl_secs")]
+    pub cache_ttl_secs: u64,
+    /// Maximum number of cached responses (default 1000).
+    #[serde(default = "default_max_cache_entries")]
+    pub max_cache_entries: usize,
+    /// HTTP client timeout in seconds (default 300).
+    #[serde(default = "default_http_timeout_secs")]
+    pub http_timeout_secs: u64,
+    /// Session affinity TTL in seconds (default 1800).
+    #[serde(default = "default_affinity_ttl_secs")]
+    pub affinity_ttl_secs: u64,
+    /// Max dispatch log entries to keep in memory (default 1000).
+    #[serde(default = "default_log_max_entries")]
+    pub log_max_entries: usize,
+    /// Quota poller interval in seconds (default 300).
+    #[serde(default = "default_quota_poll_interval_secs")]
+    pub quota_poll_interval_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelConfig {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    #[serde(default = "default_priority")]
+    pub priority: u8,
+    #[serde(default = "default_weight")]
+    pub weight: u32,
+    #[serde(default)]
+    pub cost_per_token: Option<f64>,
+    #[serde(default)]
+    pub input_cost_per_mtok: Option<f64>,
+    #[serde(default)]
+    pub output_cost_per_mtok: Option<f64>,
+    pub credential_type: String,
+    pub credential_ref: String,
+    /// Inline API key (bypasses keyring/credential store lookup).
+    #[serde(default)]
+    pub api_key: Option<String>,
+    pub base_url: String,
+    pub enabled: bool,
+    #[serde(default)]
+    pub model_mapping: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub cooldown_minutes: Option<u64>,
+    #[serde(default)]
+    pub rpm_limit: Option<u64>,
+    #[serde(default)]
+    pub tpm_limit: Option<u64>,
+    #[serde(default)]
+    pub payload_rules: Option<PayloadRulesConfig>,
+    #[serde(default)]
+    pub quota: Option<QuotaConfig>,
+}
+
+/// Per-channel quota polling configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuotaConfig {
+    /// Strategy: "http_api" | "openai_compat" | "jsonpath" | "disabled"
+    #[serde(default)]
+    pub strategy: Option<String>,
+    /// Custom billing endpoint (overrides default per-provider).
+    #[serde(default)]
+    pub balance_url: Option<String>,
+    /// JSONPath to extract balance from response (e.g. "$.data.totalBalance").
+    #[serde(default)]
+    pub balance_path: Option<String>,
+    /// JSONPath to extract limit from response (e.g. "$.data.hard_limit_usd").
+    #[serde(default)]
+    pub limit_path: Option<String>,
+    /// JSONPath to extract usage from response (e.g. "$.data.total_usage").
+    #[serde(default)]
+    pub usage_path: Option<String>,
+    /// Authorization header prefix (default: "Bearer").
+    #[serde(default)]
+    pub auth_prefix: Option<String>,
+    /// Polling interval override in seconds.
+    #[serde(default)]
+    pub refresh_secs: Option<u64>,
+}
+
+fn default_port() -> u16 {
+    8080
+}
+fn default_host() -> String {
+    "127.0.0.1".to_string()
+}
+fn default_circuit_breaker_minutes() -> u64 {
+    30
+}
+fn default_max_retries() -> u32 {
+    3
+}
+fn default_priority() -> u8 {
+    1
+}
+fn default_weight() -> u32 {
+    100
+}
+fn default_routing_strategy() -> String {
+    "weighted_random".to_string()
+}
+fn default_health_check_interval_secs() -> u64 {
+    60
+}
+fn default_health_check_enabled() -> bool {
+    true
+}
+fn default_drain_timeout_secs() -> u64 {
+    30
+}
+fn default_cache_ttl_secs() -> u64 {
+    300
+}
+fn default_max_cache_entries() -> usize {
+    1000
+}
+fn default_http_timeout_secs() -> u64 {
+    300
+}
+fn default_affinity_ttl_secs() -> u64 {
+    1800
+}
+fn default_log_max_entries() -> usize {
+    1000
+}
+fn default_quota_poll_interval_secs() -> u64 {
+    60
+}
+
+impl Default for GatewayConfig {
+    fn default() -> Self {
+        Self {
+            port: default_port(),
+            host: default_host(),
+            circuit_breaker_minutes: default_circuit_breaker_minutes(),
+            max_retries: default_max_retries(),
+            model_fallbacks: HashMap::new(),
+            routing_strategy: default_routing_strategy(),
+            health_check_interval_secs: default_health_check_interval_secs(),
+            health_check_enabled: default_health_check_enabled(),
+            admin_token: None,
+            drain_timeout_secs: default_drain_timeout_secs(),
+            request_timeout_secs: None,
+            stream_keepalive_secs: None,
+            cache_ttl_secs: default_cache_ttl_secs(),
+            max_cache_entries: default_max_cache_entries(),
+            http_timeout_secs: default_http_timeout_secs(),
+            affinity_ttl_secs: default_affinity_ttl_secs(),
+            log_max_entries: default_log_max_entries(),
+            quota_poll_interval_secs: default_quota_poll_interval_secs(),
+        }
+    }
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            gateway: GatewayConfig::default(),
+            channels: vec![],
+        }
+    }
+}
+
+impl AppConfig {
+    pub fn load() -> Result<Self> {
+        let config_path = Self::config_path()?;
+
+        if !config_path.exists() {
+            let default_config = Self::default();
+            default_config.save()?;
+            return Ok(default_config);
+        }
+
+        let content = fs::read_to_string(&config_path)?;
+        let config: AppConfig = toml::from_str(&content)?;
+        Ok(config)
+    }
+
+    /// Load config from an explicit path (for --config flag).
+    pub fn load_from(path: PathBuf) -> Result<Self> {
+        if !path.exists() {
+            anyhow::bail!("Config file not found: {}", path.display());
+        }
+        let content = fs::read_to_string(&path)?;
+        let config: AppConfig = toml::from_str(&content)?;
+        Ok(config)
+    }
+
+    pub fn save(&self) -> Result<()> {
+        let config_path = Self::config_path()?;
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let content = toml::to_string_pretty(self)?;
+        fs::write(&config_path, content)?;
+        Ok(())
+    }
+
+    pub fn config_path() -> Result<PathBuf> {
+        let dir = dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("modelswitch");
+        Ok(dir.join("config.toml"))
+    }
+}
