@@ -1,17 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
-import { api, type DispatchStats } from "../lib/api";
+import { api, type DispatchStats, type GwStatus, invokeTauri } from "../lib/api";
 import { useQuota } from "../hooks/useQuota";
-
-interface GwStatus {
-  running: boolean;
-  host: string;
-  port: number;
-}
-
-async function invokeGateway(cmd: string): Promise<GwStatus> {
-  const { invoke } = await import("@tauri-apps/api/core");
-  return invoke(cmd);
-}
 
 export function StatusBar() {
   const [gw, setGw] = useState<GwStatus | null>(null);
@@ -21,7 +10,7 @@ export function StatusBar() {
 
   const pollStatus = useCallback(async () => {
     try {
-      const s = await invokeGateway("gateway_status");
+      const s = await invokeTauri<GwStatus>("gateway_status");
       setGw(s);
       // If running, also fetch stats over HTTP
       if (s.running) {
@@ -49,7 +38,7 @@ export function StatusBar() {
   const handleAction = async (cmd: "gateway_start" | "gateway_stop" | "gateway_restart") => {
     setBusy(true);
     try {
-      await invokeGateway(cmd);
+      await invokeTauri(cmd);
     } catch (e) {
       console.error("Gateway action failed:", e);
     }

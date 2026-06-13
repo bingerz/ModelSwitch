@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { QuotaInfo, UsageBucket } from "../lib/api";
+import { type QuotaInfo, type UsageBucket, invokeTauri } from "../lib/api";
 import { useQuota } from "../hooks/useQuota";
 
 type FilterMode = "all" | "balance" | "rate_limit" | "usage" | "error" | "low";
@@ -63,8 +63,7 @@ const WEBVIEW_SCRAPE_PROVIDERS = new Set(["anthropic", "baidu", "aliyun", "douba
 
 async function scrapeWebView(channelId: string): Promise<QuotaInfo | null> {
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    const result = await invoke<QuotaInfo>("scrape_webview_quota", {
+    const result = await invokeTauri<QuotaInfo>("scrape_webview_quota", {
       channelId,
     });
     return result;
@@ -673,19 +672,25 @@ export function QuotaPanel() {
     (c) => !quotaChannelIds.has(c.id),
   );
 
+  const filterCounts = useMemo(() => ({
+    balance: quotas.filter((q) => q.balance != null && q.error === null).length,
+    rateLimit: quotas.filter((q) => q.rate_limit_remaining_req != null && q.error === null).length,
+    usage: quotas.filter((q) => (q.total_input_tokens != null || q.total_output_tokens != null) && q.error === null).length,
+  }), [quotas]);
+
   const filterOptions: { id: FilterMode; label: string }[] = [
     { id: "all", label: `All (${quotas.length})` },
     {
       id: "balance",
-      label: `Balance (${quotas.filter((q) => q.balance != null && q.error === null).length})`,
+      label: `Balance (${filterCounts.balance})`,
     },
     {
       id: "rate_limit",
-      label: `Rate-Limit (${quotas.filter((q) => q.rate_limit_remaining_req != null && q.error === null).length})`,
+      label: `Rate-Limit (${filterCounts.rateLimit})`,
     },
     {
       id: "usage",
-      label: `Usage (${quotas.filter((q) => (q.total_input_tokens != null || q.total_output_tokens != null) && q.error === null).length})`,
+      label: `Usage (${filterCounts.usage})`,
     },
     ...(errorCount > 0
       ? [{ id: "error" as FilterMode, label: `Errors (${errorCount})` }]

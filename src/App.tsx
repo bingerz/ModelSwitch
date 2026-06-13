@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { type GwStatus, invokeTauri } from "./lib/api";
 import { ToastProvider, useToast } from "./components/Toast";
 import { ChannelPanel } from "./components/ChannelPanel";
 import { LogViewer } from "./components/LogViewer";
@@ -25,17 +26,6 @@ function getInitialTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
-interface GwStatus {
-  running: boolean;
-  host: string;
-  port: number;
-}
-
-async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
-  return tauriInvoke(cmd, args);
-}
-
 function AppInner() {
   const toast = useToast();
   const [activeTab, setActiveTab] = useState<TabId>("channels");
@@ -52,9 +42,9 @@ function AppInner() {
   useEffect(() => {
     (async () => {
       try {
-        const status: GwStatus = await invoke("gateway_status");
+        const status: GwStatus = await invokeTauri("gateway_status");
         if (!status.running) {
-          await invoke("gateway_start");
+          await invokeTauri("gateway_start");
           toast.success("Gateway started");
         }
       } catch (e) {
@@ -77,11 +67,11 @@ function AppInner() {
         unlisten = await listen("close-requested", async () => {
           try {
             // Always stop gateway and quit — their lifecycles are tied
-            await invoke("gateway_stop");
-            await invoke("app_quit");
+            await invokeTauri("gateway_stop");
+            await invokeTauri("app_quit");
           } catch {
             // Fallback: just quit, the Drop guard will clean up
-            await invoke("app_quit");
+            await invokeTauri("app_quit");
           }
         });
       } catch {

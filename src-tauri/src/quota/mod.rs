@@ -5,6 +5,7 @@ pub mod registry;
 #[cfg(feature = "tauri")]
 pub mod webview_scrape;
 
+use crate::config::app_config_dir;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -241,10 +242,7 @@ impl QuotaStore {
 
     /// Return the file path for persisted quota data.
     fn store_path() -> std::path::PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("modelswitch")
-            .join("quota_store.json")
+        app_config_dir().join("quota_store.json")
     }
 
     /// Persist all quota data to disk (JSON). Best-effort — errors are logged.

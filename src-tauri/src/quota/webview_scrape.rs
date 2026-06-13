@@ -9,6 +9,11 @@ use std::sync::Arc;
 use tauri::{Listener, Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::oneshot;
 
+/// Try to extract an f64 from a JSON value — accept either a number or a numeric string.
+fn value_as_f64(v: &serde_json::Value) -> Option<f64> {
+    v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
+}
+
 /// Configuration for a provider's WebView scraping session.
 struct ScrapeConfig {
     /// URL to navigate to (where cookies are valid).
@@ -117,15 +122,15 @@ fn parse_baidu_result(
     for res in resources {
         let remain = res
             .get("remainAmount")
-            .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())))
+            .and_then(value_as_f64)
             .unwrap_or(0.0);
         let total = res
             .get("totalAmount")
-            .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())))
+            .and_then(value_as_f64)
             .unwrap_or(0.0);
         let used = res
             .get("usedAmount")
-            .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())))
+            .and_then(value_as_f64)
             .unwrap_or(0.0);
 
         total_remain += remain;
@@ -169,13 +174,13 @@ fn parse_aliyun_result(
 
     if let Some(inner) = data.get("data") {
         // Try numeric fields
-        if let Some(v) = inner.get("remainAmount").and_then(|v| v.as_f64()) {
+        if let Some(v) = inner.get("remainAmount").and_then(value_as_f64) {
             info.balance = Some(v);
         }
-        if let Some(v) = inner.get("totalAmount").and_then(|v| v.as_f64()) {
+        if let Some(v) = inner.get("totalAmount").and_then(value_as_f64) {
             info.limit = Some(v);
         }
-        if let Some(v) = inner.get("usedAmount").and_then(|v| v.as_f64()) {
+        if let Some(v) = inner.get("usedAmount").and_then(value_as_f64) {
             info.usage = Some(v);
         }
 
@@ -187,7 +192,7 @@ fn parse_aliyun_result(
                     item.get("commodityCode").or_else(|| item.get("name")).and_then(|v| v.as_str()),
                     item.get("deductQuantity")
                         .or_else(|| item.get("remainQuantity"))
-                        .and_then(|v| v.as_f64()),
+                        .and_then(value_as_f64),
                 ) {
                     quota_items.push(QuotaItem {
                         label: name.to_string(),
@@ -223,20 +228,20 @@ fn parse_doubao_result(
     // Expected: { "data": { "balance": ..., "totalQuota": ..., "usedQuota": ... } }
     // or: { "data": { "items": [ { "name", "remainAmount", "totalAmount" } ] } }
     if let Some(inner) = data.get("data") {
-        if let Some(v) = inner.get("balance").and_then(|v| v.as_f64()) {
+        if let Some(v) = inner.get("balance").and_then(value_as_f64) {
             info.balance = Some(v);
         }
         if let Some(v) = inner
             .get("totalQuota")
             .or_else(|| inner.get("totalAmount"))
-            .and_then(|v| v.as_f64())
+            .and_then(value_as_f64)
         {
             info.limit = Some(v);
         }
         if let Some(v) = inner
             .get("usedQuota")
             .or_else(|| inner.get("usedAmount"))
-            .and_then(|v| v.as_f64())
+            .and_then(value_as_f64)
         {
             info.usage = Some(v);
         }
@@ -251,7 +256,7 @@ fn parse_doubao_result(
                         .and_then(|v| v.as_str()),
                     item.get("remainAmount")
                         .or_else(|| item.get("remain"))
-                        .and_then(|v| v.as_f64()),
+                        .and_then(value_as_f64),
                 ) {
                     quota_items.push(QuotaItem {
                         label: name.to_string(),

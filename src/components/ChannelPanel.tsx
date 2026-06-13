@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { api, type Channel } from "../lib/api";
+import { useEffect, useState } from "react";
+import { api, type Channel, PRIORITY_TIERS, validateChannelForm, invokeTauri } from "../lib/api";
 import { useQuota } from "../hooks/useQuota";
 import type { QuotaInfo } from "../lib/api";
 import { useToast } from "./Toast";
@@ -62,12 +62,6 @@ function QuotaBadge({ quota }: { quota: QuotaInfo | undefined }) {
   return null;
 }
 
-const PRIORITY_META: Record<number, { label: string; desc: string }> = {
-  1: { label: "Priority 1", desc: "Free / Subscription" },
-  2: { label: "Priority 2", desc: "Economy API" },
-  3: { label: "Priority 3", desc: "Official API" },
-};
-
 const CATEGORY_ORDER: PresetCategory[] = [
   "official",
   "cn_official",
@@ -78,27 +72,10 @@ const CATEGORY_ORDER: PresetCategory[] = [
 
 export function ChannelPanel() {
   const toast = useToast();
-  const [channels, setChannels] = useState<Channel[]>([]);
-  const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
-  const { quotas } = useQuota();
-
-  const fetchChannels = useCallback(async () => {
-    try {
-      const data = await api.listChannels();
-      setChannels(data);
-    } catch {
-      // Gateway may not be running yet
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchChannels();
-  }, [fetchChannels]);
+  const { quotas, channels, refresh, loading } = useQuota();
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
@@ -112,7 +89,7 @@ export function ChannelPanel() {
     try {
       await api.deleteChannel(id);
       toast.success("Channel deleted");
-      fetchChannels();
+      refresh();
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to delete channel");
     }
@@ -140,10 +117,10 @@ export function ChannelPanel() {
         model_mapping: ch.model_mapping,
         cooldown_minutes: ch.cooldown_minutes,
       });
-      fetchChannels();
+      refresh();
     } catch {
       toast.error("Failed to toggle channel");
-      fetchChannels();
+      refresh();
     }
   };
 
@@ -166,9 +143,9 @@ export function ChannelPanel() {
           model_mapping: ch.model_mapping,
           cooldown_minutes: ch.cooldown_minutes,
         });
-        fetchChannels();
+        refresh();
       } catch {
-        fetchChannels();
+        refresh();
       }
     }
     setDragId(null);
@@ -204,7 +181,7 @@ export function ChannelPanel() {
         <ChannelForm
           onSave={() => {
             setShowAddForm(false);
-            fetchChannels();
+            refresh();
           }}
         />
       )}
@@ -213,7 +190,7 @@ export function ChannelPanel() {
 
       <div className="tiers-container">
       {allPriorities.map((priority) => {
-        const meta = PRIORITY_META[priority] || { label: `Priority ${priority}`, desc: "" };
+        const meta = PRIORITY_TIERS[priority] || { label: `Priority ${priority}`, desc: "" };
         const channelsInPriority = priorities.get(priority) || [];
         return (
           <div
@@ -243,7 +220,7 @@ export function ChannelPanel() {
                         channel={ch}
                         onSave={() => {
                           setEditingId(null);
-                          fetchChannels();
+                          refresh();
                         }}
                         onCancel={() => setEditingId(null)}
                       />
@@ -442,8 +419,7 @@ function ChannelForm({ onSave }: { onSave: () => void }) {
   const handleWebViewLogin = async () => {
     setLoginInProgress(true);
     try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("open_login_webview", { provider });
+      await invokeTauri("open_login_webview", { provider });
     } catch (e) {
       toast.error(`WebView login failed: ${e}`);
       setLoginInProgress(false);
@@ -498,17 +474,9 @@ function ChannelForm({ onSave }: { onSave: () => void }) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    // Validation
-    if (!name.trim()) {
-      setError("Name is required");
-      return;
-    }
-    if (!baseUrl.trim()) {
-      setError("Base URL is required");
-      return;
-    }
-    if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
-      setError("Base URL must start with http:// or https://");
+    const validationError = validateChannelForm({ name, baseUrl });
+    if (validationError) {
+      setError(validationError);
       return;
     }
     if (costPerToken && parseFloat(costPerToken) <= 0) {
@@ -627,17 +595,9 @@ function EditChannelForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    // Validation
-    if (!name.trim()) {
-      setError("Name is required");
-      return;
-    }
-    if (!baseUrl.trim()) {
-      setError("Base URL is required");
-      return;
-    }
-    if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
-      setError("Base URL must start with http:// or https://");
+    const validationError = validateChannelForm({ name, baseUrl });
+    if (validationError) {
+      setError(validationError);
       return;
     }
     setSubmitting(true);

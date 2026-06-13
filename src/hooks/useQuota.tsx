@@ -15,6 +15,8 @@ interface QuotaContextValue {
   lowBalanceCount: number;
   /** Last fetch error, if any */
   fetchError: string | null;
+  /** Whether the first fetch is still in progress */
+  loading: boolean;
   /** Number of channels that have quota errors */
   errorCount: number;
   /** Total number of configured channels */
@@ -30,6 +32,7 @@ const QuotaContext = createContext<QuotaContextValue>({
   totalBalance: 0,
   channelsWithData: 0,
   fetchError: null,
+  loading: true,
   lowBalanceCount: 0,
   errorCount: 0,
   totalChannels: 0,
@@ -44,6 +47,7 @@ export function QuotaProvider({ children }: { children: React.ReactNode }) {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [usageHistory, setUsageHistory] = useState<UsageHistory | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     try {
@@ -56,6 +60,8 @@ export function QuotaProvider({ children }: { children: React.ReactNode }) {
       setFetchError(null);
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Failed to fetch quota data");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -125,9 +131,10 @@ export function QuotaProvider({ children }: { children: React.ReactNode }) {
       lowBalanceCount,
       errorCount,
       fetchError,
+      loading,
       totalChannels: channels.length,
     }),
-    [quotas, channels, usageHistory, refresh, fetchUsageHistory, totalBalance, channelsWithData, lowBalanceCount, errorCount, fetchError],
+    [quotas, channels, usageHistory, refresh, fetchUsageHistory, totalBalance, channelsWithData, lowBalanceCount, errorCount, fetchError, loading],
   );
 
   return (

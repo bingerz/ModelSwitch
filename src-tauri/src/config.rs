@@ -6,6 +6,13 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+/// Return the application config directory (`~/.config/modelswitch` on Linux, etc.).
+pub fn app_config_dir() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("modelswitch")
+}
+
 /// Per-channel payload rules configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PayloadRulesConfig {

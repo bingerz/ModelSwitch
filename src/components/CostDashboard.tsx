@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type CostStats } from "../lib/api";
-
-const PRIORITY_LABELS: Record<number, { name: string; desc: string; color: string }> = {
-  1: { name: "Priority 1", desc: "Free / Subscription", color: "var(--color-success)" },
-  2: { name: "Priority 2", desc: "Economy API", color: "var(--color-warning)" },
-  3: { name: "Priority 3", desc: "Official API", color: "var(--color-danger)" },
-};
+import { api, type CostStats, PRIORITY_TIERS } from "../lib/api";
 
 export function CostDashboard() {
   const [stats, setStats] = useState<CostStats | null>(null);
@@ -74,7 +68,7 @@ export function CostDashboard() {
       <div className="cost-tier-bars">
         {[1, 2, 3].map((priority) => {
           const data = stats.priority_breakdown.find((t) => t.priority === priority);
-          const meta = PRIORITY_LABELS[priority] || { name: `Priority ${priority}`, desc: "", color: "var(--color-text-muted)" };
+          const meta = PRIORITY_TIERS[priority] || { label: `Priority ${priority}`, desc: "", color: "var(--color-text-muted)" };
           const requests = data?.requests || 0;
           const cost = data?.estimated_cost || 0;
           const pct = maxTierRequests > 0 ? (requests / maxTierRequests) * 100 : 0;
@@ -84,7 +78,7 @@ export function CostDashboard() {
               <div className="cost-tier-label">
                 <span className="cost-tier-dot" style={{ background: meta.color }} />
                 <span>
-                  <strong>{meta.name}</strong>
+                  <strong>{meta.label}</strong>
                   <br />
                   <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-muted)" }}>{meta.desc}</span>
                 </span>

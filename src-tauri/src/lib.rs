@@ -131,10 +131,7 @@ impl GatewayManager {
         inner.stopped_rx = None;
 
         // Clean up PID file
-        let pid_path = dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("modelswitch")
-            .join("gateway.pid");
+        let pid_path = config::app_config_dir().join("gateway.pid");
         let _ = std::fs::remove_file(&pid_path);
     }
 }
@@ -304,10 +301,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     // Initialize channel manager and logger
     let credential_store = create_credential_store();
     let channel_mgr = Arc::new(ChannelManager::new(&config, Arc::clone(&credential_store)));
-    let log_file = dirs::config_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("modelswitch")
-        .join("logs.ndjson");
+    let log_file = config::app_config_dir().join("logs.ndjson");
     let logger = Arc::new(DispatchLogger::with_persistence(config.gateway.log_max_entries, log_file));
 
     // Build shared components
@@ -514,10 +508,7 @@ pub async fn start_gateway(
     let addr = format!("{}:{}", host, port);
 
     // Write PID file for CLI management
-    let pid_path = dirs::config_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("modelswitch")
-        .join("gateway.pid");
+    let pid_path = config::app_config_dir().join("gateway.pid");
     if let Some(parent) = pid_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }

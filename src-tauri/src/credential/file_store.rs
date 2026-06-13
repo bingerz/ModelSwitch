@@ -1,3 +1,4 @@
+use crate::config::app_config_dir;
 use super::CredentialStore;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -14,10 +15,7 @@ pub struct FileCredentialStore {
 
 impl FileCredentialStore {
     pub fn new() -> Self {
-        let dir = dirs::config_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("modelswitch");
-        let path = dir.join("credentials.toml");
+        let path = app_config_dir().join("credentials.toml");
 
         let store = Self {
             path,

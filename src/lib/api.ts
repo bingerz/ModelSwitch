@@ -152,6 +152,31 @@ export interface UpdateChannelData {
   tpm_limit?: number | null;
 }
 
+export interface GwStatus {
+  running: boolean;
+  host: string;
+  port: number;
+}
+
+export async function invokeTauri<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
+  return tauriInvoke(cmd, args);
+}
+
+export const PRIORITY_TIERS: Record<number, { label: string; desc: string; color: string }> = {
+  1: { label: "Priority 1", desc: "Free / Subscription", color: "var(--color-success)" },
+  2: { label: "Priority 2", desc: "Economy API", color: "var(--color-warning)" },
+  3: { label: "Priority 3", desc: "Official API", color: "var(--color-danger)" },
+};
+
+export function validateChannelForm(fields: { name: string; baseUrl: string }): string | null {
+  if (!fields.name.trim()) return "Name is required";
+  if (!fields.baseUrl.trim()) return "Base URL is required";
+  if (!fields.baseUrl.startsWith("http://") && !fields.baseUrl.startsWith("https://"))
+    return "Base URL must start with http:// or https://";
+  return null;
+}
+
 export const api = {
   listChannels: () => request<Channel[]>("/api/channels"),
   createChannel: (data: Partial<Channel> & { credential_value: string; credential_type?: string }) =>
