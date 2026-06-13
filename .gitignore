@@ -61,3 +61,7 @@ $RECYCLE.BIN/
 tauri.conf.json.bak
 src-tauri/.bundle/
 src-tauri/.cargo/
+
+# Reference repos (cloned by reference/clone_repos.sh)
+reference/*/
+!reference/clone_repos.sh
