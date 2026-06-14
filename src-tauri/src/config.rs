@@ -205,6 +205,9 @@ pub struct ChannelConfig {
     pub payload_rules: Option<PayloadRulesConfig>,
     #[serde(default)]
     pub quota: Option<QuotaConfig>,
+    /// Optional account group tag for multi-account pool management.
+    #[serde(default)]
+    pub account_group: Option<String>,
 }
 
 /// Per-channel quota polling configuration.

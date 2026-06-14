@@ -51,6 +51,9 @@ impl ChannelManager {
                     cooldown_minutes: c.cooldown_minutes,
                     rpm_limit: c.rpm_limit,
                     tpm_limit: c.tpm_limit,
+                    account_group: c.account_group.clone(),
+                    failure_window_start: None,
+                    window_failure_count: 0,
                 }
             })
             .collect();
@@ -173,6 +176,7 @@ impl ChannelManager {
                 cooldown_minutes: c.cooldown_minutes,
                 rpm_limit: c.rpm_limit,
                 tpm_limit: c.tpm_limit,
+                account_group: c.account_group.clone(),
                 payload_rules: None,
                 quota: None,
             })
@@ -205,6 +209,8 @@ impl ChannelManager {
                     (ch.avg_latency_ms as f64 * 0.7 + latency_ms as f64 * 0.3) as u64;
             }
             ch.consecutive_failures = 0;
+            // Promote HalfOpen to Healthy after a successful dispatch.
+            ch.recover_to_healthy();
         }
     }
 

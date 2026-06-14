@@ -142,6 +142,9 @@ pub async fn create_channel(
         cooldown_minutes: None,
         rpm_limit: None,
         tpm_limit: None,
+        account_group: None,
+        failure_window_start: None,
+        window_failure_count: 0,
     };
 
     let created = state.channel_mgr.create(channel).await;
@@ -486,6 +489,9 @@ pub async fn reload_config(State(state): State<Arc<AppState>>) -> axum::response
                         cooldown_minutes: cc.cooldown_minutes,
                         rpm_limit: cc.rpm_limit,
                         tpm_limit: cc.tpm_limit,
+                        account_group: cc.account_group.clone(),
+                        failure_window_start: None,
+                        window_failure_count: 0,
                     };
                     let _ = state.channel_mgr.create(new_channel).await;
                     created += 1;

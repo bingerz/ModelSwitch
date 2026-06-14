@@ -117,6 +117,9 @@ pub fn start_config_watcher(
                                             cooldown_minutes: cc.cooldown_minutes,
                                             rpm_limit: cc.rpm_limit,
                                             tpm_limit: cc.tpm_limit,
+                                            account_group: cc.account_group.clone(),
+                                            failure_window_start: None,
+                                            window_failure_count: 0,
                                         };
                                         let _ = channel_mgr.create(new_channel).await;
                                     }

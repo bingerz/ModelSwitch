@@ -43,7 +43,15 @@ pub async fn select_channel(
     }
 
     // Group by priority, sorted ascending (priority 1 = highest priority)
-    candidates.sort_by_key(|c| c.priority);
+    // Within the same priority, prefer Healthy over HalfOpen channels
+    // to limit probe traffic to recovering channels.
+    candidates.sort_by(|a, b| {
+        a.priority.cmp(&b.priority).then_with(|| {
+            let a_healthy = a.status == crate::channel::ChannelStatus::Healthy;
+            let b_healthy = b.status == crate::channel::ChannelStatus::Healthy;
+            b_healthy.cmp(&a_healthy) // Healthy first
+        })
+    });
 
     let strategy: Box<dyn RoutingStrategy> = match routing_strategy {
         "latency" => Box::new(LatencyBasedStrategy::new()),
@@ -54,26 +62,46 @@ pub async fn select_channel(
     };
 
     let mut current_priority = 0u8;
-    let mut priority_candidates: Vec<Channel> = Vec::new();
+    let mut healthy_candidates: Vec<Channel> = Vec::new();
+    let mut halfopen_candidates: Vec<Channel> = Vec::new();
+
+    let flush = |healthy: &mut Vec<Channel>,
+                 halfopen: &mut Vec<Channel>,
+                 strategy: &Box<dyn RoutingStrategy>|
+     -> Option<Channel> {
+        // Try Healthy candidates first, then fall back to HalfOpen probes
+        if !healthy.is_empty() {
+            if let Some(selected) = strategy.select(healthy) {
+                return Some(selected);
+            }
+        }
+        if !halfopen.is_empty() {
+            if let Some(selected) = strategy.select(halfopen) {
+                return Some(selected);
+            }
+        }
+        None
+    };
 
     for ch in candidates {
         if ch.priority != current_priority {
             // Try selection from previous priority
-            if !priority_candidates.is_empty() {
-                if let Some(selected) = strategy.select(&priority_candidates) {
-                    return Some(selected);
-                }
+            if let Some(selected) =
+                flush(&mut healthy_candidates, &mut halfopen_candidates, &strategy)
+            {
+                return Some(selected);
             }
+            healthy_candidates.clear();
+            halfopen_candidates.clear();
             current_priority = ch.priority;
-            priority_candidates.clear();
         }
-        priority_candidates.push(ch);
+        if ch.status == crate::channel::ChannelStatus::HalfOpen {
+            halfopen_candidates.push(ch);
+        } else {
+            healthy_candidates.push(ch);
+        }
     }
 
     // Try last priority
-    if !priority_candidates.is_empty() {
-        strategy.select(&priority_candidates)
-    } else {
-        None
-    }
+    flush(&mut healthy_candidates, &mut halfopen_candidates, &strategy)
 }

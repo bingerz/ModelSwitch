@@ -76,6 +76,9 @@ pub struct Credential {
 #[serde(rename_all = "snake_case")]
 pub enum ChannelStatus {
     Healthy,
+    /// Circuit was open, cooldown expired — limited probing allowed.
+    /// Transition to Healthy on success, back to CircuitOpen on failure.
+    HalfOpen,
     CircuitOpen,
     Disabled,
 }
@@ -117,6 +120,15 @@ pub struct Channel {
     /// Per-channel TPM limit (None = no limit)
     #[serde(default)]
     pub tpm_limit: Option<u64>,
+    /// Optional account group tag for multi-account pool management.
+    #[serde(default)]
+    pub account_group: Option<String>,
+    /// Start timestamp of the current sliding failure window (5-minute window).
+    #[serde(default)]
+    pub failure_window_start: Option<DateTime<Utc>>,
+    /// Failure count within the current sliding window.
+    #[serde(default)]
+    pub window_failure_count: u32,
 }
 
 impl Channel {
@@ -130,6 +142,8 @@ impl Channel {
             }
             return false;
         }
+        // Healthy and HalfOpen are available.
+        // Router prefers Healthy over HalfOpen to limit probe traffic.
         true
     }
 
@@ -176,12 +190,47 @@ impl Channel {
         if self.status == ChannelStatus::CircuitOpen {
             if let Some(until) = self.circuit_open_until {
                 if Utc::now() >= until {
-                    self.status = ChannelStatus::Healthy;
+                    // Transition to HalfOpen — limited probing until a successful
+                    // dispatch confirms the upstream is healthy again.
+                    self.status = ChannelStatus::HalfOpen;
                     self.circuit_open_until = None;
                     self.updated_at = Utc::now();
                 }
             }
         }
+    }
+
+    /// Promote a HalfOpen channel to Healthy after a successful dispatch.
+    /// Resets failure counters and sliding window.
+    pub fn recover_to_healthy(&mut self) {
+        if self.status == ChannelStatus::HalfOpen {
+            self.status = ChannelStatus::Healthy;
+            self.consecutive_failures = 0;
+            self.window_failure_count = 0;
+            self.failure_window_start = None;
+            self.updated_at = Utc::now();
+        }
+    }
+
+    /// Record a failure in the sliding window. Returns true if the failure
+    /// rate exceeds the threshold and the circuit should open.
+    /// Window: 5 minutes, threshold: 5 failures.
+    pub fn record_window_failure(&mut self) -> bool {
+        let now = Utc::now();
+        let window_duration = chrono::Duration::minutes(5);
+
+        // Reset window if expired
+        if self.failure_window_start.is_none()
+            || now - self.failure_window_start.unwrap() > window_duration
+        {
+            self.failure_window_start = Some(now);
+            self.window_failure_count = 0;
+        }
+
+        self.window_failure_count += 1;
+
+        // Open circuit if threshold exceeded within the window
+        self.window_failure_count >= 5
     }
 }
 

@@ -620,6 +620,20 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/messages", post(proxy::anthropic::handle_messages))
         .route("/v1beta/models/{*path}", post(proxy::gemini::handle_gemini))
         .route("/health", get(proxy::openai::health_check))
+        // Claude Code Protocol — provider-prefixed routes for agentic tools
+        // that send to /api/provider/{provider}/v1/... instead of /v1/...
+        .route(
+            "/api/provider/{provider}/v1/chat/completions",
+            post(proxy::openai::handle_chat_completions),
+        )
+        .route(
+            "/api/provider/{provider}/v1/messages",
+            post(proxy::anthropic::handle_messages),
+        )
+        .route(
+            "/api/provider/{provider}/v1/models",
+            get(proxy::openai::handle_list_models),
+        )
         .layer(axum::middleware::from_fn_with_state(
             proxy_auth_state,
             middleware::virtual_key::virtual_key_middleware,
