@@ -576,6 +576,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             post(proxy::openai::handle_chat_completions),
         )
         .route("/v1/models", get(proxy::openai::handle_list_models))
+        .route("/v1/tools", get(proxy::openai::handle_list_tools))
         .route("/v1/messages", post(proxy::anthropic::handle_messages))
         .route("/v1beta/models/*path", post(proxy::gemini::handle_gemini))
         .route("/health", get(proxy::openai::health_check))

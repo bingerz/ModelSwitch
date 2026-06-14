@@ -893,9 +893,15 @@ pub async fn list_mcp_server_tools(
     Ok(Json(response).into_response())
 }
 
-/// GET /api/mcp/tools — aggregated tools across all servers.
+/// GET /api/mcp/tools — aggregated tools across all running servers.
+///
+/// Returns full `AggregatedTool` records (including `input_schema`) so the
+/// admin UI can render tool documentation. Unlike the proxy `/v1/tools`
+/// endpoint, this does NOT filter by `expose_tools` — the admin UI should
+/// be able to see every tool regardless of whether it is exposed to LLM
+/// clients.
 pub async fn list_all_mcp_tools(
     State(state): State<Arc<AppState>>,
-) -> Json<Vec<crate::mcp::McpToolInfo>> {
-    Json(state.mcp_manager.list_all_tools().await)
+) -> Json<Vec<crate::mcp::AggregatedTool>> {
+    Json(crate::mcp::aggregator::aggregate_all_tools(&state.mcp_manager).await)
 }

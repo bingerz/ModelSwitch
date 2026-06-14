@@ -92,6 +92,50 @@ pub async fn handle_list_models(State(state): State<Arc<AppState>>) -> axum::res
     crate::proxy::stream::json_response(axum::http::StatusCode::OK, body.to_string())
 }
 
+/// List all MCP tools exposed to LLM clients in OpenAI function-calling format.
+///
+/// `GET /v1/tools`
+///
+/// Aggregates tools from every running MCP server whose config has
+/// `expose_tools == true`, namespacing each tool's name as
+/// `mcp__{server_id}__{original_name}`. Returns an OpenAI-style list
+/// envelope so any client that supports custom function calling can
+/// discover the available MCP tools without a separate discovery protocol.
+pub async fn handle_list_tools(State(state): State<Arc<AppState>>) -> axum::response::Response {
+    let mut tools = crate::mcp::aggregator::aggregate_all_tools(&state.mcp_manager).await;
+
+    // Respect the per-server `expose_tools` flag so admins can run private
+    // MCP servers without leaking their tools to LLM clients. Resolve the
+    // flag once per unique server_id (closures can't be async, so we
+    // precompute the decision map before the synchronous retain).
+    let unique_server_ids: std::collections::HashSet<String> =
+        tools.iter().map(|t| t.server_id.clone()).collect();
+    let mut exposed: std::collections::HashMap<String, bool> =
+        std::collections::HashMap::with_capacity(unique_server_ids.len());
+    for id in unique_server_ids {
+        let is_exposed = state
+            .mcp_manager
+            .get_config(&id)
+            .await
+            .map(|c| c.expose_tools)
+            .unwrap_or(false);
+        exposed.insert(id, is_exposed);
+    }
+    tools.retain(|t| *exposed.get(&t.server_id).unwrap_or(&false));
+
+    let openai_tools: Vec<serde_json::Value> = tools
+        .iter()
+        .map(crate::mcp::translator::to_openai_function)
+        .collect();
+
+    let body = serde_json::json!({
+        "object": "list",
+        "data": openai_tools,
+    });
+
+    crate::proxy::stream::json_response(axum::http::StatusCode::OK, body.to_string())
+}
+
 /// Health check endpoint returning JSON with version, uptime, and channel stats.
 pub async fn health_check(State(state): State<Arc<AppState>>) -> axum::response::Response {
     let channels = state.channel_mgr.list().await;
