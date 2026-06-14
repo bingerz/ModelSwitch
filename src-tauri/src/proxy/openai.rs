@@ -46,6 +46,8 @@ pub struct AppState {
     pub mcp_auto_inject: bool,
     /// Privacy guardrail configuration consumed by the sanitizer middleware.
     pub sanitizer_config: crate::config::SanitizerConfig,
+    /// Whether MCP Gateway Mode is enabled (expose /mcp endpoint).
+    pub mcp_gateway_enabled: bool,
     pub started_at: std::time::Instant,
 }
 

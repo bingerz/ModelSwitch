@@ -787,7 +787,10 @@ async fn handle_json_success(
     // Attribute spend to the requesting virtual key (if any).
     if let Some(vk) = vk_id {
         let cost_cents = (estimated_cost.unwrap_or(0.0) * 100.0) as u64;
-        state.virtual_key_store.accumulate_spend(vk, cost_cents).await;
+        state
+            .virtual_key_store
+            .accumulate_spend(vk, cost_cents)
+            .await;
     }
     state
         .logger

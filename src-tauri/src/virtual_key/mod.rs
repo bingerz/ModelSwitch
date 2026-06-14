@@ -121,8 +121,7 @@ impl VirtualKeyStore {
         for vk in keys.values() {
             let stored = vk.key_hash.as_bytes();
             // Only compare equal-length buffers via ct_eq.
-            let matched = stored.len() == hash_bytes.len()
-                && bool::from(stored.ct_eq(&hash_bytes));
+            let matched = stored.len() == hash_bytes.len() && bool::from(stored.ct_eq(&hash_bytes));
             if matched {
                 if !vk.enabled {
                     return None;
@@ -321,9 +320,7 @@ mod tests {
     #[tokio::test]
     async fn validate_rejects_wrong_key() {
         let store = VirtualKeyStore::new();
-        let _ = store
-            .create("test".to_string(), None, None)
-            .await;
+        let _ = store.create("test".to_string(), None, None).await;
         let result = store.validate("ms-vk-wrongkey").await;
         assert!(result.is_none());
     }
@@ -331,9 +328,7 @@ mod tests {
     #[tokio::test]
     async fn validate_returns_key_when_correct() {
         let store = VirtualKeyStore::new();
-        let (created, plaintext) = store
-            .create("test".to_string(), None, None)
-            .await;
+        let (created, plaintext) = store.create("test".to_string(), None, None).await;
         let validated = store.validate(&plaintext).await;
         assert!(validated.is_some());
         assert_eq!(validated.unwrap().id, created.id);
@@ -342,9 +337,7 @@ mod tests {
     #[tokio::test]
     async fn validate_returns_none_when_disabled() {
         let store = VirtualKeyStore::new();
-        let (created, plaintext) = store
-            .create("test".to_string(), None, None)
-            .await;
+        let (created, plaintext) = store.create("test".to_string(), None, None).await;
         store
             .update(created.id, None, None, None, Some(false))
             .await;
@@ -355,9 +348,7 @@ mod tests {
     #[tokio::test]
     async fn accumulate_spend_updates_daily_and_monthly() {
         let store = VirtualKeyStore::new();
-        let (vk, _plaintext) = store
-            .create("test".to_string(), None, None)
-            .await;
+        let (vk, _plaintext) = store.create("test".to_string(), None, None).await;
         store.accumulate_spend(vk.id, 50).await;
         store.accumulate_spend(vk.id, 25).await;
         let fetched = store.get(vk.id).await.unwrap();
@@ -369,9 +360,7 @@ mod tests {
     #[tokio::test]
     async fn accumulate_spend_resets_stale_periods() {
         let store = VirtualKeyStore::new();
-        let (mut vk, _plaintext) = store
-            .create("test".to_string(), None, None)
-            .await;
+        let (mut vk, _plaintext) = store.create("test".to_string(), None, None).await;
         // Manually backdate the spend to a stale day/month
         vk.spend.today = DailySpend {
             date: "1999-01-01".to_string(),
@@ -389,7 +378,11 @@ mod tests {
         let fetched = store.get(vk_id).await.unwrap();
         assert_eq!(fetched.spend.today.cents, 10, "daily should reset");
         assert_eq!(fetched.spend.this_month.cents, 10, "monthly should reset");
-        assert_eq!(fetched.spend.total_cents, 999 + 10, "total should accumulate");
+        assert_eq!(
+            fetched.spend.total_cents,
+            999 + 10,
+            "total should accumulate"
+        );
         assert_ne!(fetched.spend.today.date, "1999-01-01");
     }
 
@@ -483,9 +476,14 @@ mod tests {
         let b = sha256_hex("hello");
         assert_eq!(a, b);
         assert_eq!(a.len(), 64);
-        assert!(a.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(a
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
         // Known SHA-256 of "hello"
-        assert_eq!(a, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+        assert_eq!(
+            a,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
     }
 
     #[tokio::test]

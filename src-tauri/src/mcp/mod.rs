@@ -1,8 +1,10 @@
 pub mod aggregator;
+pub mod gateway;
 pub mod manager;
 pub mod translator;
 
 pub use aggregator::AggregatedTool;
+pub use gateway::McpGatewayHandler;
 pub use manager::{McpManager, McpServerStatus};
 
 // `McpToolInfo` remains accessible via `crate::mcp::manager::McpToolInfo` for

@@ -115,6 +115,9 @@ pub struct GatewayConfig {
     /// Privacy guardrail — redacts secrets from request bodies before forwarding.
     #[serde(default)]
     pub sanitizer: SanitizerConfig,
+    /// Enable MCP Gateway Mode — expose /mcp endpoint for MCP clients (default true).
+    #[serde(default = "default_mcp_gateway_enabled")]
+    pub mcp_gateway_enabled: bool,
 }
 
 /// Privacy guardrail configuration for the sanitizer middleware.
@@ -284,6 +287,9 @@ fn default_mcp_max_iterations() -> u32 {
 fn default_mcp_auto_inject() -> bool {
     true
 }
+fn default_mcp_gateway_enabled() -> bool {
+    true
+}
 fn default_enabled() -> bool {
     true
 }
@@ -314,6 +320,7 @@ impl Default for GatewayConfig {
             quota_poll_interval_secs: default_quota_poll_interval_secs(),
             mcp_max_iterations: default_mcp_max_iterations(),
             mcp_auto_inject: default_mcp_auto_inject(),
+            mcp_gateway_enabled: default_mcp_gateway_enabled(),
             sanitizer: SanitizerConfig {
                 enabled: default_sanitizer_enabled(),
                 redact_secrets: default_sanitizer_redact(),

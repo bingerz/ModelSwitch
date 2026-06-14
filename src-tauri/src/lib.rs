@@ -478,6 +478,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         mcp_max_iterations: config.gateway.mcp_max_iterations,
         mcp_auto_inject: config.gateway.mcp_auto_inject,
         sanitizer_config: config.gateway.sanitizer.clone(),
+        mcp_gateway_enabled: config.gateway.mcp_gateway_enabled,
         started_at: std::time::Instant::now(),
     });
 
@@ -675,9 +676,27 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             middleware::auth::admin_auth_middleware,
         ));
 
-    Router::new()
-        .merge(proxy_router)
-        .merge(admin_router)
+    let base_router = Router::new().merge(proxy_router).merge(admin_router);
+
+    // Conditionally mount MCP Gateway Mode endpoint.
+    let router = if state.mcp_gateway_enabled {
+        use mcp::McpGatewayHandler;
+        use rmcp::transport::streamable_http_server::{
+            session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
+        };
+        let mcp_manager = Arc::clone(&state.mcp_manager);
+        let service: StreamableHttpService<McpGatewayHandler, LocalSessionManager> =
+            StreamableHttpService::new(
+                move || Ok(McpGatewayHandler::new(Arc::clone(&mcp_manager))),
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default(),
+            );
+        base_router.nest_service("/mcp", service)
+    } else {
+        base_router
+    };
+
+    router
         .layer(axum::middleware::from_fn(
             middleware::request_id::request_id_middleware,
         ))
