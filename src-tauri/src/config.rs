@@ -106,6 +106,12 @@ pub struct GatewayConfig {
     /// Quota poller interval in seconds (default 300).
     #[serde(default = "default_quota_poll_interval_secs")]
     pub quota_poll_interval_secs: u64,
+    /// Maximum MCP tool-call loop iterations (default 5).
+    #[serde(default = "default_mcp_max_iterations")]
+    pub mcp_max_iterations: u32,
+    /// Whether to auto-inject MCP tools into chat completion requests (default true).
+    #[serde(default = "default_mcp_auto_inject")]
+    pub mcp_auto_inject: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -218,6 +224,12 @@ fn default_log_max_entries() -> usize {
 fn default_quota_poll_interval_secs() -> u64 {
     60
 }
+fn default_mcp_max_iterations() -> u32 {
+    5
+}
+fn default_mcp_auto_inject() -> bool {
+    true
+}
 fn default_enabled() -> bool {
     true
 }
@@ -246,6 +258,8 @@ impl Default for GatewayConfig {
             affinity_ttl_secs: default_affinity_ttl_secs(),
             log_max_entries: default_log_max_entries(),
             quota_poll_interval_secs: default_quota_poll_interval_secs(),
+            mcp_max_iterations: default_mcp_max_iterations(),
+            mcp_auto_inject: default_mcp_auto_inject(),
         }
     }
 }

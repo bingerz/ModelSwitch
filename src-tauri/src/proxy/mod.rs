@@ -1,6 +1,7 @@
 pub mod anthropic;
 pub mod cache;
 pub mod gemini;
+pub mod mcp_tools;
 pub mod openai;
 pub mod payload_rules;
 pub mod rate_limiter;

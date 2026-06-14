@@ -471,6 +471,8 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         quota_store: Arc::clone(&quota_store),
         in_flight: Arc::clone(&in_flight),
         mcp_manager: Arc::clone(&mcp_manager),
+        mcp_max_iterations: config.gateway.mcp_max_iterations,
+        mcp_auto_inject: config.gateway.mcp_auto_inject,
         started_at: std::time::Instant::now(),
     });
 

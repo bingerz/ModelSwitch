@@ -3,8 +3,10 @@ use crate::credential::SharedCredentialStore;
 use crate::log::DispatchLogger;
 use crate::mcp::McpManager;
 use crate::proxy::cache::{InFlightRequests, RequestCache};
+use crate::proxy::mcp_tools;
 use crate::proxy::payload_rules::ChannelPayloadRules;
 use crate::proxy::rate_limiter::RateLimiter;
+use crate::proxy::stream::json_response;
 use crate::proxy::{dispatch, AuthStyle, ProxyConfig};
 use crate::quota::SharedQuotaStore;
 use crate::router::active_requests::ActiveRequests;
@@ -12,7 +14,7 @@ use crate::router::affinity::SessionAffinity;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -36,10 +38,32 @@ pub struct AppState {
     pub quota_store: SharedQuotaStore,
     pub in_flight: Arc<InFlightRequests>,
     pub mcp_manager: Arc<McpManager>,
+    /// Maximum MCP tool-call loop iterations.
+    pub mcp_max_iterations: u32,
+    /// Whether to auto-inject MCP tools into chat completion requests.
+    pub mcp_auto_inject: bool,
     pub started_at: std::time::Instant,
 }
 
 /// Handle OpenAI-compatible /v1/chat/completions requests.
+///
+/// When MCP tool auto-injection is enabled (default), the handler:
+///
+/// 1. Aggregates tools from every running MCP server and appends them
+///    to `body.tools` under their `mcp__{server}__{tool}` namespace.
+/// 2. Dispatches the request upstream. If the response contains
+///    tool_calls targeting MCP tools, the handler executes each call
+///    via `McpManager`, appends the results to the conversation, and
+///    re-dispatches. This loop runs at most `mcp_max_iterations` times.
+/// 3. Returns the final response (either text content or a remaining
+///    set of non-MCP tool_calls the client must resolve).
+///
+/// **Streaming caveat**: when MCP tools are injected and the client
+/// requested `stream: true`, the loop processes each iteration as
+/// non-streaming internally and returns the final result as a single
+/// JSON payload. Clients that require SSE streaming should disable MCP
+/// auto-injection (set `mcp_auto_inject = false` in the gateway config)
+/// or call without MCP servers running.
 pub async fn handle_chat_completions(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -48,17 +72,127 @@ pub async fn handle_chat_completions(
     if let Err(resp) = crate::proxy::validate_chat_request(&body) {
         return resp;
     }
-    dispatch(
-        &state,
-        &headers,
-        &body,
-        &ProxyConfig {
-            default_model: "gpt-4",
-            upstream_path: "v1/chat/completions",
-            auth_style: AuthStyle::OpenAI,
-        },
+
+    let proxy_config = ProxyConfig {
+        default_model: "gpt-4",
+        upstream_path: "v1/chat/completions",
+        auth_style: AuthStyle::OpenAI,
+    };
+
+    // If MCP auto-inject is disabled (or no servers running), short-circuit.
+    if !state.mcp_auto_inject {
+        return dispatch(&state, &headers, &body, &proxy_config).await;
+    }
+
+    let (mut current_body, injected) = mcp_tools::inject_mcp_tools(&body, &state.mcp_manager).await;
+    if injected.is_empty() {
+        // Nothing to intercept — normal dispatch path.
+        return dispatch(&state, &headers, &body, &proxy_config).await;
+    }
+
+    // Force non-streaming for internal loop iterations.
+    let _was_streaming = current_body
+        .get("stream")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false);
+    if let Some(obj) = current_body.as_object_mut() {
+        obj.insert("stream".to_string(), json!(false));
+    }
+
+    let max_iter = state.mcp_max_iterations.max(1);
+
+    for iteration in 0..max_iter {
+        let response = dispatch(&state, &headers, &current_body, &proxy_config).await;
+
+        let (status, response_body) = match extract_response_json(response).await {
+            Ok(parts) => parts,
+            Err(fallback) => {
+                // Could not parse JSON (likely an upstream error response).
+                // Return as-is rather than swallowing it.
+                tracing::warn!(
+                    iteration,
+                    "MCP loop: response was not JSON, returning as-is"
+                );
+                return fallback;
+            }
+        };
+
+        let mcp_calls = mcp_tools::detect_mcp_tool_calls(&response_body);
+        if mcp_calls.is_empty() {
+            // No further MCP tool calls — return the final response.
+            if iteration > 0 {
+                tracing::info!(
+                    iteration,
+                    "MCP tool loop completed, returning final response"
+                );
+            }
+            return json_response(status, response_body.to_string());
+        }
+
+        tracing::info!(
+            iteration,
+            calls = mcp_calls.len(),
+            "MCP tool calls detected, executing"
+        );
+        let tool_results = mcp_tools::execute_mcp_tool_calls(&mcp_calls, &state.mcp_manager).await;
+        current_body =
+            mcp_tools::build_followup_request(&current_body, &response_body, &tool_results);
+    }
+
+    tracing::warn!(
+        max_iter,
+        "MCP tool loop exhausted iterations without a terminal response; dispatching final without tools"
+    );
+    // Strip tools to nudge the model towards a text response.
+    if let Some(obj) = current_body.as_object_mut() {
+        obj.remove("tools");
+        obj.remove("tool_choice");
+    }
+    dispatch(&state, &headers, &current_body, &proxy_config).await
+}
+
+/// Buffer an axum `Response` body and parse it as JSON.
+///
+/// Returns `Ok((status, body))` on success, or `Err(fallback_response)`
+/// when the body cannot be collected or parsed. The caller should
+/// return the fallback response untouched.
+async fn extract_response_json(
+    response: axum::response::Response,
+) -> Result<(reqwest::StatusCode, Value), axum::response::Response> {
+    let status = response.status();
+    let fallback_status = status;
+    let bytes = match axum::body::to_bytes(
+        response.into_body(),
+        mcp_tools::max_response_body_bytes(),
     )
     .await
+    {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(error = %e, "MCP loop: failed to buffer response body");
+            let body = json!({
+                "error": {
+                    "message": "MCP loop: failed to buffer upstream response",
+                    "type": "mcp_loop_error",
+                }
+            });
+            return Err(json_response(
+                reqwest::StatusCode::BAD_GATEWAY,
+                body.to_string(),
+            ));
+        }
+    };
+
+    let value: Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(_) => {
+            // Not JSON — reconstruct a fallback response carrying the raw body.
+            let raw = String::from_utf8_lossy(&bytes).to_string();
+            return Err(json_response(fallback_status, raw));
+        }
+    };
+
+    Ok((status, value))
 }
 
 /// List available models from all enabled channels.

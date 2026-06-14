@@ -180,9 +180,7 @@ impl ChannelManager {
         drop(channels);
 
         // Preserve existing MCP server configs — only channels are being persisted.
-        let existing_mcp_servers = AppConfig::load()
-            .map(|c| c.mcp_servers)
-            .unwrap_or_default();
+        let existing_mcp_servers = AppConfig::load().map(|c| c.mcp_servers).unwrap_or_default();
 
         let config = AppConfig {
             gateway: self.gateway_config.clone(),
