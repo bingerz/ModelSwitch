@@ -134,9 +134,7 @@ pub fn start_config_watcher(
 
                                 // Reload MCP servers: preserve running servers that still exist,
                                 // stop removed servers, add new servers (not auto-started).
-                                mcp_mgr
-                                    .reload_configs(&new_config.mcp_servers)
-                                    .await;
+                                mcp_mgr.reload_configs(&new_config.mcp_servers).await;
                                 tracing::info!("MCP servers reloaded");
                             }
                             Err(e) => {

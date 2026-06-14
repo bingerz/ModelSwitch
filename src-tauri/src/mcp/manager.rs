@@ -223,9 +223,7 @@ impl McpManager {
             let mut entries = self.entries.write().await;
             entries
                 .iter_mut()
-                .filter_map(|(id, entry)| {
-                    entry.client.take().map(|c| (id.clone(), c))
-                })
+                .filter_map(|(id, entry)| entry.client.take().map(|c| (id.clone(), c)))
                 .collect()
         };
 
@@ -345,10 +343,9 @@ impl McpManager {
         params.name = tool_name.to_string().into();
         params.arguments = arguments;
 
-        let result = peer
-            .call_tool(params)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to call tool '{tool_name}' on '{server_id}': {e}"))?;
+        let result = peer.call_tool(params).await.map_err(|e| {
+            anyhow::anyhow!("Failed to call tool '{tool_name}' on '{server_id}': {e}")
+        })?;
 
         Ok(result)
     }
@@ -394,19 +391,19 @@ mod tests {
 
         let status = mgr.list_status().await;
         assert_eq!(status.len(), 2);
-        assert!(status.iter().all(|(_, _, s)| matches!(s, McpServerStatus::Stopped)));
+        assert!(status
+            .iter()
+            .all(|(_, _, s)| matches!(s, McpServerStatus::Stopped)));
     }
 
     #[tokio::test]
     async fn load_configs_clears_existing() {
         let mgr = McpManager::new();
-        mgr.load_configs(&[make_config("srv1", "Server 1")])
-            .await;
+        mgr.load_configs(&[make_config("srv1", "Server 1")]).await;
         assert_eq!(mgr.list_status().await.len(), 1);
 
         // Reload with different configs
-        mgr.load_configs(&[make_config("srv2", "Server 2")])
-            .await;
+        mgr.load_configs(&[make_config("srv2", "Server 2")]).await;
         let status = mgr.list_status().await;
         assert_eq!(status.len(), 1);
         assert_eq!(status[0].0, "srv2");
@@ -415,8 +412,7 @@ mod tests {
     #[tokio::test]
     async fn get_config_returns_loaded_config() {
         let mgr = McpManager::new();
-        mgr.load_configs(&[make_config("srv1", "My Server")])
-            .await;
+        mgr.load_configs(&[make_config("srv1", "My Server")]).await;
 
         let config = mgr.get_config("srv1").await;
         assert!(config.is_some());
@@ -428,8 +424,7 @@ mod tests {
     #[tokio::test]
     async fn list_status_reports_stopped_for_unstarted() {
         let mgr = McpManager::new();
-        mgr.load_configs(&[make_config("srv1", "Server 1")])
-            .await;
+        mgr.load_configs(&[make_config("srv1", "Server 1")]).await;
 
         let status = mgr.list_status().await;
         assert_eq!(status.len(), 1);
@@ -439,8 +434,7 @@ mod tests {
     #[tokio::test]
     async fn reload_configs_preserves_running_metadata() {
         let mgr = McpManager::new();
-        mgr.load_configs(&[make_config("srv1", "Original")])
-            .await;
+        mgr.load_configs(&[make_config("srv1", "Original")]).await;
 
         // Reload with updated config for same ID plus a new one
         mgr.reload_configs(&[
@@ -472,8 +466,7 @@ mod tests {
         mgr.load_configs(&[make_config("srv1", "A"), make_config("srv2", "B")])
             .await;
 
-        mgr.reload_configs(&[make_config("srv1", "A")])
-            .await;
+        mgr.reload_configs(&[make_config("srv1", "A")]).await;
 
         let status = mgr.list_status().await;
         assert_eq!(status.len(), 1);

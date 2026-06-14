@@ -281,6 +281,81 @@ async fn app_hide(app: tauri::AppHandle) {
     }
 }
 
+#[cfg(feature = "tauri")]
+#[tauri::command]
+async fn mcp_list_servers(
+    manager: tauri::State<'_, GatewayManager>,
+) -> Result<Vec<admin::McpServerResponse>, String> {
+    let state = &manager.app_state;
+    let statuses = state.mcp_manager.list_status().await;
+    let mut responses = Vec::with_capacity(statuses.len());
+    for (id, _name, status) in statuses {
+        if let Some(config) = state.mcp_manager.get_config(&id).await {
+            responses.push(admin::McpServerResponse {
+                id: config.id,
+                name: config.name,
+                command: config.command,
+                args: config.args,
+                env: config.env,
+                cwd: config.cwd,
+                enabled: config.enabled,
+                expose_tools: config.expose_tools,
+                status,
+            });
+        }
+    }
+    Ok(responses)
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+async fn mcp_start_server(
+    manager: tauri::State<'_, GatewayManager>,
+    server_id: String,
+) -> Result<(), String> {
+    manager
+        .app_state
+        .mcp_manager
+        .start_server(&server_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+async fn mcp_stop_server(
+    manager: tauri::State<'_, GatewayManager>,
+    server_id: String,
+) -> Result<(), String> {
+    manager
+        .app_state
+        .mcp_manager
+        .stop_server(&server_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command]
+async fn mcp_list_tools(
+    manager: tauri::State<'_, GatewayManager>,
+    server_id: String,
+) -> Result<Vec<admin::McpToolResponse>, String> {
+    let tools = manager
+        .app_state
+        .mcp_manager
+        .list_tools(&server_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(tools
+        .iter()
+        .map(|t| admin::McpToolResponse {
+            name: t.name.to_string(),
+            description: t.description.as_deref().map(String::from),
+        })
+        .collect())
+}
+
 /// Build gateway state and start background services.
 /// Callable from both Tauri setup and CLI mode.
 /// If `config_path` is provided, loads config from that path instead of the default.
@@ -531,6 +606,17 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/cache/flush", post(admin::flush_cache))
         .route("/api/config/reload", post(admin::reload_config))
+        .route("/api/mcp/servers", get(admin::list_mcp_servers))
+        .route("/api/mcp/servers", post(admin::create_mcp_server))
+        .route("/api/mcp/servers/:id", put(admin::update_mcp_server))
+        .route("/api/mcp/servers/:id", delete(admin::delete_mcp_server))
+        .route("/api/mcp/servers/:id/start", post(admin::start_mcp_server))
+        .route("/api/mcp/servers/:id/stop", post(admin::stop_mcp_server))
+        .route(
+            "/api/mcp/servers/:id/tools",
+            get(admin::list_mcp_server_tools),
+        )
+        .route("/api/mcp/tools", get(admin::list_all_mcp_tools))
         .with_state(admin_route_state)
         .layer(axum::middleware::from_fn_with_state(
             admin_auth_state,
@@ -673,6 +759,10 @@ pub fn run() {
             gateway_restart,
             app_quit,
             app_hide,
+            mcp_list_servers,
+            mcp_start_server,
+            mcp_stop_server,
+            mcp_list_tools,
         ])
         .setup(|app| {
             let handles = start_gateway_services(None);

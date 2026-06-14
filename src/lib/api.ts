@@ -177,6 +177,58 @@ export function validateChannelForm(fields: { name: string; baseUrl: string }): 
   return null;
 }
 
+// ─── MCP Types ──────────────────────────────────────────
+
+/** Serde externally-tagged enum: "stopped" | { running: { tool_count } } | { error: { message } } */
+export type McpServerStatus =
+  | "stopped"
+  | { running: { tool_count: number } }
+  | { error: { message: string } };
+
+export interface McpServer {
+  id: string;
+  name: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  cwd: string | null;
+  enabled: boolean;
+  expose_tools: boolean;
+  status: McpServerStatus;
+}
+
+export interface McpToolDetail {
+  name: string;
+  description: string | null;
+}
+
+export interface McpToolInfo {
+  server_id: string;
+  name: string;
+  description: string | null;
+}
+
+export interface CreateMcpServerData {
+  id: string;
+  name: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string | null;
+  enabled?: boolean;
+  expose_tools?: boolean;
+}
+
+export interface UpdateMcpServerData {
+  name: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string | null;
+  enabled?: boolean;
+  expose_tools?: boolean;
+}
+
 export const api = {
   listChannels: () => request<Channel[]>("/api/channels"),
   createChannel: (data: Partial<Channel> & { credential_value: string; credential_type?: string }) =>
@@ -209,4 +261,29 @@ export const api = {
   quota: () => request<QuotaInfo[]>("/api/quota"),
   usageHistory: (hours = 24) =>
     request<UsageHistory>(`/api/stats/usage?hours=${hours}`),
+  mcp: {
+    listServers: () => request<McpServer[]>("/api/mcp/servers"),
+    createServer: (data: CreateMcpServerData) =>
+      request<McpServer>("/api/mcp/servers", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    updateServer: (id: string, data: UpdateMcpServerData) =>
+      request<McpServer>(`/api/mcp/servers/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    deleteServer: async (id: string) => {
+      const res = await fetch(`${API_BASE}/api/mcp/servers/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      return res;
+    },
+    startServer: (id: string) =>
+      request<{ ok: boolean }>(`/api/mcp/servers/${id}/start`, { method: "POST" }),
+    stopServer: (id: string) =>
+      request<{ ok: boolean }>(`/api/mcp/servers/${id}/stop`, { method: "POST" }),
+    listServerTools: (id: string) =>
+      request<McpToolDetail[]>(`/api/mcp/servers/${id}/tools`),
+    listAllTools: () => request<McpToolInfo[]>("/api/mcp/tools"),
+  },
 };
