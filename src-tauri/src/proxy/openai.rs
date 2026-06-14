@@ -44,6 +44,8 @@ pub struct AppState {
     pub mcp_max_iterations: u32,
     /// Whether to auto-inject MCP tools into chat completion requests.
     pub mcp_auto_inject: bool,
+    /// Privacy guardrail configuration consumed by the sanitizer middleware.
+    pub sanitizer_config: crate::config::SanitizerConfig,
     pub started_at: std::time::Instant,
 }
 

@@ -968,7 +968,9 @@ async fn persist_virtual_keys(state: &Arc<AppState>) {
 
 /// GET /api/virtual-keys — list all keys with current spend.
 /// Never returns `key_hash`. Plaintext is only returned once at creation time.
-pub async fn list_virtual_keys(State(state): State<Arc<AppState>>) -> Json<Vec<VirtualKeyResponse>> {
+pub async fn list_virtual_keys(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<VirtualKeyResponse>> {
     let keys = state.virtual_key_store.list().await;
     Json(keys.iter().map(VirtualKeyResponse::from).collect())
 }

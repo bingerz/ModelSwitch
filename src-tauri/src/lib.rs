@@ -477,6 +477,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         mcp_manager: Arc::clone(&mcp_manager),
         mcp_max_iterations: config.gateway.mcp_max_iterations,
         mcp_auto_inject: config.gateway.mcp_auto_inject,
+        sanitizer_config: config.gateway.sanitizer.clone(),
         started_at: std::time::Instant::now(),
     });
 
@@ -603,6 +604,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
 pub fn build_router(state: Arc<AppState>) -> Router {
     let proxy_state = Arc::clone(&state);
     let proxy_auth_state = Arc::clone(&state);
+    let sanitizer_state = Arc::clone(&state);
     let admin_route_state = Arc::clone(&state);
     let admin_auth_state = Arc::clone(&state);
 
@@ -620,6 +622,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .layer(axum::middleware::from_fn_with_state(
             proxy_auth_state,
             middleware::virtual_key::virtual_key_middleware,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            sanitizer_state,
+            middleware::sanitizer::sanitizer_middleware,
         ))
         .with_state(proxy_state);
 
