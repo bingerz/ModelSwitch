@@ -8,9 +8,10 @@ import { StatusDashboard } from "./components/StatusDashboard";
 import { CostDashboard } from "./components/CostDashboard";
 import { QuotaPanel } from "./components/QuotaPanel";
 import { McpServersPanel } from "./components/McpServersPanel";
+import { VirtualKeysPanel } from "./components/VirtualKeysPanel";
 import { QuotaProvider } from "./hooks/useQuota";
 
-type TabId = "channels" | "quota" | "logs" | "status" | "cost" | "mcp";
+type TabId = "channels" | "quota" | "logs" | "status" | "cost" | "mcp" | "virtualKeys";
 type Theme = "light" | "dark";
 
 const TABS: { id: TabId; label: string }[] = [
@@ -20,6 +21,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "status", label: "Status" },
   { id: "cost", label: "Cost" },
   { id: "mcp", label: "MCP Servers" },
+  { id: "virtualKeys", label: "Virtual Keys" },
 ];
 
 function getInitialTheme(): Theme {
@@ -113,6 +115,7 @@ function AppInner() {
           {activeTab === "status" && <StatusDashboard />}
           {activeTab === "cost" && <CostDashboard />}
           {activeTab === "mcp" && <McpServersPanel />}
+          {activeTab === "virtualKeys" && <VirtualKeysPanel />}
         </main>
       </div>
       <StatusBar />

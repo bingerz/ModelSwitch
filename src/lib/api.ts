@@ -229,6 +229,43 @@ export interface UpdateMcpServerData {
   expose_tools?: boolean;
 }
 
+// ─── Virtual Key Types ──────────────────────────────────
+
+export interface VirtualKeySpend {
+  today: { date: string; cents: number };
+  this_month: { month: string; cents: number };
+  total_cents: number;
+}
+
+export interface VirtualKey {
+  id: string;
+  name: string;
+  key_prefix: string;
+  daily_budget_cents: number | null;
+  monthly_budget_cents: number | null;
+  enabled: boolean;
+  spend: VirtualKeySpend;
+  created_at: string;
+}
+
+export interface CreateVirtualKeyResponse {
+  key: VirtualKey;
+  plaintext: string;
+}
+
+export interface CreateVirtualKeyData {
+  name: string;
+  daily_budget_cents?: number | null;
+  monthly_budget_cents?: number | null;
+}
+
+export interface UpdateVirtualKeyData {
+  name?: string;
+  daily_budget_cents?: number | null;
+  monthly_budget_cents?: number | null;
+  enabled?: boolean;
+}
+
 export const api = {
   listChannels: () => request<Channel[]>("/api/channels"),
   createChannel: (data: Partial<Channel> & { credential_value: string; credential_type?: string }) =>
@@ -285,5 +322,23 @@ export const api = {
     listServerTools: (id: string) =>
       request<McpToolDetail[]>(`/api/mcp/servers/${id}/tools`),
     listAllTools: () => request<McpToolInfo[]>("/api/mcp/tools"),
+  },
+  virtualKeys: {
+    list: () => request<VirtualKey[]>("/api/virtual-keys"),
+    create: (data: CreateVirtualKeyData) =>
+      request<CreateVirtualKeyResponse>("/api/virtual-keys", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    update: (id: string, data: UpdateVirtualKeyData) =>
+      request<VirtualKey>(`/api/virtual-keys/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      }),
+    delete: async (id: string) => {
+      const res = await fetch(`${API_BASE}/api/virtual-keys/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`API error: ${res.status}`);
+      return res;
+    },
   },
 };

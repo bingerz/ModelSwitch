@@ -9,6 +9,7 @@ mod middleware;
 mod proxy;
 mod quota;
 mod router;
+pub mod virtual_key;
 #[cfg(feature = "tauri")]
 mod webview_login;
 
@@ -28,6 +29,7 @@ use quota::QuotaStore;
 use router::active_requests::ActiveRequests;
 use router::affinity::SessionAffinity;
 use std::sync::Arc;
+use virtual_key::VirtualKeyStore;
 
 use axum::routing::{delete, get, post, put};
 use axum::Router;
@@ -408,6 +410,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     let payload_rules = Arc::new(ChannelPayloadRules::new());
     let rate_limiter = Arc::new(RateLimiter::new(None));
     let quota_store = Arc::new(QuotaStore::new());
+    let virtual_key_store = Arc::new(VirtualKeyStore::new());
     let quota_registry = Arc::new(QuotaProviderRegistry::new(
         quota::collectors::default_registry(),
     ));
@@ -469,6 +472,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         payload_rules: Arc::clone(&payload_rules),
         rate_limiter: Arc::clone(&rate_limiter),
         quota_store: Arc::clone(&quota_store),
+        virtual_key_store: Arc::clone(&virtual_key_store),
         in_flight: Arc::clone(&in_flight),
         mcp_manager: Arc::clone(&mcp_manager),
         mcp_max_iterations: config.gateway.mcp_max_iterations,
@@ -498,6 +502,35 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             loop {
                 interval.tick().await;
                 persist_quota.persist_to_file().await;
+            }
+        });
+    }
+
+    // Load persisted virtual keys (so keys + spend survive restarts)
+    {
+        let boot_vk = Arc::clone(&virtual_key_store);
+        spawn_bg(async move {
+            let path = virtual_key::persistence_path();
+            if let Err(e) = boot_vk.load(&path).await {
+                tracing::warn!(error = %e, ?path, "Failed to load virtual keys");
+            } else {
+                let count = boot_vk.list().await.len();
+                tracing::info!(count, "Loaded virtual keys from disk");
+            }
+        });
+    }
+
+    // Periodic virtual key persistence (every 60s)
+    {
+        let persist_vk = Arc::clone(&virtual_key_store);
+        spawn_bg(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let path = virtual_key::persistence_path();
+                if let Err(e) = persist_vk.persist(&path).await {
+                    tracing::warn!(error = %e, "Failed to persist virtual keys");
+                }
             }
         });
     }
@@ -565,13 +598,15 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
 }
 
 /// Build the Axum Router with all proxy and admin routes.
-/// Proxy routes are unauthenticated; admin routes use optional Bearer token auth.
+/// Proxy routes use optional virtual-key auth (pass-through when no keys configured);
+/// admin routes use optional Bearer token auth.
 pub fn build_router(state: Arc<AppState>) -> Router {
     let proxy_state = Arc::clone(&state);
+    let proxy_auth_state = Arc::clone(&state);
     let admin_route_state = Arc::clone(&state);
     let admin_auth_state = Arc::clone(&state);
 
-    // Proxy routes — no auth (used by IDEs and external clients)
+    // Proxy routes — virtual-key auth (pass-through when no virtual keys configured)
     let proxy_router = Router::new()
         .route(
             "/v1/chat/completions",
@@ -582,6 +617,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/messages", post(proxy::anthropic::handle_messages))
         .route("/v1beta/models/*path", post(proxy::gemini::handle_gemini))
         .route("/health", get(proxy::openai::health_check))
+        .layer(axum::middleware::from_fn_with_state(
+            proxy_auth_state,
+            middleware::virtual_key::virtual_key_middleware,
+        ))
         .with_state(proxy_state);
 
     // Admin routes — optional Bearer token auth
@@ -620,6 +659,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             get(admin::list_mcp_server_tools),
         )
         .route("/api/mcp/tools", get(admin::list_all_mcp_tools))
+        .route("/api/virtual-keys", get(admin::list_virtual_keys))
+        .route("/api/virtual-keys", post(admin::create_virtual_key))
+        .route("/api/virtual-keys/:id", put(admin::update_virtual_key))
+        .route("/api/virtual-keys/:id", delete(admin::delete_virtual_key))
         .with_state(admin_route_state)
         .layer(axum::middleware::from_fn_with_state(
             admin_auth_state,

@@ -391,6 +391,15 @@ struct RequestMeta<'a> {
     affinity_channel: Option<Uuid>,
 }
 
+/// Extract the virtual key id (if any) injected by `virtual_key_middleware`.
+/// Returns None when no virtual keys are configured or the header is absent.
+fn extract_virtual_key_id(headers: &HeaderMap) -> Option<Uuid> {
+    headers
+        .get("x-virtual-key-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| Uuid::parse_str(s).ok())
+}
+
 /// Extract request metadata (model, stream flag, session affinity, request ID).
 async fn extract_request_meta<'a>(
     body: &Value,
@@ -567,6 +576,7 @@ async fn handle_streaming_success(
     start: std::time::Instant,
     request_id: Option<&str>,
     upstream_headers: &[(String, String)],
+    vk_id: Option<Uuid>,
 ) -> Response {
     let is_gemini = matches!(proxy_config.auth_style, AuthStyle::GeminiUrl);
     let (stream_resp, telemetry_chunks) = sse_stream_response_with_telemetry(
@@ -612,6 +622,7 @@ async fn handle_streaming_success(
     {
         let bg_logger = Arc::clone(&state.logger);
         let bg_quota_store = Arc::clone(&state.quota_store);
+        let bg_virtual_key_store = Arc::clone(&state.virtual_key_store);
         let bg_model = current_model.to_string();
         let bg_channel_id = channel.id;
         let bg_channel_name = channel.name.clone();
@@ -622,6 +633,7 @@ async fn handle_streaming_success(
         let bg_input_cost = channel.input_cost_per_mtok;
         let bg_output_cost = channel.output_cost_per_mtok;
         let bg_cost_per_token = channel.cost_per_token;
+        let bg_vk_id = vk_id;
         crate::spawn_bg(async move {
             // Wait for chunks to accumulate (stream finishing)
             let chunks = {
@@ -692,6 +704,12 @@ async fn handle_streaming_success(
                         real_cost,
                     )
                     .await;
+
+                // Attribute spend to the requesting virtual key (if any).
+                if let Some(vk) = bg_vk_id {
+                    let cost_cents = (real_cost.unwrap_or(0.0) * 100.0) as u64;
+                    bg_virtual_key_store.accumulate_spend(vk, cost_cents).await;
+                }
             }
         });
     }
@@ -730,6 +748,7 @@ async fn handle_json_success(
     start: std::time::Instant,
     request_id: Option<&str>,
     upstream_headers: &[(String, String)],
+    vk_id: Option<Uuid>,
 ) -> Response {
     let body_text = resp.text().await.unwrap_or_default();
 
@@ -765,6 +784,11 @@ async fn handle_json_success(
             estimated_cost,
         )
         .await;
+    // Attribute spend to the requesting virtual key (if any).
+    if let Some(vk) = vk_id {
+        let cost_cents = (estimated_cost.unwrap_or(0.0) * 100.0) as u64;
+        state.virtual_key_store.accumulate_spend(vk, cost_cents).await;
+    }
     state
         .logger
         .log(make_log(
@@ -816,6 +840,7 @@ async fn try_channel_attempt(
     start: std::time::Instant,
     attempt: u32,
     request_id: Option<&str>,
+    vk_id: Option<Uuid>,
 ) -> AttemptOutcome {
     let upstream_model = channel.map_model(current_model);
     let mut upstream_body = body.clone();
@@ -1060,6 +1085,7 @@ async fn try_channel_attempt(
             start,
             request_id,
             &upstream_headers,
+            vk_id,
         )
         .await;
         AttemptOutcome::Respond(response)
@@ -1078,6 +1104,7 @@ async fn try_channel_attempt(
             start,
             request_id,
             &upstream_headers,
+            vk_id,
         )
         .await;
         AttemptOutcome::Respond(response)
@@ -1102,6 +1129,7 @@ pub(crate) async fn dispatch(
         session_id,
         affinity_channel,
     } = meta;
+    let vk_id = extract_virtual_key_id(original_headers);
 
     let max_retries = state.max_retries;
     let channels = state.channel_mgr.channels();
@@ -1178,6 +1206,7 @@ pub(crate) async fn dispatch(
                 start,
                 attempt,
                 request_id,
+                vk_id,
             )
             .await
             {

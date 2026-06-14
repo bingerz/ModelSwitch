@@ -11,6 +11,7 @@ use crate::proxy::{dispatch, AuthStyle, ProxyConfig};
 use crate::quota::SharedQuotaStore;
 use crate::router::active_requests::ActiveRequests;
 use crate::router::affinity::SessionAffinity;
+use crate::virtual_key::SharedVirtualKeyStore;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
@@ -36,6 +37,7 @@ pub struct AppState {
     pub payload_rules: Arc<ChannelPayloadRules>,
     pub rate_limiter: Arc<RateLimiter>,
     pub quota_store: SharedQuotaStore,
+    pub virtual_key_store: SharedVirtualKeyStore,
     pub in_flight: Arc<InFlightRequests>,
     pub mcp_manager: Arc<McpManager>,
     /// Maximum MCP tool-call loop iterations.
