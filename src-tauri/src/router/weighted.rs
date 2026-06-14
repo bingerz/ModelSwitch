@@ -73,10 +73,7 @@ mod tests {
 
     #[test]
     fn test_weighted_random_distribution() {
-        let channels = vec![
-            make_channel("heavy", 900, 1),
-            make_channel("light", 100, 1),
-        ];
+        let channels = vec![make_channel("heavy", 900, 1), make_channel("light", 100, 1)];
 
         let mut heavy_count = 0u32;
         let iterations = 1000u32;
@@ -101,10 +98,7 @@ mod tests {
 
     #[test]
     fn test_weighted_random_zero_weights() {
-        let channels = vec![
-            make_channel("a", 0, 1),
-            make_channel("b", 0, 1),
-        ];
+        let channels = vec![make_channel("a", 0, 1), make_channel("b", 0, 1)];
         let result = weighted_random(&channels);
         assert!(result.is_some());
     }

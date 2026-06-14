@@ -18,10 +18,9 @@ pub async fn request_id_middleware(request: Request<Body>, next: Next) -> Respon
     // Set the request ID header for downstream handlers and upstream forwarding
     let mut request = request;
     let header_name = HeaderName::from_static(REQUEST_ID_HEADER);
-    request.headers_mut().insert(
-        header_name.clone(),
-        request_id.parse().unwrap(),
-    );
+    request
+        .headers_mut()
+        .insert(header_name.clone(), request_id.parse().unwrap());
 
     let mut response = next.run(request).await;
     response

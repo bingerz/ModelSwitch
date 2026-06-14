@@ -21,25 +21,24 @@ use proxy::cache::RequestCache;
 use proxy::openai::AppState;
 use proxy::payload_rules::ChannelPayloadRules;
 use proxy::rate_limiter::RateLimiter;
-use quota::QuotaStore;
 use quota::registry::QuotaProviderRegistry;
+use quota::QuotaStore;
 use router::active_requests::ActiveRequests;
 use router::affinity::SessionAffinity;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::routing::{delete, get, post, put};
+use axum::Router;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
+use tokio::sync::oneshot;
 use tokio::sync::Notify;
 
 #[cfg(feature = "tauri")]
 use serde::Serialize;
 #[cfg(feature = "tauri")]
 use std::sync::Mutex;
-#[cfg(feature = "tauri")]
-use tokio::sync::oneshot;
 
 /// Spawn a background task, working both in CLI (tokio runtime) and Tauri (main thread without runtime).
 fn spawn_bg<F>(future: F)
@@ -153,7 +152,9 @@ struct GatewayStatus {
 
 #[cfg(feature = "tauri")]
 #[tauri::command]
-async fn gateway_status(manager: tauri::State<'_, GatewayManager>) -> Result<GatewayStatus, String> {
+async fn gateway_status(
+    manager: tauri::State<'_, GatewayManager>,
+) -> Result<GatewayStatus, String> {
     let inner = manager.inner.lock().unwrap();
     Ok(GatewayStatus {
         running: inner.running,
@@ -183,7 +184,15 @@ async fn gateway_start(manager: tauri::State<'_, GatewayManager>) -> Result<(), 
     let shutdown_clone = Arc::clone(&shutdown);
 
     tauri::async_runtime::spawn(async move {
-        start_gateway(state, &host, port, drain, Some(shutdown_clone), Some(bind_ok_tx)).await;
+        start_gateway(
+            state,
+            &host,
+            port,
+            drain,
+            Some(shutdown_clone),
+            Some(bind_ok_tx),
+        )
+        .await;
         let _ = stopped_tx.send(());
     });
 
@@ -194,7 +203,11 @@ async fn gateway_start(manager: tauri::State<'_, GatewayManager>) -> Result<(), 
             inner.running = true;
             inner.shutdown = Some(shutdown);
             inner.stopped_rx = Some(stopped_rx);
-            tracing::info!("Gateway started successfully on {}:{}", manager.host, manager.port);
+            tracing::info!(
+                "Gateway started successfully on {}:{}",
+                manager.host,
+                manager.port
+            );
             Ok(())
         }
         Ok(Err(e)) => {
@@ -273,12 +286,12 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     // Initialize tracing (no-op if already initialized, e.g. by CLI main)
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .try_init();
 
     // Load config
+    let watcher_config_path = config_path.clone();
     let config = match config_path {
         Some(path) => AppConfig::load_from(path).unwrap_or_else(|e| {
             eprintln!("Failed to load config: {e}");
@@ -294,7 +307,9 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
 
     // Build shared HTTP client (connection pooling)
     let http_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(config.gateway.http_timeout_secs))
+        .timeout(std::time::Duration::from_secs(
+            config.gateway.http_timeout_secs,
+        ))
         .build()
         .expect("Failed to build HTTP client");
 
@@ -302,7 +317,10 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     let credential_store = create_credential_store();
     let channel_mgr = Arc::new(ChannelManager::new(&config, Arc::clone(&credential_store)));
     let log_file = config::app_config_dir().join("logs.ndjson");
-    let logger = Arc::new(DispatchLogger::with_persistence(config.gateway.log_max_entries, log_file));
+    let logger = Arc::new(DispatchLogger::with_persistence(
+        config.gateway.log_max_entries,
+        log_file,
+    ));
 
     // Build shared components
     let active_requests = Arc::new(ActiveRequests::new());
@@ -313,7 +331,9 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     let payload_rules = Arc::new(ChannelPayloadRules::new());
     let rate_limiter = Arc::new(RateLimiter::new(None));
     let quota_store = Arc::new(QuotaStore::new());
-    let quota_registry = Arc::new(QuotaProviderRegistry::new(quota::collectors::default_registry()));
+    let quota_registry = Arc::new(QuotaProviderRegistry::new(
+        quota::collectors::default_registry(),
+    ));
     let in_flight = Arc::new(proxy::cache::InFlightRequests::new());
 
     // Resolve admin token: env > config
@@ -335,11 +355,14 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         }
         if let Some(ref rules) = ch.payload_rules {
             use crate::proxy::payload_rules::PayloadRules;
-            payload_rules.add(id, PayloadRules {
-                defaults: rules.defaults.clone(),
-                overrides: rules.overrides.clone(),
-                strip: rules.strip.clone(),
-            });
+            payload_rules.add(
+                id,
+                PayloadRules {
+                    defaults: rules.defaults.clone(),
+                    overrides: rules.overrides.clone(),
+                    strip: rules.strip.clone(),
+                },
+            );
         }
     }
 
@@ -413,7 +436,15 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             .filter_map(|ch| ch.quota.as_ref().map(|q| (ch.id.clone(), q.clone())))
             .collect();
         spawn_bg(async move {
-            quota::poller::start_quota_poller(qp_mgr, qp_store, qp_client, qp_interval, qp_registry, qp_configs).await;
+            quota::poller::start_quota_poller(
+                qp_mgr,
+                qp_store,
+                qp_client,
+                qp_interval,
+                qp_registry,
+                qp_configs,
+            )
+            .await;
         });
     }
 
@@ -429,10 +460,10 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     }
 
     // Start hot config reload watcher
-    if let Ok(config_path) = AppConfig::config_path() {
-        config::watcher::start_config_watcher(config_path, Arc::clone(&channel_mgr));
+    let watcher_path = watcher_config_path.or_else(|| AppConfig::config_path().ok());
+    if let Some(path) = watcher_path {
+        config::watcher::start_config_watcher(path, Arc::clone(&channel_mgr));
     }
-
     GatewayHandles {
         state,
         host,
@@ -450,7 +481,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     // Proxy routes — no auth (used by IDEs and external clients)
     let proxy_router = Router::new()
-        .route("/v1/chat/completions", post(proxy::openai::handle_chat_completions))
+        .route(
+            "/v1/chat/completions",
+            post(proxy::openai::handle_chat_completions),
+        )
         .route("/v1/models", get(proxy::openai::handle_list_models))
         .route("/v1/messages", post(proxy::anthropic::handle_messages))
         .route("/v1beta/models/*path", post(proxy::gemini::handle_gemini))
@@ -472,8 +506,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/quota", get(admin::get_quota))
         .route("/api/auth/cookies", post(admin::receive_login_cookies))
         .route("/api/auth/pending-cookies", get(admin::get_pending_cookies))
-        .route("/api/channels/:id/reset-circuit", post(admin::reset_circuit))
-        .route("/api/channels/:id/payload-rules", put(admin::set_payload_rules))
+        .route(
+            "/api/channels/:id/reset-circuit",
+            post(admin::reset_circuit),
+        )
+        .route(
+            "/api/channels/:id/payload-rules",
+            put(admin::set_payload_rules),
+        )
         .route("/api/cache/flush", post(admin::flush_cache))
         .route("/api/config/reload", post(admin::reload_config))
         .with_state(admin_route_state)
@@ -485,7 +525,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(proxy_router)
         .merge(admin_router)
-        .layer(axum::middleware::from_fn(middleware::request_id::request_id_middleware))
+        .layer(axum::middleware::from_fn(
+            middleware::request_id::request_id_middleware,
+        ))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024))
@@ -585,7 +627,12 @@ async fn shutdown_signal() {
 
 /// Start gateway from pre-built handles (convenience for CLI).
 pub async fn run_gateway(handles: GatewayHandles) {
-    let GatewayHandles { state, host, port, drain_timeout_secs } = handles;
+    let GatewayHandles {
+        state,
+        host,
+        port,
+        drain_timeout_secs,
+    } = handles;
     start_gateway(state, &host, port, drain_timeout_secs, None, None).await;
 }
 

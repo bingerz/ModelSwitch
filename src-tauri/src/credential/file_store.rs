@@ -1,5 +1,5 @@
-use crate::config::app_config_dir;
 use super::CredentialStore;
+use crate::config::app_config_dir;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::fs;

@@ -78,10 +78,7 @@ impl QuotaProviderRegistry {
     /// Poll using the best-matched provider, returning QuotaInfo or an error.
     pub async fn poll(&self, ctx: &PollContext) -> Result<QuotaInfo, QuotaError> {
         let provider = self.resolve(ctx).ok_or_else(|| {
-            QuotaError::Unsupported(format!(
-                "no quota provider for '{}'",
-                ctx.provider
-            ))
+            QuotaError::Unsupported(format!("no quota provider for '{}'", ctx.provider))
         })?;
         provider.poll(ctx).await
     }

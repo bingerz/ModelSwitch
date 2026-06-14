@@ -83,10 +83,7 @@ impl DispatchLogger {
             logs.push_back(entry);
         }
 
-        tracing::info!(
-            loaded = logs.len(),
-            "dispatch logs loaded from file"
-        );
+        tracing::info!(loaded = logs.len(), "dispatch logs loaded from file");
     }
 
     pub async fn log(&self, entry: DispatchLog) {
@@ -233,10 +230,7 @@ impl DispatchLogger {
         let logs = self.logs.read().await;
         let successful: Vec<&DispatchLog> = logs.iter().filter(|l| l.success).collect();
 
-        let total_cost: f64 = successful
-            .iter()
-            .filter_map(|l| l.estimated_cost)
-            .sum();
+        let total_cost: f64 = successful.iter().filter_map(|l| l.estimated_cost).sum();
 
         let total_requests = successful.len();
 
@@ -244,11 +238,13 @@ impl DispatchLogger {
         let mut priority_breakdown: BTreeMap<u8, PriorityStats> = BTreeMap::new();
         for log in &successful {
             let priority = log.channel_priority;
-            let entry = priority_breakdown.entry(priority).or_insert_with(|| PriorityStats {
-                priority,
-                requests: 0,
-                estimated_cost: 0.0,
-            });
+            let entry = priority_breakdown
+                .entry(priority)
+                .or_insert_with(|| PriorityStats {
+                    priority,
+                    requests: 0,
+                    estimated_cost: 0.0,
+                });
             entry.requests += 1;
             if let Some(cost) = log.estimated_cost {
                 entry.estimated_cost += cost;
@@ -403,82 +399,90 @@ mod tests {
         let two_hours_ago = now - chrono::Duration::hours(2);
 
         // ch1: 2 requests in same hour
-        logger.log(DispatchLog {
-            id: Uuid::new_v4(),
-            timestamp: one_hour_ago,
-            request_model: "deepseek-chat".into(),
-            channel_id: ch1,
-            channel_name: "DeepSeek-1".into(),
-            channel_priority: 1,
-            retry_count: 0,
-            trigger_reason: None,
-            latency_ms: 100,
-            success: true,
-            estimated_cost: Some(0.01),
-            input_tokens: Some(500),
-            output_tokens: Some(200),
-            cache_hit_tokens: None,
-            cache_miss_tokens: None,
-            request_id: None,
-        }).await;
-        logger.log(DispatchLog {
-            id: Uuid::new_v4(),
-            timestamp: one_hour_ago + chrono::Duration::minutes(10),
-            request_model: "deepseek-chat".into(),
-            channel_id: ch1,
-            channel_name: "DeepSeek-1".into(),
-            channel_priority: 1,
-            retry_count: 0,
-            trigger_reason: None,
-            latency_ms: 150,
-            success: true,
-            estimated_cost: Some(0.02),
-            input_tokens: Some(300),
-            output_tokens: Some(100),
-            cache_hit_tokens: None,
-            cache_miss_tokens: None,
-            request_id: None,
-        }).await;
+        logger
+            .log(DispatchLog {
+                id: Uuid::new_v4(),
+                timestamp: one_hour_ago,
+                request_model: "deepseek-chat".into(),
+                channel_id: ch1,
+                channel_name: "DeepSeek-1".into(),
+                channel_priority: 1,
+                retry_count: 0,
+                trigger_reason: None,
+                latency_ms: 100,
+                success: true,
+                estimated_cost: Some(0.01),
+                input_tokens: Some(500),
+                output_tokens: Some(200),
+                cache_hit_tokens: None,
+                cache_miss_tokens: None,
+                request_id: None,
+            })
+            .await;
+        logger
+            .log(DispatchLog {
+                id: Uuid::new_v4(),
+                timestamp: one_hour_ago + chrono::Duration::minutes(10),
+                request_model: "deepseek-chat".into(),
+                channel_id: ch1,
+                channel_name: "DeepSeek-1".into(),
+                channel_priority: 1,
+                retry_count: 0,
+                trigger_reason: None,
+                latency_ms: 150,
+                success: true,
+                estimated_cost: Some(0.02),
+                input_tokens: Some(300),
+                output_tokens: Some(100),
+                cache_hit_tokens: None,
+                cache_miss_tokens: None,
+                request_id: None,
+            })
+            .await;
 
         // ch2: 1 request in different hour
-        logger.log(DispatchLog {
-            id: Uuid::new_v4(),
-            timestamp: two_hours_ago,
-            request_model: "claude-3".into(),
-            channel_id: ch2,
-            channel_name: "Anthropic".into(),
-            channel_priority: 2,
-            retry_count: 0,
-            trigger_reason: None,
-            latency_ms: 200,
-            success: true,
-            estimated_cost: Some(0.05),
-            input_tokens: Some(1000),
-            output_tokens: Some(500),
-            cache_hit_tokens: None,
-            cache_miss_tokens: None,
-            request_id: None,
-        }).await;
+        logger
+            .log(DispatchLog {
+                id: Uuid::new_v4(),
+                timestamp: two_hours_ago,
+                request_model: "claude-3".into(),
+                channel_id: ch2,
+                channel_name: "Anthropic".into(),
+                channel_priority: 2,
+                retry_count: 0,
+                trigger_reason: None,
+                latency_ms: 200,
+                success: true,
+                estimated_cost: Some(0.05),
+                input_tokens: Some(1000),
+                output_tokens: Some(500),
+                cache_hit_tokens: None,
+                cache_miss_tokens: None,
+                request_id: None,
+            })
+            .await;
 
         // Failed request should be excluded
-        logger.log(DispatchLog {
-            id: Uuid::new_v4(),
-            timestamp: now,
-            request_model: "deepseek-chat".into(),
-            channel_id: ch1,
-            channel_name: "DeepSeek-1".into(),
-            channel_priority: 1,
-            retry_count: 0,
-            trigger_reason: None,
-            latency_ms: 50,
-            success: false,
-            estimated_cost: None,
-            input_tokens: Some(100),
-            output_tokens: Some(50),
-            cache_hit_tokens: None,
-            cache_miss_tokens: None,
-            request_id: None,
-        }).await;
+        logger
+            .log(DispatchLog {
+                id: Uuid::new_v4(),
+                timestamp: now,
+                request_model: "deepseek-chat".into(),
+                channel_id: ch1,
+                channel_name: "DeepSeek-1".into(),
+                channel_priority: 1,
+                retry_count: 0,
+                trigger_reason: None,
+                latency_ms: 50,
+                success: false,
+                estimated_cost: None,
+                input_tokens: Some(100),
+                output_tokens: Some(50),
+                cache_hit_tokens: None,
+                cache_miss_tokens: None,
+                request_id: None,
+            })
+            .await;
 
         let history = logger.usage_history(24).await;
 
@@ -499,24 +503,26 @@ mod tests {
         let now = Utc::now();
 
         // Request 3 hours ago
-        logger.log(DispatchLog {
-            id: Uuid::new_v4(),
-            timestamp: now - chrono::Duration::hours(3),
-            request_model: "test".into(),
-            channel_id: ch,
-            channel_name: "Test".into(),
-            channel_priority: 1,
-            retry_count: 0,
-            trigger_reason: None,
-            latency_ms: 100,
-            success: true,
-            estimated_cost: None,
-            input_tokens: Some(100),
-            output_tokens: Some(50),
-            cache_hit_tokens: None,
-            cache_miss_tokens: None,
-            request_id: None,
-        }).await;
+        logger
+            .log(DispatchLog {
+                id: Uuid::new_v4(),
+                timestamp: now - chrono::Duration::hours(3),
+                request_model: "test".into(),
+                channel_id: ch,
+                channel_name: "Test".into(),
+                channel_priority: 1,
+                retry_count: 0,
+                trigger_reason: None,
+                latency_ms: 100,
+                success: true,
+                estimated_cost: None,
+                input_tokens: Some(100),
+                output_tokens: Some(50),
+                cache_hit_tokens: None,
+                cache_miss_tokens: None,
+                request_id: None,
+            })
+            .await;
 
         // 2-hour window: should exclude the 3-hour-old entry
         let h2 = logger.usage_history(2).await;

@@ -53,15 +53,24 @@ impl QuotaProvider for ZhipuCollector {
             // Sum across all enabled token accounts
             let balance = account
                 .get("balance")
-                .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())))
+                .and_then(|v| {
+                    v.as_f64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
+                })
                 .unwrap_or(0.0);
             let limit = account
                 .get("totalBalance")
-                .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())))
+                .and_then(|v| {
+                    v.as_f64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
+                })
                 .unwrap_or(0.0);
             let used = account
                 .get("usedBalance")
-                .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok())))
+                .and_then(|v| {
+                    v.as_f64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
+                })
                 .unwrap_or(0.0);
 
             total_balance += balance;
@@ -80,9 +89,21 @@ impl QuotaProvider for ZhipuCollector {
             channel_id: ctx.channel_id,
             channel_name: ctx.channel_name.clone(),
             provider: ctx.provider.clone(),
-            balance: if total_balance > 0.0 { Some(total_balance) } else { None },
-            limit: if total_limit > 0.0 { Some(total_limit) } else { None },
-            usage: if total_usage > 0.0 { Some(total_usage) } else { None },
+            balance: if total_balance > 0.0 {
+                Some(total_balance)
+            } else {
+                None
+            },
+            limit: if total_limit > 0.0 {
+                Some(total_limit)
+            } else {
+                None
+            },
+            usage: if total_usage > 0.0 {
+                Some(total_usage)
+            } else {
+                None
+            },
             items,
             source: "http_api".into(),
             ..QuotaInfo::new(ctx.channel_id, &ctx.channel_name, &ctx.provider, "http_api")

@@ -1,4 +1,6 @@
-use crate::channel::{Channel, ChannelStatus, Credential, CredentialType, Provider, SharedChannels};
+use crate::channel::{
+    Channel, ChannelStatus, Credential, CredentialType, Provider, SharedChannels,
+};
 use crate::config::{AppConfig, ChannelConfig, GatewayConfig};
 use crate::credential::SharedCredentialStore;
 use std::sync::Arc;
@@ -142,10 +144,7 @@ impl ChannelManager {
         let service = "modelswitch";
         let username = &ch.credential.key_ref;
 
-        self.credential_store
-            .get(service, username)
-            .ok()
-            .flatten()
+        self.credential_store.get(service, username).ok().flatten()
     }
 
     /// Persist current channels to config file. Best-effort: logs errors but does not propagate.

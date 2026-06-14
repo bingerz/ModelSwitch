@@ -131,12 +131,8 @@ async fn poll_all_channels(
                     error = %e,
                     "Quota poll failed"
                 );
-                let info = crate::quota::QuotaInfo::new(
-                    ch.id,
-                    &ch.name,
-                    ch.provider.as_str(),
-                    "http_api",
-                );
+                let info =
+                    crate::quota::QuotaInfo::new(ch.id, &ch.name, ch.provider.as_str(), "http_api");
                 quota_store
                     .update(crate::quota::QuotaInfo {
                         error: Some(e.to_string()),

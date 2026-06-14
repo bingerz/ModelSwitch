@@ -2,7 +2,11 @@ use clap::{Parser, Subcommand};
 use model_switch_lib::{config::AppConfig, run_gateway, start_gateway_services};
 
 #[derive(Parser)]
-#[command(name = "modelswitch", about = "LLM Smart Gateway & Quota Scheduler", version)]
+#[command(
+    name = "modelswitch",
+    about = "LLM Smart Gateway & Quota Scheduler",
+    version
+)]
 struct Cli {
     /// Path to config file (default: platform config dir)
     #[arg(long, global = true)]
@@ -88,8 +92,8 @@ async fn main() {
 }
 
 fn init_tracing(format: &str) {
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "info".into());
+    let env_filter =
+        tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into());
 
     match format {
         "json" => {
@@ -99,9 +103,7 @@ fn init_tracing(format: &str) {
                 .init();
         }
         _ => {
-            tracing_subscriber::fmt()
-                .with_env_filter(env_filter)
-                .init();
+            tracing_subscriber::fmt().with_env_filter(env_filter).init();
         }
     }
 }
@@ -171,10 +173,7 @@ fn cmd_validate(config_path: Option<&str>) {
     match result {
         Ok(config) => {
             println!("Config is valid");
-            println!(
-                "  Gateway: {}:{}",
-                config.gateway.host, config.gateway.port
-            );
+            println!("  Gateway: {}:{}", config.gateway.host, config.gateway.port);
             println!(
                 "  Channels: {} ({})",
                 config.channels.len(),
@@ -185,10 +184,7 @@ fn cmd_validate(config_path: Option<&str>) {
                     .count()
                     .to_string()
             );
-            println!(
-                "  Routing: {}",
-                config.gateway.routing_strategy
-            );
+            println!("  Routing: {}", config.gateway.routing_strategy);
             println!(
                 "  Health check: {}",
                 if config.gateway.health_check_enabled {
@@ -253,9 +249,15 @@ async fn cmd_status(url: String) {
     match client.get(&health_url).send().await {
         Ok(resp) => {
             if let Ok(body) = resp.json::<serde_json::Value>().await {
-                let status = body.get("status").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let status = body
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
                 let version = body.get("version").and_then(|v| v.as_str()).unwrap_or("?");
-                let uptime = body.get("uptime_secs").and_then(|v| v.as_u64()).unwrap_or(0);
+                let uptime = body
+                    .get("uptime_secs")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
                 let channels = body.get("channels");
                 let total = channels
                     .as_ref()
@@ -315,7 +317,10 @@ fn cmd_stop() {
                 let _ = std::fs::remove_file(&pid_path);
             }
             _ => {
-                eprintln!("Failed to send SIGTERM to process {} (not running or no permission)", pid);
+                eprintln!(
+                    "Failed to send SIGTERM to process {} (not running or no permission)",
+                    pid
+                );
                 let _ = std::fs::remove_file(&pid_path);
                 std::process::exit(1);
             }

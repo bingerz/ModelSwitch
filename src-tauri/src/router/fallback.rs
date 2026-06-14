@@ -37,10 +37,7 @@ mod tests {
             vec!["claude-4-sonnet".to_string(), "gpt-4o".to_string()],
         );
         let chain = resolve_fallback_chain("claude-4-opus", &fallbacks);
-        assert_eq!(
-            chain,
-            vec!["claude-4-opus", "claude-4-sonnet", "gpt-4o"]
-        );
+        assert_eq!(chain, vec!["claude-4-opus", "claude-4-sonnet", "gpt-4o"]);
     }
 
     #[test]

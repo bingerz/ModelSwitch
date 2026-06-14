@@ -125,7 +125,10 @@ mod tests {
     fn cache_key_excludes_stream() {
         let body1 = json!({ "model": "gpt-4", "messages": [], "stream": true });
         let body2 = json!({ "model": "gpt-4", "messages": [], "stream": false });
-        assert_eq!(RequestCache::cache_key("gpt-4", &body1), RequestCache::cache_key("gpt-4", &body2));
+        assert_eq!(
+            RequestCache::cache_key("gpt-4", &body1),
+            RequestCache::cache_key("gpt-4", &body2)
+        );
     }
 
     #[test]

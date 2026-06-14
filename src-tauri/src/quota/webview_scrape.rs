@@ -1,7 +1,9 @@
 use crate::channel::manager::ChannelManager;
 use crate::proxy::openai::AppState;
 use crate::quota::collectors::webview_scripts::aliyun::ALIYUN_BAILIAN_SCRIPT;
-use crate::quota::collectors::webview_scripts::anthropic::{AnthropicUsage, ANTHROPIC_USAGE_SCRIPT};
+use crate::quota::collectors::webview_scripts::anthropic::{
+    AnthropicUsage, ANTHROPIC_USAGE_SCRIPT,
+};
 use crate::quota::collectors::webview_scripts::baidu::BAIDU_CODING_PLAN_SCRIPT;
 use crate::quota::collectors::webview_scripts::doubao::DOUBAO_USAGE_SCRIPT;
 use crate::quota::{QuotaGroup, QuotaInfo, QuotaItem, SharedQuotaStore};
@@ -11,7 +13,8 @@ use tokio::sync::oneshot;
 
 /// Try to extract an f64 from a JSON value — accept either a number or a numeric string.
 fn value_as_f64(v: &serde_json::Value) -> Option<f64> {
-    v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
 }
 
 /// Configuration for a provider's WebView scraping session.
@@ -124,14 +127,8 @@ fn parse_baidu_result(
             .get("remainAmount")
             .and_then(value_as_f64)
             .unwrap_or(0.0);
-        let total = res
-            .get("totalAmount")
-            .and_then(value_as_f64)
-            .unwrap_or(0.0);
-        let used = res
-            .get("usedAmount")
-            .and_then(value_as_f64)
-            .unwrap_or(0.0);
+        let total = res.get("totalAmount").and_then(value_as_f64).unwrap_or(0.0);
+        let used = res.get("usedAmount").and_then(value_as_f64).unwrap_or(0.0);
 
         total_remain += remain;
         total_amount += total;
@@ -148,8 +145,16 @@ fn parse_baidu_result(
         channel_id,
         channel_name: channel_name.to_string(),
         provider: "baidu".to_string(),
-        balance: if total_remain > 0.0 { Some(total_remain) } else { None },
-        limit: if total_amount > 0.0 { Some(total_amount) } else { None },
+        balance: if total_remain > 0.0 {
+            Some(total_remain)
+        } else {
+            None
+        },
+        limit: if total_amount > 0.0 {
+            Some(total_amount)
+        } else {
+            None
+        },
         usage: if total_amount > total_remain {
             Some(total_amount - total_remain)
         } else {
@@ -189,7 +194,9 @@ fn parse_aliyun_result(
             let mut quota_items = Vec::new();
             for item in items_arr {
                 if let (Some(name), Some(value)) = (
-                    item.get("commodityCode").or_else(|| item.get("name")).and_then(|v| v.as_str()),
+                    item.get("commodityCode")
+                        .or_else(|| item.get("name"))
+                        .and_then(|v| v.as_str()),
                     item.get("deductQuantity")
                         .or_else(|| item.get("remainQuantity"))
                         .and_then(value_as_f64),
@@ -286,8 +293,8 @@ pub async fn scrape_webview_quota(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
-    let ch_id = uuid::Uuid::parse_str(&channel_id)
-        .map_err(|e| format!("Invalid channel ID: {}", e))?;
+    let ch_id =
+        uuid::Uuid::parse_str(&channel_id).map_err(|e| format!("Invalid channel ID: {}", e))?;
 
     let channel = state
         .channel_mgr
@@ -296,14 +303,13 @@ pub async fn scrape_webview_quota(
         .ok_or_else(|| "Channel not found".to_string())?;
 
     let config =
-        resolve_scrape_config(channel.provider.as_str(), &channel.base_url)
-            .ok_or_else(|| {
-                format!(
-                    "WebView scraping not supported for provider '{}' / URL '{}'",
-                    channel.provider.as_str(),
-                    channel.base_url
-                )
-            })?;
+        resolve_scrape_config(channel.provider.as_str(), &channel.base_url).ok_or_else(|| {
+            format!(
+                "WebView scraping not supported for provider '{}' / URL '{}'",
+                channel.provider.as_str(),
+                channel.base_url
+            )
+        })?;
 
     let label = format!("quota-scrape-{}", uuid::Uuid::new_v4());
 

@@ -41,8 +41,7 @@ impl QuotaHeaders {
         Self {
             remaining_requests: get("x-ratelimit-remaining-requests")
                 .or_else(|| get("x-ratelimit-remaining")),
-            limit_requests: get("x-ratelimit-limit-requests")
-                .or_else(|| get("x-ratelimit-limit")),
+            limit_requests: get("x-ratelimit-limit-requests").or_else(|| get("x-ratelimit-limit")),
             remaining_tokens: get("x-ratelimit-remaining-tokens"),
             limit_tokens: get("x-ratelimit-limit-tokens"),
         }

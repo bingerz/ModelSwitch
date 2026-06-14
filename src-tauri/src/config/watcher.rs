@@ -5,13 +5,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Watch the config file for changes and reload channels when modified.
-pub fn start_config_watcher(
-    config_path: PathBuf,
-    channel_mgr: Arc<ChannelManager>,
-) {
+pub fn start_config_watcher(config_path: PathBuf, channel_mgr: Arc<ChannelManager>) {
     crate::spawn_bg(async move {
-        let mut notify = match notify::recommended_watcher(|res: Result<notify::Event, _>| {
-            match res {
+        let mut notify = match notify::recommended_watcher(
+            |res: Result<notify::Event, _>| match res {
                 Ok(event) if event.kind.is_modify() || event.kind.is_create() => {
                     tracing::info!(?event.paths, "Config file change detected");
                 }
@@ -19,8 +16,8 @@ pub fn start_config_watcher(
                     tracing::warn!(error = %e, "Config watch error");
                 }
                 _ => {}
-            }
-        }) {
+            },
+        ) {
             Ok(w) => w,
             Err(e) => {
                 tracing::warn!(error = %e, "Failed to create config watcher, hot reload disabled");
@@ -35,7 +32,10 @@ pub fn start_config_watcher(
             }
         }
 
-        let mut last_mod = std::time::SystemTime::UNIX_EPOCH;
+        let mut last_mod = std::fs::metadata(&config_path)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -45,12 +45,14 @@ pub fn start_config_watcher(
                 if let Ok(modified) = metadata.modified() {
                     if modified > last_mod {
                         // Reload config
-                        match AppConfig::load() {
+                        match AppConfig::load_from(config_path.clone()) {
                             Ok(new_config) => {
                                 tracing::info!("Reloading config");
                                 // Update channels: replace all channels from new config
                                 // Collect config channel IDs for deletion detection
-                                let config_ids: std::collections::HashSet<uuid::Uuid> = new_config.channels.iter()
+                                let config_ids: std::collections::HashSet<uuid::Uuid> = new_config
+                                    .channels
+                                    .iter()
                                     .filter_map(|cc| uuid::Uuid::parse_str(&cc.id).ok())
                                     .collect();
 
@@ -70,11 +72,15 @@ pub fn start_config_watcher(
                                         updated.output_cost_per_mtok = cc.output_cost_per_mtok;
                                         updated.cooldown_minutes = cc.cooldown_minutes;
                                         updated.name = cc.name.clone();
-                                        updated.provider = crate::channel::Provider::from_str(&cc.provider);
+                                        updated.provider =
+                                            crate::channel::Provider::from_str(&cc.provider);
                                         let _ = channel_mgr.update(id, updated).await;
                                     } else {
                                         // New channel — create it
-                                        use crate::channel::{Channel, ChannelStatus, Credential, CredentialType, Provider};
+                                        use crate::channel::{
+                                            Channel, ChannelStatus, Credential, CredentialType,
+                                            Provider,
+                                        };
                                         let cred_type = match cc.credential_type.as_str() {
                                             "web_session" => CredentialType::WebSession,
                                             _ => CredentialType::ApiKey,

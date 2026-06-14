@@ -42,15 +42,19 @@ impl QuotaProvider for JsonPathCollector {
             balance_url.clone()
         } else {
             let base = ctx.base_url.trim_end_matches('/');
-            format!("{}{}", base, if balance_url.starts_with('/') { "" } else { "/" })
-                + balance_url
+            format!(
+                "{}{}",
+                base,
+                if balance_url.starts_with('/') {
+                    ""
+                } else {
+                    "/"
+                }
+            ) + balance_url
         };
 
         // Build auth header
-        let auth_prefix = cfg
-            .auth_prefix
-            .as_deref()
-            .unwrap_or("Bearer");
+        let auth_prefix = cfg.auth_prefix.as_deref().unwrap_or("Bearer");
         let auth_header = format!("{} {}", auth_prefix, ctx.credential);
 
         let resp = ctx
@@ -116,15 +120,13 @@ fn extract_json_path(value: &serde_json::Value, path: &str) -> Result<Option<f64
         }
         // Try numeric index first (for array access)
         if let Ok(idx) = segment.parse::<usize>() {
-            current = current
-                .get(idx)
-                .ok_or_else(|| QuotaError::Parse(format!("path '{}' not found at index {}", path, idx)))?;
+            current = current.get(idx).ok_or_else(|| {
+                QuotaError::Parse(format!("path '{}' not found at index {}", path, idx))
+            })?;
         } else {
-            current = current
-                .get(segment)
-                .ok_or_else(|| {
-                    QuotaError::Parse(format!("path '{}' not found at key '{}'", path, segment))
-                })?;
+            current = current.get(segment).ok_or_else(|| {
+                QuotaError::Parse(format!("path '{}' not found at key '{}'", path, segment))
+            })?;
         }
     }
 

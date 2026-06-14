@@ -32,9 +32,7 @@ fn default_hours() -> u64 {
 
 // ─── Channel CRUD ─────────────────────────────────────
 
-pub async fn list_channels(
-    State(state): State<Arc<AppState>>,
-) -> Json<Vec<Channel>> {
+pub async fn list_channels(State(state): State<Arc<AppState>>) -> Json<Vec<Channel>> {
     let channels = state.channel_mgr.list().await;
     Json(channels)
 }
@@ -106,7 +104,10 @@ pub async fn create_channel(
         .set("modelswitch", &key_ref, &req.credential_value)
         .map_err(|e| {
             tracing::error!("Failed to store credential: {}", e);
-            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to store credential")
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to store credential",
+            )
         })?;
 
     let channel = Channel {
@@ -183,16 +184,16 @@ pub async fn update_channel(
                 .set("modelswitch", username, new_key)
                 .map_err(|e| {
                     tracing::error!("Failed to update credential: {}", e);
-                    ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to update credential")
+                    ApiError::new(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Failed to update credential",
+                    )
                 })?;
             tracing::info!(channel = %existing.name, "Credential updated");
         }
     }
 
-    let result = state
-        .channel_mgr
-        .update(id, existing)
-        .await;
+    let result = state.channel_mgr.update(id, existing).await;
 
     match result {
         Some(channel) => {
@@ -236,17 +237,21 @@ pub async fn ping_channel(
         .await
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Channel not found"))?;
 
-    let api_key = state
-        .channel_mgr
-        .get_credential(id)
-        .await
-        .ok_or_else(|| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to retrieve credential"))?;
+    let api_key = state.channel_mgr.get_credential(id).await.ok_or_else(|| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to retrieve credential",
+        )
+    })?;
 
     // Use provider-appropriate ping endpoint and auth
     let (url, auth_headers) = match &channel.provider {
         Provider::Anthropic => (
             format!("{}/v1/messages", channel.base_url.trim_end_matches('/')),
-            vec![("x-api-key", api_key.clone()), ("anthropic-version", "2023-06-01".to_string())],
+            vec![
+                ("x-api-key", api_key.clone()),
+                ("anthropic-version", "2023-06-01".to_string()),
+            ],
         ),
         _ => (
             format!("{}/v1/models", channel.base_url.trim_end_matches('/')),
@@ -274,12 +279,14 @@ pub async fn ping_channel(
                 "success": success,
                 "status": r.status().as_u16(),
                 "latency_ms": latency,
-            })).into_response())
+            }))
+            .into_response())
         }
         Err(e) => Ok(Json(serde_json::json!({
             "success": false,
             "error": e.to_string(),
-        })).into_response()),
+        }))
+        .into_response()),
     }
 }
 
@@ -299,7 +306,8 @@ pub async fn channel_status(
         "status": channel.status,
         "enabled": channel.enabled,
         "circuit_open_until": channel.circuit_open_until,
-    })).into_response())
+    }))
+    .into_response())
 }
 
 /// Set payload rules for a channel at runtime.
@@ -316,16 +324,20 @@ pub async fn set_payload_rules(
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Channel not found"))?;
 
     use crate::proxy::payload_rules::PayloadRules;
-    state.payload_rules.add(id, PayloadRules {
-        defaults: rules.defaults,
-        overrides: rules.overrides,
-        strip: rules.strip,
-    });
+    state.payload_rules.add(
+        id,
+        PayloadRules {
+            defaults: rules.defaults,
+            overrides: rules.overrides,
+            strip: rules.strip,
+        },
+    );
 
     Ok(Json(serde_json::json!({
         "channel_id": id,
         "updated": true
-    })).into_response())
+    }))
+    .into_response())
 }
 
 // ─── Logs & Stats ─────────────────────────────────────
@@ -338,23 +350,17 @@ pub async fn get_logs(
     Json(logs)
 }
 
-pub async fn get_stats(
-    State(state): State<Arc<AppState>>,
-) -> Json<crate::log::DispatchStats> {
+pub async fn get_stats(State(state): State<Arc<AppState>>) -> Json<crate::log::DispatchStats> {
     let stats = state.logger.stats().await;
     Json(stats)
 }
 
-pub async fn get_cost_stats(
-    State(state): State<Arc<AppState>>,
-) -> Json<crate::log::CostStats> {
+pub async fn get_cost_stats(State(state): State<Arc<AppState>>) -> Json<crate::log::CostStats> {
     let stats = state.logger.cost_stats().await;
     Json(stats)
 }
 
-pub async fn get_quota(
-    State(state): State<Arc<AppState>>,
-) -> Json<Vec<crate::quota::QuotaInfo>> {
+pub async fn get_quota(State(state): State<Arc<AppState>>) -> Json<Vec<crate::quota::QuotaInfo>> {
     let quotas = state.quota_store.list().await;
     Json(quotas)
 }
@@ -393,25 +399,23 @@ pub async fn reset_circuit(
         "name": channel.name,
         "status": "healthy",
         "message": "Circuit breaker reset"
-    })).into_response())
+    }))
+    .into_response())
 }
 
 /// Flush all cached responses.
-pub async fn flush_cache(
-    State(state): State<Arc<AppState>>,
-) -> axum::response::Response {
+pub async fn flush_cache(State(state): State<Arc<AppState>>) -> axum::response::Response {
     state.request_cache.flush();
     let count = state.request_cache.len();
     Json(serde_json::json!({
         "flushed": true,
         "remaining": count
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// Reload configuration from disk and update channels.
-pub async fn reload_config(
-    State(state): State<Arc<AppState>>,
-) -> axum::response::Response {
+pub async fn reload_config(State(state): State<Arc<AppState>>) -> axum::response::Response {
     match crate::config::AppConfig::load() {
         Ok(new_config) => {
             let channels = state.channel_mgr.list().await;
@@ -511,17 +515,21 @@ pub async fn reload_config(
                 }
             }
 
-            tracing::info!("Config reload: {updated} updated, {created} created, {removed} removed");
+            tracing::info!(
+                "Config reload: {updated} updated, {created} created, {removed} removed"
+            );
             Json(serde_json::json!({
                 "reloaded": true,
                 "updated": updated,
                 "created": created,
                 "removed": removed
-            })).into_response()
+            }))
+            .into_response()
         }
         Err(e) => {
             tracing::error!("Config reload failed: {}", e);
-            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to reload config").into_response()
+            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to reload config")
+                .into_response()
         }
     }
 }
@@ -539,7 +547,11 @@ pub async fn receive_login_cookies(
         return ApiError::new(StatusCode::BAD_REQUEST, "Empty cookies");
     }
 
-    tracing::info!(provider, cookie_len = cookies.len(), "Received login cookies from WebView");
+    tracing::info!(
+        provider,
+        cookie_len = cookies.len(),
+        "Received login cookies from WebView"
+    );
 
     // Store in a temporary file for the frontend to pick up
     let dir = dirs::config_dir()

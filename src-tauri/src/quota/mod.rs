@@ -88,12 +88,7 @@ pub struct QuotaInfo {
 
 impl QuotaInfo {
     /// Create a minimal QuotaInfo with defaults.
-    pub fn new(
-        channel_id: Uuid,
-        channel_name: &str,
-        provider: &str,
-        source: &str,
-    ) -> Self {
+    pub fn new(channel_id: Uuid, channel_name: &str, provider: &str, source: &str) -> Self {
         Self {
             channel_id,
             channel_name: channel_name.to_string(),
@@ -184,15 +179,11 @@ impl QuotaStore {
                 rate_limit_remaining_req: info
                     .rate_limit_remaining_req
                     .or(existing.rate_limit_remaining_req),
-                rate_limit_limit_req: info
-                    .rate_limit_limit_req
-                    .or(existing.rate_limit_limit_req),
+                rate_limit_limit_req: info.rate_limit_limit_req.or(existing.rate_limit_limit_req),
                 rate_limit_remaining_tok: info
                     .rate_limit_remaining_tok
                     .or(existing.rate_limit_remaining_tok),
-                rate_limit_limit_tok: info
-                    .rate_limit_limit_tok
-                    .or(existing.rate_limit_limit_tok),
+                rate_limit_limit_tok: info.rate_limit_limit_tok.or(existing.rate_limit_limit_tok),
                 rate_limit_updated_at: info
                     .rate_limit_updated_at
                     .or(existing.rate_limit_updated_at),
@@ -308,7 +299,10 @@ impl QuotaStore {
             let mut guard = None;
             for _ in 0..10 {
                 match self.quotas.try_read() {
-                    Ok(g) => { guard = Some(g); break; }
+                    Ok(g) => {
+                        guard = Some(g);
+                        break;
+                    }
                     Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
                 }
             }

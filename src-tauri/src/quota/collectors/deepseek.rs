@@ -40,10 +40,7 @@ fn parse_balance_response(
     }
 
     for info in balance_infos.iter() {
-        let currency = info
-            .get("currency")
-            .and_then(|v| v.as_str())
-            .unwrap_or("?");
+        let currency = info.get("currency").and_then(|v| v.as_str()).unwrap_or("?");
         let total = info
             .get("total_balance")
             .and_then(|v| v.as_str())

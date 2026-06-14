@@ -43,9 +43,7 @@ impl QuotaProvider for OpenAiCompatCollector {
             {
                 if resp.status().is_success() {
                     if let Ok(body) = resp.json::<serde_json::Value>().await {
-                        hard_limit_usd = body
-                            .get("hard_limit_usd")
-                            .and_then(|v| v.as_f64());
+                        hard_limit_usd = body.get("hard_limit_usd").and_then(|v| v.as_f64());
                         if let Some(until) = body.get("access_until").and_then(|v| v.as_i64()) {
                             access_until = Some(
                                 chrono::DateTime::from_timestamp(until, 0)
@@ -71,11 +69,7 @@ impl QuotaProvider for OpenAiCompatCollector {
 
         // Fetch usage for current month
         let now = chrono::Utc::now();
-        let start_date = format!(
-            "{}-{:02}-01",
-            now.format("%Y").to_string(),
-            now.month()
-        );
+        let start_date = format!("{}-{:02}-01", now.format("%Y").to_string(), now.month());
         let end_date = now.format("%Y-%m-%d").to_string();
 
         let usage_paths = [

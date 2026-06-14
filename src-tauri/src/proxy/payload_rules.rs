@@ -73,7 +73,9 @@ mod tests {
     #[test]
     fn apply_defaults() {
         let rules = PayloadRules {
-            defaults: [("temperature".to_string(), json!(0.7))].into_iter().collect(),
+            defaults: [("temperature".to_string(), json!(0.7))]
+                .into_iter()
+                .collect(),
             overrides: HashMap::new(),
             strip: vec![],
         };
@@ -86,7 +88,9 @@ mod tests {
     fn overrides_replace_existing() {
         let rules = PayloadRules {
             defaults: HashMap::new(),
-            overrides: [("max_tokens".to_string(), json!(512))].into_iter().collect(),
+            overrides: [("max_tokens".to_string(), json!(512))]
+                .into_iter()
+                .collect(),
             strip: vec![],
         };
         let body = json!({ "model": "gpt-4", "max_tokens": 4096 });
@@ -116,7 +120,9 @@ mod tests {
         };
         // Override sets temperature to 0.5, strip should remove it
         // But strip is applied last, so it wins
-        rules.overrides.insert("temperature".to_string(), json!(0.5));
+        rules
+            .overrides
+            .insert("temperature".to_string(), json!(0.5));
         let body = json!({ "model": "gpt-4" });
         let result = rules.apply(body);
         assert!(result.get("temperature").is_none());

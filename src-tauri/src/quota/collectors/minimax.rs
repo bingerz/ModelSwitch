@@ -47,7 +47,10 @@ impl QuotaProvider for MiniMaxCollector {
                     .and_then(|r| r.get("status_msg"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("unknown error");
-                return Err(QuotaError::Parse(format!("API error {}: {}", status_code, msg)));
+                return Err(QuotaError::Parse(format!(
+                    "API error {}: {}",
+                    status_code, msg
+                )));
             }
         }
 

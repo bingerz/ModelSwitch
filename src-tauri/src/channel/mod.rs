@@ -142,7 +142,11 @@ impl Channel {
 
     /// Calculate cost from real token counts.
     /// Uses input_cost_per_mtok/output_cost_per_mtok if set, falls back to cost_per_token.
-    pub fn calculate_cost(&self, input_tokens: Option<u64>, output_tokens: Option<u64>) -> Option<f64> {
+    pub fn calculate_cost(
+        &self,
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+    ) -> Option<f64> {
         if input_tokens.is_none() && output_tokens.is_none() {
             return None;
         }
@@ -163,7 +167,8 @@ impl Channel {
 
     pub fn mark_circuit_open(&mut self, duration_mins: u64) {
         self.status = ChannelStatus::CircuitOpen;
-        self.circuit_open_until = Some(Utc::now() + chrono::Duration::minutes(duration_mins as i64));
+        self.circuit_open_until =
+            Some(Utc::now() + chrono::Duration::minutes(duration_mins as i64));
         self.updated_at = Utc::now();
     }
 

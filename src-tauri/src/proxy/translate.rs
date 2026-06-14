@@ -7,7 +7,11 @@ pub fn openai_to_gemini(body: &Value) -> Value {
     let mut config = serde_json::Map::new();
 
     // Map messages to Gemini contents
-    let messages = body.get("messages").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+    let messages = body
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .cloned()
+        .unwrap_or_default();
     let contents: Vec<Value> = messages
         .into_iter()
         .filter_map(|msg| {
@@ -17,7 +21,8 @@ pub fn openai_to_gemini(body: &Value) -> Value {
                 "assistant" => "model",
                 _ => "user",
             };
-            let text = msg.get("content")
+            let text = msg
+                .get("content")
                 .and_then(|c| c.as_str())
                 .unwrap_or("")
                 .to_string();
@@ -36,18 +41,28 @@ pub fn openai_to_gemini(body: &Value) -> Value {
         let system_parts: Vec<_> = msgs
             .iter()
             .filter(|m| m.get("role").and_then(|r| r.as_str()) == Some("system"))
-            .filter_map(|m| m.get("content").and_then(|c| c.as_str()).map(|s| serde_json::json!({ "text": s })))
+            .filter_map(|m| {
+                m.get("content")
+                    .and_then(|c| c.as_str())
+                    .map(|s| serde_json::json!({ "text": s }))
+            })
             .collect();
         if !system_parts.is_empty() {
-            config.insert("systemInstruction".to_string(), serde_json::json!({
-                "parts": system_parts
-            }));
+            config.insert(
+                "systemInstruction".to_string(),
+                serde_json::json!({
+                    "parts": system_parts
+                }),
+            );
         }
     }
 
     // Map generation config
     let mut gen_config = serde_json::Map::new();
-    if let Some(max_tokens) = body.get("max_tokens").or_else(|| body.get("max_completion_tokens")) {
+    if let Some(max_tokens) = body
+        .get("max_tokens")
+        .or_else(|| body.get("max_completion_tokens"))
+    {
         gen_config.insert("maxOutputTokens".to_string(), max_tokens.clone());
     }
     if let Some(temp) = body.get("temperature") {
@@ -70,7 +85,11 @@ pub fn openai_to_gemini(body: &Value) -> Value {
 /// Gemini: { candidates: [{content: {parts: [{text}]}, finishReason}], usageMetadata }
 /// OpenAI: { id, object, created, model, choices: [{message: {role, content}, finish_reason}], usage }
 pub fn gemini_to_openai(body: &Value, model: &str) -> Value {
-    let candidates = body.get("candidates").and_then(|c| c.as_array()).cloned().unwrap_or_default();
+    let candidates = body
+        .get("candidates")
+        .and_then(|c| c.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     let choices: Vec<Value> = candidates
         .iter()
@@ -169,9 +188,15 @@ pub fn gemini_stream_to_openai(chunk: &Value, model: &str) -> Option<String> {
     });
 
     if is_done {
-        Some(format!("data: {}\n\ndata: [DONE]\n\n", serde_json::to_string(&sse_chunk).ok()?))
+        Some(format!(
+            "data: {}\n\ndata: [DONE]\n\n",
+            serde_json::to_string(&sse_chunk).ok()?
+        ))
     } else {
-        Some(format!("data: {}\n\n", serde_json::to_string(&sse_chunk).ok()?))
+        Some(format!(
+            "data: {}\n\n",
+            serde_json::to_string(&sse_chunk).ok()?
+        ))
     }
 }
 

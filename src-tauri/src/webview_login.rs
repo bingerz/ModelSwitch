@@ -36,10 +36,7 @@ fn get_provider_config(provider: &str) -> Option<ProviderConfig> {
 }
 
 #[tauri::command]
-pub async fn open_login_webview(
-    provider: String,
-    app: tauri::AppHandle,
-) -> Result<(), String> {
+pub async fn open_login_webview(provider: String, app: tauri::AppHandle) -> Result<(), String> {
     let config = get_provider_config(&provider).ok_or_else(|| {
         format!(
             "WebView login not supported for provider '{}'. Supported: claude, chatgpt, deepseek",

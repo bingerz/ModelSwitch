@@ -57,7 +57,10 @@ impl SessionAffinity {
     }
 
     pub async fn set_channel(&self, session_id: &str, channel_id: Uuid) {
-        self.state.write().await.set(session_id.to_string(), channel_id);
+        self.state
+            .write()
+            .await
+            .set(session_id.to_string(), channel_id);
     }
 
     /// Periodic cleanup of expired entries.
@@ -111,7 +114,10 @@ mod tests {
             "messages": [{"role": "user", "content": "hi"}],
             "metadata": {"session_id": "abc-123"}
         });
-        assert_eq!(SessionAffinity::extract_session_id(&body), Some("abc-123".to_string()));
+        assert_eq!(
+            SessionAffinity::extract_session_id(&body),
+            Some("abc-123".to_string())
+        );
     }
 
     #[test]
@@ -121,7 +127,10 @@ mod tests {
             "messages": [{"role": "user", "content": "hi"}],
             "user": "user@example.com"
         });
-        assert_eq!(SessionAffinity::extract_session_id(&body), Some("user:user@example.com".to_string()));
+        assert_eq!(
+            SessionAffinity::extract_session_id(&body),
+            Some("user:user@example.com".to_string())
+        );
     }
 
     #[test]

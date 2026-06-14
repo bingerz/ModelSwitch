@@ -214,7 +214,8 @@ mod tests {
 
     #[test]
     fn detect_anthropic_error() {
-        let data = r#"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
+        let data =
+            r#"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
         assert_eq!(detect_sse_error(data), Some("Overloaded".to_string()));
     }
 

@@ -2,8 +2,8 @@ pub mod active_requests;
 pub mod affinity;
 pub mod circuit;
 pub mod fallback;
-pub mod strategy;
 pub mod priority;
+pub mod strategy;
 pub mod weighted;
 
 use crate::channel::{Channel, SharedChannels};
@@ -47,7 +47,9 @@ pub async fn select_channel(
 
     let strategy: Box<dyn RoutingStrategy> = match routing_strategy {
         "latency" => Box::new(LatencyBasedStrategy::new()),
-        "least_busy" => Box::new(LeastBusyStrategy::new(std::sync::Arc::new(active_requests.clone()))),
+        "least_busy" => Box::new(LeastBusyStrategy::new(std::sync::Arc::new(
+            active_requests.clone(),
+        ))),
         _ => Box::new(WeightedRandomStrategy),
     };
 

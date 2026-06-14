@@ -10,7 +10,7 @@ use crate::quota::QuotaGroup;
 use crate::quota::QuotaInfo;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
 
 /// Maximum number of concurrent WebViews.
@@ -67,13 +67,8 @@ impl WebViewManager {
     ) -> QuotaInfo {
         let mut active = self.active_count.lock().await;
         if *active >= MAX_ACTIVE_WEBVIEWS {
-            return QuotaInfo::new(
-                channel_id,
-                channel_name,
-                "anthropic",
-                "webview",
-            )
-            .with_error("too many active WebViews");
+            return QuotaInfo::new(channel_id, channel_name, "anthropic", "webview")
+                .with_error("too many active WebViews");
         }
         *active += 1;
         drop(active);

@@ -62,9 +62,7 @@ pub async fn handle_chat_completions(
 /// List available models from all enabled channels.
 /// Aggregates model names from channel model_mapping keys, deduplicates,
 /// and returns OpenAI-format model list.
-pub async fn handle_list_models(
-    State(state): State<Arc<AppState>>,
-) -> axum::response::Response {
+pub async fn handle_list_models(State(state): State<Arc<AppState>>) -> axum::response::Response {
     let channels = state.channel_mgr.list().await;
     let mut seen = std::collections::HashSet::new();
     let mut models: Vec<serde_json::Value> = Vec::new();
