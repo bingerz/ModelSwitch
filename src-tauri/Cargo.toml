@@ -28,7 +28,7 @@ tauri-plugin-opener = { version = "2", optional = true }
 
 # Async runtime & Web framework
 tokio = { version = "1", features = ["full"] }
-axum = { version = "0.7", features = ["ws"] }
+axum = { version = "0.8", features = ["ws"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 

@@ -617,7 +617,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/models", get(proxy::openai::handle_list_models))
         .route("/v1/tools", get(proxy::openai::handle_list_tools))
         .route("/v1/messages", post(proxy::anthropic::handle_messages))
-        .route("/v1beta/models/*path", post(proxy::gemini::handle_gemini))
+        .route("/v1beta/models/{*path}", post(proxy::gemini::handle_gemini))
         .route("/health", get(proxy::openai::health_check))
         .layer(axum::middleware::from_fn_with_state(
             proxy_auth_state,
@@ -633,10 +633,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     let admin_router = Router::new()
         .route("/api/channels", get(admin::list_channels))
         .route("/api/channels", post(admin::create_channel))
-        .route("/api/channels/:id", put(admin::update_channel))
-        .route("/api/channels/:id", delete(admin::delete_channel))
-        .route("/api/channels/:id/ping", post(admin::ping_channel))
-        .route("/api/channels/:id/status", get(admin::channel_status))
+        .route("/api/channels/{id}", put(admin::update_channel))
+        .route("/api/channels/{id}", delete(admin::delete_channel))
+        .route("/api/channels/{id}/ping", post(admin::ping_channel))
+        .route("/api/channels/{id}/status", get(admin::channel_status))
         .route("/api/logs", get(admin::get_logs))
         .route("/api/stats", get(admin::get_stats))
         .route("/api/stats/cost", get(admin::get_cost_stats))
@@ -645,30 +645,30 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/auth/cookies", post(admin::receive_login_cookies))
         .route("/api/auth/pending-cookies", get(admin::get_pending_cookies))
         .route(
-            "/api/channels/:id/reset-circuit",
+            "/api/channels/{id}/reset-circuit",
             post(admin::reset_circuit),
         )
         .route(
-            "/api/channels/:id/payload-rules",
+            "/api/channels/{id}/payload-rules",
             put(admin::set_payload_rules),
         )
         .route("/api/cache/flush", post(admin::flush_cache))
         .route("/api/config/reload", post(admin::reload_config))
         .route("/api/mcp/servers", get(admin::list_mcp_servers))
         .route("/api/mcp/servers", post(admin::create_mcp_server))
-        .route("/api/mcp/servers/:id", put(admin::update_mcp_server))
-        .route("/api/mcp/servers/:id", delete(admin::delete_mcp_server))
-        .route("/api/mcp/servers/:id/start", post(admin::start_mcp_server))
-        .route("/api/mcp/servers/:id/stop", post(admin::stop_mcp_server))
+        .route("/api/mcp/servers/{id}", put(admin::update_mcp_server))
+        .route("/api/mcp/servers/{id}", delete(admin::delete_mcp_server))
+        .route("/api/mcp/servers/{id}/start", post(admin::start_mcp_server))
+        .route("/api/mcp/servers/{id}/stop", post(admin::stop_mcp_server))
         .route(
-            "/api/mcp/servers/:id/tools",
+            "/api/mcp/servers/{id}/tools",
             get(admin::list_mcp_server_tools),
         )
         .route("/api/mcp/tools", get(admin::list_all_mcp_tools))
         .route("/api/virtual-keys", get(admin::list_virtual_keys))
         .route("/api/virtual-keys", post(admin::create_virtual_key))
-        .route("/api/virtual-keys/:id", put(admin::update_virtual_key))
-        .route("/api/virtual-keys/:id", delete(admin::delete_virtual_key))
+        .route("/api/virtual-keys/{id}", put(admin::update_virtual_key))
+        .route("/api/virtual-keys/{id}", delete(admin::delete_virtual_key))
         .with_state(admin_route_state)
         .layer(axum::middleware::from_fn_with_state(
             admin_auth_state,
