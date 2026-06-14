@@ -4,6 +4,7 @@ pub mod config;
 pub mod credential;
 mod health;
 mod log;
+mod mcp;
 mod middleware;
 mod proxy;
 mod quota;
@@ -17,6 +18,7 @@ use channel::ChannelStatus;
 use config::AppConfig;
 use credential::create_credential_store;
 use log::DispatchLogger;
+use mcp::McpManager;
 use proxy::cache::RequestCache;
 use proxy::openai::AppState;
 use proxy::payload_rules::ChannelPayloadRules;
@@ -336,6 +338,14 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     ));
     let in_flight = Arc::new(proxy::cache::InFlightRequests::new());
 
+    // Build MCP manager and load server configs (does NOT auto-start servers)
+    let mcp_manager = Arc::new(McpManager::new());
+    let mcp_configs = config.mcp_servers.clone();
+    let mcp_mgr_for_load = Arc::clone(&mcp_manager);
+    spawn_bg(async move {
+        mcp_mgr_for_load.load_configs(&mcp_configs).await;
+    });
+
     // Resolve admin token: env > config
     let admin_token = std::env::var("MODELSWITCH_ADMIN_TOKEN")
         .ok()
@@ -385,6 +395,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         rate_limiter: Arc::clone(&rate_limiter),
         quota_store: Arc::clone(&quota_store),
         in_flight: Arc::clone(&in_flight),
+        mcp_manager: Arc::clone(&mcp_manager),
         started_at: std::time::Instant::now(),
     });
 
@@ -462,7 +473,11 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     // Start hot config reload watcher
     let watcher_path = watcher_config_path.or_else(|| AppConfig::config_path().ok());
     if let Some(path) = watcher_path {
-        config::watcher::start_config_watcher(path, Arc::clone(&channel_mgr));
+        config::watcher::start_config_watcher(
+            path,
+            Arc::clone(&channel_mgr),
+            Arc::clone(&mcp_manager),
+        );
     }
     GatewayHandles {
         state,
@@ -547,6 +562,7 @@ pub async fn start_gateway(
 ) {
     let app = build_router(state.clone());
     let quota_for_shutdown = Arc::clone(&state.quota_store);
+    let mcp_for_shutdown = Arc::clone(&state.mcp_manager);
     let addr = format!("{}:{}", host, port);
 
     // Write PID file for CLI management
@@ -596,6 +612,9 @@ pub async fn start_gateway(
 
     // Persist quota data on shutdown
     quota_for_shutdown.persist_sync();
+
+    // Stop all MCP server subprocesses
+    mcp_for_shutdown.stop_all().await;
 
     // Clean up PID file on shutdown
     let _ = std::fs::remove_file(&pid_path);

@@ -1,6 +1,7 @@
 use crate::channel::manager::ChannelManager;
 use crate::credential::SharedCredentialStore;
 use crate::log::DispatchLogger;
+use crate::mcp::McpManager;
 use crate::proxy::cache::{InFlightRequests, RequestCache};
 use crate::proxy::payload_rules::ChannelPayloadRules;
 use crate::proxy::rate_limiter::RateLimiter;
@@ -34,6 +35,7 @@ pub struct AppState {
     pub rate_limiter: Arc<RateLimiter>,
     pub quota_store: SharedQuotaStore,
     pub in_flight: Arc<InFlightRequests>,
+    pub mcp_manager: Arc<McpManager>,
     pub started_at: std::time::Instant,
 }
 

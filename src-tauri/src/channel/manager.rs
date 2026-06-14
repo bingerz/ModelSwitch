@@ -182,6 +182,7 @@ impl ChannelManager {
         let config = AppConfig {
             gateway: self.gateway_config.clone(),
             channels: channel_configs,
+            mcp_servers: vec![],
         };
 
         if let Err(e) = config.save() {
