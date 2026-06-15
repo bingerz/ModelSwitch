@@ -29,7 +29,7 @@ pub fn sse_stream_response_with_telemetry(
 
         // Accumulate data lines for telemetry
         {
-            let mut guard = chunks_clone.lock().unwrap();
+            let mut guard = chunks_clone.lock().unwrap_or_else(|e| e.into_inner());
             for line in text.split('\n') {
                 let trimmed = line.trim();
                 if trimmed.starts_with("data: ") {

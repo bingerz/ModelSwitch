@@ -26,7 +26,7 @@ impl FileCredentialStore {
         if let Ok(content) = fs::read_to_string(&store.path) {
             if let Ok(data) = toml::from_str::<toml::Value>(&content) {
                 if let Some(table) = data.as_table() {
-                    let mut cache = store.cache.write().unwrap();
+                    let mut cache = store.cache.write().unwrap_or_else(|e| e.into_inner());
                     for (k, v) in table {
                         if let Some(s) = v.as_str() {
                             cache.insert(k.to_string(), s.to_string());
@@ -44,7 +44,7 @@ impl FileCredentialStore {
     }
 
     fn persist(&self) -> Result<()> {
-        let cache = self.cache.read().unwrap();
+        let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
         let mut table = toml::map::Map::new();
         for (k, v) in cache.iter() {
             table.insert(k.clone(), toml::Value::String(v.clone()));
@@ -68,14 +68,14 @@ impl FileCredentialStore {
 
 impl CredentialStore for FileCredentialStore {
     fn get(&self, service: &str, username: &str) -> Result<Option<String>> {
-        let cache = self.cache.read().unwrap();
+        let cache = self.cache.read().unwrap_or_else(|e| e.into_inner());
         let key = Self::key(service, username);
         Ok(cache.get(&key).cloned())
     }
 
     fn set(&self, service: &str, username: &str, password: &str) -> Result<()> {
         {
-            let mut cache = self.cache.write().unwrap();
+            let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
             cache.insert(Self::key(service, username), password.to_string());
         }
         self.persist()
@@ -84,7 +84,7 @@ impl CredentialStore for FileCredentialStore {
 
     fn delete(&self, service: &str, username: &str) -> Result<()> {
         {
-            let mut cache = self.cache.write().unwrap();
+            let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
             cache.remove(&Self::key(service, username));
         }
         self.persist()

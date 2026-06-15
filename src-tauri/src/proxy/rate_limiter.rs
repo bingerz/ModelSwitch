@@ -99,7 +99,7 @@ impl RateLimiter {
     }
 
     pub fn set_channel_tpm_limit(&self, channel_id: Uuid, limit: u64) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let entry = state
             .channels
             .entry(channel_id)
@@ -108,7 +108,7 @@ impl RateLimiter {
     }
 
     pub fn set_channel_rpm_limit(&self, channel_id: Uuid, limit: u64) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let entry = state
             .channels
             .entry(channel_id)
@@ -119,7 +119,7 @@ impl RateLimiter {
     /// Check if a request with the given estimated token count is allowed.
     /// Returns (allowed, reason).
     pub fn check(&self, channel_id: Uuid, estimated_tokens: u64) -> (bool, &'static str) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
         // Check global TPM
         if let Some(global_limit) = self.global_tpm_limit {
@@ -151,7 +151,7 @@ impl RateLimiter {
 
     /// Record that a request was dispatched to a channel.
     pub fn record(&self, channel_id: Uuid, tokens: u64) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
 
         let entry = state
             .channels

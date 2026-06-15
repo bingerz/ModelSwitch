@@ -44,7 +44,7 @@ impl GatewayManager {
     /// Synchronous shutdown: fires the Notify and cleans up PID file.
     /// Called from Drop or window Destroyed event -- no async context available.
     pub(crate) fn force_shutdown(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if !inner.running {
             return;
         }
@@ -83,7 +83,7 @@ pub(crate) struct GatewayStatus {
 pub(crate) async fn gateway_status(
     manager: tauri::State<'_, GatewayManager>,
 ) -> Result<GatewayStatus, String> {
-    let inner = manager.inner.lock().unwrap();
+    let inner = manager.inner.lock().unwrap_or_else(|e| e.into_inner());
     Ok(GatewayStatus {
         running: inner.running,
         host: manager.host.clone(),
@@ -94,7 +94,7 @@ pub(crate) async fn gateway_status(
 #[tauri::command]
 pub(crate) async fn gateway_start(manager: tauri::State<'_, GatewayManager>) -> Result<(), String> {
     {
-        let inner = manager.inner.lock().unwrap();
+        let inner = manager.inner.lock().unwrap_or_else(|e| e.into_inner());
         if inner.running {
             return Err("Gateway already running".into());
         }
@@ -126,7 +126,7 @@ pub(crate) async fn gateway_start(manager: tauri::State<'_, GatewayManager>) -> 
     // Wait for the spawned task to confirm bind succeeded (or failed)
     match bind_ok_rx.await {
         Ok(Ok(())) => {
-            let mut inner = manager.inner.lock().unwrap();
+            let mut inner = manager.inner.lock().unwrap_or_else(|e| e.into_inner());
             inner.running = true;
             inner.shutdown = Some(shutdown);
             inner.stopped_rx = Some(stopped_rx);
@@ -152,7 +152,7 @@ pub(crate) async fn gateway_start(manager: tauri::State<'_, GatewayManager>) -> 
 #[tauri::command]
 pub(crate) async fn gateway_stop(manager: tauri::State<'_, GatewayManager>) -> Result<(), String> {
     let (stopped_rx, shutdown) = {
-        let mut inner = manager.inner.lock().unwrap();
+        let mut inner = manager.inner.lock().unwrap_or_else(|e| e.into_inner());
         if !inner.running {
             return Err("Gateway not running".into());
         }

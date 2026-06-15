@@ -55,8 +55,8 @@ impl RequestCache {
     /// The `key_material` is compared against the stored material to eliminate false positives
     /// from `u64` hash collisions.
     pub fn get(&self, key: u64, key_material: &str) -> Option<String> {
-        let mut guard = self.entries.lock().unwrap();
-        let mut order = self.order.lock().unwrap();
+        let mut guard = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        let mut order = self.order.lock().unwrap_or_else(|e| e.into_inner());
         // Clean expired entries on every read
         let ttl = self.ttl;
         let before = guard.len();
@@ -82,8 +82,8 @@ impl RequestCache {
 
     /// Insert a response into the cache.
     pub fn insert(&self, key: u64, key_material: String, response_body: String) {
-        let mut guard = self.entries.lock().unwrap();
-        let mut order = self.order.lock().unwrap();
+        let mut guard = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        let mut order = self.order.lock().unwrap_or_else(|e| e.into_inner());
 
         // If key already exists, remove old position
         if guard.contains_key(&key) {
@@ -113,14 +113,14 @@ impl RequestCache {
 
     /// Returns the current number of cached entries (for diagnostics).
     pub fn len(&self) -> usize {
-        let guard = self.entries.lock().unwrap();
+        let guard = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         guard.len()
     }
 
     /// Clear all cached entries.
     pub fn flush(&self) {
-        let mut guard = self.entries.lock().unwrap();
-        let mut order = self.order.lock().unwrap();
+        let mut guard = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        let mut order = self.order.lock().unwrap_or_else(|e| e.into_inner());
         guard.clear();
         order.clear();
     }
@@ -260,7 +260,7 @@ impl InFlightRequests {
     /// request for this key (caller should proceed with the real request),
     /// or `false` if another request is already in flight (caller should wait).
     pub fn register(&self, key: u64) -> bool {
-        let mut guard = self.inflight.lock().unwrap();
+        let mut guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
         if guard.contains_key(&key) {
             false
         } else {
@@ -272,7 +272,7 @@ impl InFlightRequests {
     /// Wait for an in-flight request with the given key to complete.
     pub async fn wait(&self, key: u64) {
         let notify = {
-            let guard = self.inflight.lock().unwrap();
+            let guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
             guard.get(&key).cloned()
         };
         if let Some(n) = notify {
@@ -282,7 +282,7 @@ impl InFlightRequests {
 
     /// Complete an in-flight request, waking all waiters.
     pub fn complete(&self, key: u64) {
-        let mut guard = self.inflight.lock().unwrap();
+        let mut guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(notify) = guard.remove(&key) {
             notify.notify_waiters();
         }

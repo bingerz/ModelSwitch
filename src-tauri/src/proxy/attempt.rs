@@ -198,17 +198,17 @@ async fn handle_streaming_success(
                 loop {
                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     let cur_len = {
-                        let guard = telemetry_chunks.lock().unwrap();
+                        let guard = telemetry_chunks.lock().unwrap_or_else(|e| e.into_inner());
                         guard.len()
                     };
                     if cur_len > 0 && cur_len == prev_len {
-                        break telemetry_chunks.lock().unwrap().clone();
+                        break telemetry_chunks.lock().unwrap_or_else(|e| e.into_inner()).clone();
                     }
                     prev_len = cur_len;
                     if cur_len == 0 {
                         empty_rounds += 1;
                         if empty_rounds > 150 {
-                            break telemetry_chunks.lock().unwrap().clone();
+                            break telemetry_chunks.lock().unwrap_or_else(|e| e.into_inner()).clone();
                         }
                     }
                 }

@@ -28,6 +28,7 @@ use futures::{Stream, StreamExt};
 use regex::Regex;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::task::{Context, Poll};
 
 use crate::config::SanitizerConfig;
@@ -42,6 +43,7 @@ const BODY_SCAN_LIMIT: usize = 10 * 1024 * 1024;
 const STREAM_OVERLAP: usize = 256;
 
 /// A compiled sanitizer pattern.
+#[derive(Clone)]
 pub struct CompiledPattern {
     regex: Regex,
     replacement: String,
@@ -50,7 +52,8 @@ pub struct CompiledPattern {
 }
 
 /// Built-in secret patterns. Always active when the sanitizer is enabled.
-fn builtin_patterns() -> Vec<CompiledPattern> {
+/// Compiled once and reused for every request via `LazyLock`.
+static BUILTIN_PATTERNS: LazyLock<Vec<CompiledPattern>> = LazyLock::new(|| {
     vec![
         CompiledPattern {
             // AWS Access Key ID
@@ -126,13 +129,18 @@ fn builtin_patterns() -> Vec<CompiledPattern> {
             name: "generic_api_key",
         },
     ]
+});
+
+/// Returns a reference to the lazily-compiled built-in patterns.
+fn builtin_patterns() -> &'static Vec<CompiledPattern> {
+    &BUILTIN_PATTERNS
 }
 
 /// Compile all active patterns: builtins plus any user-supplied custom patterns.
 /// Invalid custom regexes are logged and skipped (we never want to crash the
 /// gateway over a typo in user config).
 fn compile_patterns(config: &SanitizerConfig) -> Vec<CompiledPattern> {
-    let mut patterns = builtin_patterns();
+    let mut patterns = builtin_patterns().clone();
     for custom in &config.custom_patterns {
         match Regex::new(&custom.pattern) {
             Ok(re) => patterns.push(CompiledPattern {

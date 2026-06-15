@@ -13,7 +13,7 @@ impl Clone for ActiveRequests {
             counts: Mutex::new(
                 self.counts
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .clone()
             ),
         }
@@ -29,13 +29,13 @@ impl ActiveRequests {
 
     /// Increment the active request count for a channel.
     pub fn increment(&self, channel_id: Uuid) {
-        let mut guard = self.counts.lock().unwrap();
+        let mut guard = self.counts.lock().unwrap_or_else(|e| e.into_inner());
         *guard.entry(channel_id).or_insert(0) += 1;
     }
 
     /// Decrement the active request count for a channel.
     pub fn decrement(&self, channel_id: Uuid) {
-        let mut guard = self.counts.lock().unwrap();
+        let mut guard = self.counts.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(count) = guard.get_mut(&channel_id) {
             if *count > 0 {
                 *count -= 1;
@@ -47,13 +47,13 @@ impl ActiveRequests {
 
     /// Get the current active request count for a channel.
     pub fn get(&self, channel_id: Uuid) -> u32 {
-        let guard = self.counts.lock().unwrap();
+        let guard = self.counts.lock().unwrap_or_else(|e| e.into_inner());
         guard.get(&channel_id).copied().unwrap_or(0)
     }
 
     /// Get all active request counts as a snapshot.
     pub fn snapshot(&self) -> HashMap<Uuid, u32> {
-        let guard = self.counts.lock().unwrap();
+        let guard = self.counts.lock().unwrap_or_else(|e| e.into_inner());
         guard.clone()
     }
 }
