@@ -31,14 +31,23 @@ ModelSwitch 是一个用 Rust (Tauri + Axum 0.8) 构建的 LLM 智能网关。�
 | 14 | 缓存碰撞缓解 | compute_key() + key_material 验证 | ✅ |
 | 15 | 文档 | README.md + docs/architecture.md | ✅ |
 | 16 | 安全加固 | 原子文件权限, SSRF 防护, Header 欺骗防护 | ✅ |
+| 17 | `admin.rs` 上帝模块拆分 | 1,032 行 → `admin/` 目录 (mod.rs 55行, channels.rs 327行, mcp.rs 317行, virtual_keys.rs 154行, system.rs 184行, auth.rs 74行) | ✅ |
+| 18 | `lib.rs` 多关注点分离 | 949 行 → lib.rs 174行, tauri_cmds.rs 279行, server.rs 494行, shutdown.rs 39行 | ✅ |
+| 19 | 锁中毒恢复 | 35 个锁 unwrap 替换为 `.unwrap_or_else(|e| e.into_inner())` (8 个文件) | ✅ |
+| 20 | 惰性正则编译 | `builtin_patterns()` 改为 `LazyLock<Vec<CompiledPattern>>` 静态变量 | ✅ |
+| 21 | Clippy 零警告 | 26+ 项修复覆盖 28 个文件, `cargo clippy --lib -- --deny warnings` 通过 | ✅ |
+| 22 | 分页 `total` 字段 | `PaginatedResponse<T>` 类型 + `get_logs` 返回 total 计数 + `DispatchLogger::total()` | ✅ |
 
 ### 关键指标变化
 
 | 指标 | 重构前 | 重构后 | 变化 |
 |------|--------|--------|------|
 | 测试数量 | ~137 | 157 | +20 |
-| Clippy 警告 | 57 | 24 | -33 |
+| Clippy 警告 | 57 | 0 | -57 (100%) |
 | proxy/mod.rs 行数 | 1,303 | 295 | -77% |
+| admin.rs 行数 | 1,032 | 删除 (6 文件, 最大 327 行) | -100% |
+| lib.rs 行数 | 949 | 174 | -82% |
+| 锁 unwrap 站点 | 35 | 35 (全部恢复模式) | 100% 可恢复 |
 | AppState 字段 | 21 个扁平 | 12 个分组 (7 子结构) | 结构化 |
 | Channel 构建重复 | 3 处 | 1 处 (from_config) | -67% |
 | RateLimiter Mutex | 5 | 1 | -80% |
@@ -52,15 +61,15 @@ ModelSwitch 是一个用 Rust (Tauri + Axum 0.8) 构建的 LLM 智能网关。�
 
 | 模块 | 文件 | 行数 | 状态 | 备注 |
 |------|------|------|------|------|
-| 管理 API | `admin.rs` | 1,032 | 🔴 过大 | 29 个端点, 需按领域拆分 |
-| 网关启动 | `lib.rs` | 949 | 🔴 过大 | 混合 Tauri 命令/服务端/信号处理 |
+| 管理 API | `admin/mod.rs` | 55 | ✅ | 已拆分为 6 文件 (channels 327, mcp 317, virtual_keys 154, system 184, auth 74) |
+| 网关启动 | `lib.rs` | 174 | ✅ | 已拆分为 tauri_cmds (279), server (494), shutdown (39) |
 | HTTP 调用 | `proxy/attempt.rs` | 676 | 🟡 偏大 | try_channel_attempt 仍为大型函数 |
-| 隐私过滤 | `middleware/sanitizer.rs` | 568 | ✅ | |
-| 调度日志 | `log.rs` | 537 | ✅ | |
+| 隐私过滤 | `middleware/sanitizer.rs` | 568 | ✅ | builtin_patterns 改为 LazyLock |
+| 调度日志 | `log.rs` | 537 | ✅ | 分页 total 已实现 |
 | 虚拟密钥 | `virtual_key/mod.rs` | 523 | ✅ | |
 | MCP 管理器 | `mcp/manager.rs` | 500 | ✅ | |
 | 代理核心 | `proxy/mod.rs` | 295 | ✅ | 已拆分 |
-| 调度循环 | `proxy/dispatch.rs` | 329 | ✅ | 新文件 |
+| 调度循环 | `proxy/dispatch.rs` | 329 | ✅ | 已拆分 |
 | 请求缓存 | `proxy/cache.rs` | 296 | ✅ | |
 | 统一错误 | `error.rs` | 60 | ⚠️ | 已定义但未被采用 |
 
@@ -70,32 +79,23 @@ ModelSwitch 是一个用 Rust (Tauri + Axum 0.8) 构建的 LLM 智能网关。�
 
 ### P0 — 高影响
 
-#### 1. `admin.rs` 上帝模块 (1,032 行, 29 个端点)
+#### 1. ✅ `admin.rs` 上帝模块拆分 — 已完成 (Phase 5, Commit 34b7658)
 
-**问题**: 一个文件承载了 5 个正交的 API 领域 — 通道管理、MCP 服务管理、虚拟密钥管理、系统操作（缓存/熔断器/配置重载）、Cookie 登录处理。
+**已完成**: 1,032 行的 `admin.rs` 已拆分为 `admin/` 目录：
+- `admin/mod.rs` (55行) — 共享类型 (ApiResponse, PaginationParams, PaginatedResponse) + glob 重导出
+- `admin/channels.rs` (327行) — 7 个通道 CRUD 端点
+- `admin/mcp.rs` (317行) — 8 个 MCP 服务管理端点
+- `admin/virtual_keys.rs` (154行) — 4 个虚拟密钥 CRUD 端点
+- `admin/system.rs` (184行) — 8 个系统端点 (logs/stats/quota/usage/circuit/flush/reload)
+- `admin/auth.rs` (74行) — 2 个 Cookie/登录端点
 
-**建议拆分方案**:
-```
-admin/
-├── mod.rs              (~50行)  路由注册 + ApiResponse 类型
-├── channels.rs         (~250行) list/create/update/delete/ping/status
-├── mcp.rs              (~250行) list/create/update/delete/start/stop/tools
-├── virtual_keys.rs     (~120行) list/create/update/delete
-├── system.rs           (~150行) logs/stats/quota/circuit/flush/reload
-└── cookies.rs          (~120行) receive_login_cookies/get_pending_cookies
-```
+#### 2. ✅ `lib.rs` 多关注点分离 — 已完成 (Phase 5, Commit 34b7658)
 
-#### 2. `lib.rs` 混合多关注点 (949 行)
-
-**问题**: 混合了 3 个关注点 — Tauri 桌面命令、独立服务端启动、信号处理。
-
-**建议拆分方案**:
-```
-lib.rs                 (~100行) 模块声明 + spawn_bg + 公共导出
-tauri_cmds.rs          (~200行) gateway_start/stop/restart + MCP 命令
-server.rs              (~300行) build_router + start_gateway + run_gateway
-shutdown.rs            (~100行) shutdown_signal + 优雅关闭逻辑
-```
+**已完成**: 949 行的 `lib.rs` 已拆分为 4 个文件：
+- `lib.rs` (174行) — 模块声明, spawn_bg, GatewayHandles, run() 入口
+- `tauri_cmds.rs` (279行) — GatewayManager + 全部 10 个 `#[tauri::command]` 函数
+- `server.rs` (494行) — start_gateway_services, build_router, start_gateway
+- `shutdown.rs` (39行) — shutdown_signal + run_gateway 便捷封装
 
 #### 3. `GatewayError` 已定义但未采用
 
@@ -114,20 +114,11 @@ shutdown.rs            (~100行) shutdown_signal + 优雅关闭逻辑
 
 ### P1 — 中优先级
 
-#### 4. 64 个生产环境 `.unwrap()` 调用
+#### 4. ✅ 锁 unwrap 中毒恢复 — 已完成 (Phase 6, Commit d5db284)
 
-**问题**: 64 个 `.unwrap()` / `.expect()` 调用分布在生产代码中。
+**已完成**: 35 个锁 unwrap 站点从 `.lock().unwrap()` 替换为 `.lock().unwrap_or_else(|e| e.into_inner())`，覆盖 8 个文件 (rate_limiter, cache, stream, attempt, tauri_cmds, active_requests, credential/file_store, payload_rules)。`middleware/sanitizer.rs` 的 `builtin_patterns()` 改为 `LazyLock<Vec<CompiledPattern>>` 静态变量。
 
-**风险分布**:
-- **34 个 Mutex/RwLock 锁 unwrap** — 如果锁被中毒（持有锁的线程 panic），整个网关会 panic
-- **3 个 request_id parse unwrap** — 非 UTF-8 请求头会导致 panic
-- **2 个 Gemini response unwrap** — 格式异常的上游响应会导致 panic
-- **10 个 Regex::new unwrap** — 安全（编译时常量），但应使用 `once_cell::sync::Lazy`
-
-**建议**: 
-1. 将锁 unwrap 替换为 `.unwrap_or_else(|e| e.into_inner())` 恢复模式
-2. 将 Regex 编译改为 `Lazy` 静态变量
-3. 将 request_id parse 改为 `to_str().ok()` 链式处理
+剩余 unwrap（request_id parse、Gemini response 等）仍需逐步处理。
 
 #### 5. Admin API 信封未完成
 
@@ -143,26 +134,17 @@ shutdown.rs            (~100行) shutdown_signal + 优雅关闭逻辑
 
 **建议**: 实现流式 MCP 工具循环 — 流完成后检测工具调用，执行后重新分派。
 
-#### 7. `log::tests::usage_history_aggregates_by_hour_and_channel` 测试不稳定
+#### 7. ✅ `log::tests` 不稳定测试修复 — 已完成 (Phase 6, Commit d5db284)
 
-**问题**: 测试使用 `Utc::now()` 创建日志条目，当 `now.minute() >= 50` 时，两个间隔 10 分钟的条目跨小时边界，导致分桶数从 2 变为 3。
-
-**建议**: 使用固定时间 `DateTime::parse_from_rfc3339("2026-06-15T12:30:00Z")` 替代 `Utc::now()`。
+**已完成**: 不稳定测试通过使用固定时间戳 `2025-06-01T14:05:00Z` 替代 `Utc::now()` 修复。
 
 ---
 
 ### P2 — 低优先级
 
-#### 8. Clippy 警告清理 (24 个)
+#### 8. ✅ Clippy 警告清理 — 已完成 (Phase 7, Commit b6b24df)
 
-**当前分布**:
-- 5 个空行文档注释
-- 4 个不必要的引用
-- 2 个 `&PathBuf` 应改为 `&Path`
-- 2 个 `map_or` 简化
-- 其余为未使用变量/导入
-
-**建议**: `cargo clippy --fix --lib` 自动修复大部分，剩余手动处理。
+**已完成**: 26+ 项 clippy 警告全部修复，覆盖 28 个文件 (map_or→is_none_or, and_then→map, for_kv_map, io_other_error, collapsible_if, borrowed_box, let_unit_value, Entry API, dead_code allows 等)。`cargo clippy --lib -- --deny warnings` 现以 **零警告** 通过。
 
 #### 9. `proxy/attempt.rs` 偏大 (676 行)
 
@@ -170,9 +152,9 @@ shutdown.rs            (~100行) shutdown_signal + 优雅关闭逻辑
 
 **建议**: 可以进一步提取 `handle_streaming_success()` 和 `handle_json_success()` 到独立模块，但这不是紧急事项。
 
-#### 10. Admin API 分页不完整
+#### 10. ✅ Admin API 分页 `total` 字段 — 已完成 (Phase 7, Commit b6b24df)
 
-**问题**: `GET /api/logs` 接受 `offset`/`limit` 但不返回 `total` 计数，前端无法知道是否有更多数据。
+**已完成**: `PaginatedResponse<T>` 类型已添加到 `admin/mod.rs` (data/total/offset/limit 字段)，`get_logs` 端点返回带 total 计数的分页响应，`DispatchLogger::total()` 方法已添加。
 
 #### 11. 前端可测试性
 
@@ -182,27 +164,31 @@ shutdown.rs            (~100行) shutdown_signal + 优雅关闭逻辑
 
 ## 推荐后续路线图
 
-### Phase 5: admin.rs + lib.rs 拆分 — ~1-2 天
-**风险: 中 | 收益: 高**
+### ✅ Phase 5: admin.rs + lib.rs 拆分 — 已完成 (Commit 34b7658)
 
-1. 将 `admin.rs` 拆分为 `admin/` 目录（channels, mcp, virtual_keys, system, cookies）
-2. 将 `lib.rs` 拆分为 `tauri_cmds.rs`, `server.rs`, `shutdown.rs`
-3. 在拆分过程中将所有 admin 端点迁移到 `ApiResponse<T>` 信封
+1. ✅ 将 `admin.rs` 拆分为 `admin/` 目录 (channels, mcp, virtual_keys, system, auth)
+2. ✅ 将 `lib.rs` 拆分为 `tauri_cmds.rs`, `server.rs`, `shutdown.rs`
+3. ⬜ Admin 端点迁移到 `ApiResponse<T>` 信封（仍未完成）
 
-### Phase 6: 错误处理统一 — ~1-2 天
-**风险: 低 | 收益: 中**
+### ✅ Phase 6: 锁中毒恢复 + 清理 — 已完成 (Commit d5db284)
 
-1. 将 34 个锁 unwrap 替换为恢复模式
-2. 将 Regex 编译改为 Lazy 静态变量
-3. 从新代码开始采用 `GatewayError`
-4. 修复不稳定的 log 测试
+1. ✅ 35 个锁 unwrap 替换为恢复模式
+2. ✅ Regex 编译改为 LazyLock 静态变量
+3. ⬜ 从新代码开始采用 `GatewayError`（仍未完成）
+4. ✅ 修复不稳定的 log 测试
 
-### Phase 7: MCP 流式 + 清理 — ~1-2 天
-**风险: 中 | 收益: 中**
+### ✅ Phase 7: Clippy 清理 + 分页 — 已完成 (Commit b6b24df)
 
-1. 实现流式 MCP 工具循环
-2. 清理所有 clippy 警告
-3. 补全 Admin API 分页 `total` 字段
+1. ⬜ 实现流式 MCP 工具循环（仍未完成）
+2. ✅ 清理所有 clippy 警告（零警告通过）
+3. ✅ 补全 Admin API 分页 `total` 字段
+
+### Phase 8: 后续改进方向
+
+1. **GatewayError 采用** — 渐进式从新代码开始使用统一错误类型
+2. **Admin API 信封迁移** — 将剩余 26 个端点迁移到 `ApiResponse<T>` / `PaginatedResponse<T>`
+3. **MCP 流式工具循环** — 实现 SSE 流式客户端的 MCP 工具注入
+4. **`proxy/attempt.rs` 进一步拆分** — 提取 `handle_streaming_success()` / `handle_json_success()`
 
 ---
 
