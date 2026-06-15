@@ -1,6 +1,6 @@
 # ModelSwitch 架构评估报告（修订版）
 
-> 修订日期: 2026-06-15 (Phase 8 完成)  
+> 修订日期: 2026-06-15 (全部完成)  
 > 基于第一轮架构重构完成后的代码库状态
 
 ## Context
@@ -127,7 +127,7 @@ ModelSwitch 是一个用 Rust (Tauri + Axum 0.8) 构建的 LLM 智能网关。�
 
 **已完成**: 26/29 个端点已迁移到 `ApiResponse<T>` / `PaginatedResponse<T>` 信封。仅 `auth.rs` 的 2 个 Cookie 端点（login/logout）有意跳过，因为它们使用重定向而非 JSON 响应。
 
-#### 6. MCP 流式工具注入限制
+#### 6. ✅ MCP 流式工具循环 — 已完成 (Commit 6cfd341)
 
 **问题**: `mcp_auto_inject` 启用时强制 `stream: false`，即使客户端请求流式响应。`_was_streaming` 变量被捕获但未使用。
 
@@ -184,11 +184,11 @@ ModelSwitch 是一个用 Rust (Tauri + Axum 0.8) 构建的 LLM 智能网关。�
 2. ✅ 清理所有 clippy 警告（零警告通过）
 3. ✅ 补全 Admin API 分页 `total` 字段
 
-### ✅ Phase 8: 后续改进方向 — 基本完成
+### ✅ Phase 8: 后续改进方向 — 全部完成
 
 1. ✅ **GatewayError 采用** — IntoResponse 已实现 (commit 060b53e)，渐进式采用进行中
 2. ✅ **Admin API 信封迁移** — 22 端点迁移完成，总计 26/29 使用信封
-3. ⬜ **MCP 流式工具循环** — 实现 SSE 流式客户端的 MCP 工具注入（唯一剩余项）
+3. ✅ **MCP 流式工具循环** — SSE 响应在流式请求时返回 (commit 6cfd341)
 4. ✅ **`proxy/attempt.rs` 进一步拆分** — 已拆分为 attempt.rs (384行) + response.rs (312行)
 
 ---
