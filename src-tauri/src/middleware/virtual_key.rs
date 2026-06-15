@@ -24,7 +24,7 @@ pub async fn virtual_key_middleware(
     next: Next,
 ) -> Result<Response, (StatusCode, &'static str)> {
     // Open-proxy mode: no virtual keys configured.
-    if !state.virtual_key_store.has_keys().await {
+    if !state.billing.virtual_key_store.has_keys().await {
         return Ok(next.run(req).await);
     }
 
@@ -40,7 +40,7 @@ pub async fn virtual_key_middleware(
     };
 
     // Validate against virtual key store.
-    match state.virtual_key_store.validate(token).await {
+    match state.billing.virtual_key_store.validate(token).await {
         Some(vk) => {
             // Inject virtual key ID for downstream spend tracking.
             // Handler extractors only see HeaderMap, not request extensions,

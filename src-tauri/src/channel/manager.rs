@@ -1,6 +1,4 @@
-use crate::channel::{
-    Channel, ChannelStatus, Credential, CredentialType, Provider, SharedChannels,
-};
+use crate::channel::{Channel, ChannelStatus, CredentialType, SharedChannels};
 use crate::config::{AppConfig, ChannelConfig, GatewayConfig};
 use crate::credential::SharedCredentialStore;
 use std::sync::Arc;
@@ -19,43 +17,7 @@ impl ChannelManager {
         let channels: Vec<Channel> = config
             .channels
             .iter()
-            .map(|c| {
-                let cred_type = match c.credential_type.as_str() {
-                    "web_session" => CredentialType::WebSession,
-                    _ => CredentialType::ApiKey,
-                };
-                Channel {
-                    id: Uuid::parse_str(&c.id).unwrap_or_else(|_| Uuid::new_v4()),
-                    name: c.name.clone(),
-                    provider: Provider::from_str(&c.provider),
-                    priority: c.priority,
-                    weight: c.weight,
-                    cost_per_token: c.cost_per_token,
-                    input_cost_per_mtok: c.input_cost_per_mtok,
-                    output_cost_per_mtok: c.output_cost_per_mtok,
-                    credential: Credential {
-                        cred_type,
-                        key_ref: c.credential_ref.clone(),
-                        api_key: c.api_key.clone(),
-                        expires_at: None,
-                    },
-                    enabled: c.enabled,
-                    status: ChannelStatus::Healthy,
-                    circuit_open_until: None,
-                    base_url: c.base_url.clone(),
-                    model_mapping: c.model_mapping.clone(),
-                    created_at: chrono::Utc::now(),
-                    updated_at: chrono::Utc::now(),
-                    avg_latency_ms: 0,
-                    consecutive_failures: 0,
-                    cooldown_minutes: c.cooldown_minutes,
-                    rpm_limit: c.rpm_limit,
-                    tpm_limit: c.tpm_limit,
-                    account_group: c.account_group.clone(),
-                    failure_window_start: None,
-                    window_failure_count: 0,
-                }
-            })
+            .map(|c| Channel::from_config(c))
             .collect();
 
         Self {

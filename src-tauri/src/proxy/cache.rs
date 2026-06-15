@@ -15,6 +15,8 @@ pub struct RequestCache {
 struct CacheEntry {
     response_body: String,
     cached_at: Instant,
+    /// The canonical string (model + body without stream) used to verify equality.
+    key_material: String,
 }
 
 impl RequestCache {
@@ -32,20 +34,27 @@ impl RequestCache {
     pub fn cache_key(model: &str, body: &serde_json::Value) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-
         let mut h = DefaultHasher::new();
-        model.hash(&mut h);
-        // Hash the body without the stream field for cache stability
-        if let Some(mut map) = body.as_object().cloned() {
-            map.remove("stream");
-            let stable = serde_json::to_string(&map).unwrap_or_default();
-            stable.hash(&mut h);
-        }
+        canonical_key_material(model, body).hash(&mut h);
         h.finish()
     }
 
-    /// Try to get a cached response. Returns None if expired or not found.
-    pub fn get(&self, key: u64) -> Option<String> {
+    /// Compute both the hash key and the canonical key material.
+    /// Callers should prefer this over `cache_key` + `canonical_key_material` separately
+    /// to avoid recomputing the canonical string.
+    pub fn compute_key(model: &str, body: &serde_json::Value) -> (u64, String) {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let material = canonical_key_material(model, body);
+        let mut h = DefaultHasher::new();
+        material.hash(&mut h);
+        (h.finish(), material)
+    }
+
+    /// Try to get a cached response. Returns None if expired, not found, or hash collision detected.
+    /// The `key_material` is compared against the stored material to eliminate false positives
+    /// from `u64` hash collisions.
+    pub fn get(&self, key: u64, key_material: &str) -> Option<String> {
         let mut guard = self.entries.lock().unwrap();
         let mut order = self.order.lock().unwrap();
         // Clean expired entries on every read
@@ -61,11 +70,18 @@ impl RequestCache {
         if guard.len() < before {
             tracing::debug!(evicted = before - guard.len(), "Cache TTL eviction");
         }
-        guard.get(&key).map(|e| e.response_body.clone())
+        guard.get(&key).and_then(|e| {
+            if e.key_material == key_material {
+                Some(e.response_body.clone())
+            } else {
+                tracing::warn!("Cache hash collision detected for key {}", key);
+                None
+            }
+        })
     }
 
     /// Insert a response into the cache.
-    pub fn insert(&self, key: u64, response_body: String) {
+    pub fn insert(&self, key: u64, key_material: String, response_body: String) {
         let mut guard = self.entries.lock().unwrap();
         let mut order = self.order.lock().unwrap();
 
@@ -78,6 +94,7 @@ impl RequestCache {
             key,
             CacheEntry {
                 response_body,
+                key_material,
                 cached_at: Instant::now(),
             },
         );
@@ -107,6 +124,17 @@ impl RequestCache {
         guard.clear();
         order.clear();
     }
+}
+
+/// Compute the canonical string used for cache keying (model + body without stream field).
+fn canonical_key_material(model: &str, body: &serde_json::Value) -> String {
+    let body_str = if let Some(mut map) = body.as_object().cloned() {
+        map.remove("stream");
+        serde_json::to_string(&map).unwrap_or_default()
+    } else {
+        serde_json::to_string(body).unwrap_or_default()
+    };
+    format!("{model}\x00{body_str}")
 }
 
 /// Default TTL: 5 minutes, max 1000 entries
@@ -142,58 +170,75 @@ mod tests {
     #[test]
     fn cache_hit_and_miss() {
         let cache = RequestCache::default();
-        let key = RequestCache::cache_key("gpt-4", &json!({"messages": []}));
-        assert!(cache.get(key).is_none());
-        cache.insert(key, "cached response".to_string());
-        assert_eq!(cache.get(key), Some("cached response".to_string()));
+        let body = json!({"messages": []});
+        let (key, material) = RequestCache::compute_key("gpt-4", &body);
+        assert!(cache.get(key, &material).is_none());
+        cache.insert(key, material.clone(), "cached response".to_string());
+        assert_eq!(cache.get(key, &material), Some("cached response".to_string()));
     }
 
     #[test]
     fn cache_tracks_length() {
         let cache = RequestCache::default();
         assert_eq!(cache.len(), 0);
-        cache.insert(1, "a".to_string());
-        cache.insert(2, "b".to_string());
+        cache.insert(1, "mat_1".to_string(), "a".to_string());
+        cache.insert(2, "mat_2".to_string(), "b".to_string());
         assert_eq!(cache.len(), 2);
     }
 
     #[test]
     fn evicts_oldest_when_over_capacity() {
         let cache = RequestCache::new(Duration::from_secs(300), 3);
-        cache.insert(1, "a".to_string());
-        cache.insert(2, "b".to_string());
-        cache.insert(3, "c".to_string());
+        cache.insert(1, "mat_1".to_string(), "a".to_string());
+        cache.insert(2, "mat_2".to_string(), "b".to_string());
+        cache.insert(3, "mat_3".to_string(), "c".to_string());
         assert_eq!(cache.len(), 3);
         // Adding 4th should evict key 1 (oldest)
-        cache.insert(4, "d".to_string());
+        cache.insert(4, "mat_4".to_string(), "d".to_string());
         assert_eq!(cache.len(), 3);
-        assert!(cache.get(1).is_none());
-        assert_eq!(cache.get(2), Some("b".to_string()));
-        assert_eq!(cache.get(4), Some("d".to_string()));
+        assert!(cache.get(1, "mat_1").is_none());
+        assert_eq!(cache.get(2, "mat_2"), Some("b".to_string()));
+        assert_eq!(cache.get(4, "mat_4"), Some("d".to_string()));
     }
 
     #[test]
     fn update_existing_key_preserves_capacity() {
         let cache = RequestCache::new(Duration::from_secs(300), 2);
-        cache.insert(1, "a".to_string());
-        cache.insert(2, "b".to_string());
-        cache.insert(1, "updated".to_string());
+        cache.insert(1, "mat_1".to_string(), "a".to_string());
+        cache.insert(2, "mat_2".to_string(), "b".to_string());
+        cache.insert(1, "mat_1".to_string(), "updated".to_string());
         assert_eq!(cache.len(), 2);
-        assert_eq!(cache.get(1), Some("updated".to_string()));
+        assert_eq!(cache.get(1, "mat_1"), Some("updated".to_string()));
         // Key 3 should evict key 2 (oldest insertion order, key 1 was just updated)
-        cache.insert(3, "c".to_string());
+        cache.insert(3, "mat_3".to_string(), "c".to_string());
         assert_eq!(cache.len(), 2);
-        assert!(cache.get(2).is_none());
+        assert!(cache.get(2, "mat_2").is_none());
     }
 
     #[test]
     fn flush_clears_everything() {
         let cache = RequestCache::default();
-        cache.insert(1, "a".to_string());
-        cache.insert(2, "b".to_string());
+        cache.insert(1, "mat_1".to_string(), "a".to_string());
+        cache.insert(2, "mat_2".to_string(), "b".to_string());
         cache.flush();
         assert_eq!(cache.len(), 0);
-        assert!(cache.get(1).is_none());
+        assert!(cache.get(1, "mat_1").is_none());
+    }
+
+    #[test]
+    fn detects_hash_collision() {
+        let cache = RequestCache::default();
+        // Insert with one key_material
+        cache.insert(42, "request_A_material".to_string(), "response_A".to_string());
+        // Lookup with same hash but different material -> should miss
+        let result = cache.get(42, "request_B_material");
+        assert!(
+            result.is_none(),
+            "Should not return response for different key material"
+        );
+        // Lookup with same material -> should hit
+        let result = cache.get(42, "request_A_material");
+        assert_eq!(result, Some("response_A".to_string()));
     }
 }
 

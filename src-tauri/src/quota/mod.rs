@@ -6,10 +6,9 @@ pub mod registry;
 pub mod webview_scrape;
 
 use crate::config::app_config_dir;
+use crate::persisted_store::PersistedStore;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use uuid::Uuid;
 
 /// Error types for quota polling.
@@ -149,15 +148,21 @@ impl QuotaInfo {
 }
 
 /// Shared store for quota information across all channels.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct QuotaStore {
-    quotas: RwLock<HashMap<Uuid, QuotaInfo>>,
+    store: PersistedStore<Uuid, QuotaInfo>,
+}
+
+impl Default for QuotaStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl QuotaStore {
     pub fn new() -> Self {
         Self {
-            quotas: RwLock::new(HashMap::new()),
+            store: PersistedStore::new(Self::store_path()),
         }
     }
 
@@ -165,7 +170,7 @@ impl QuotaStore {
     /// from the existing entry (since the poller refreshes balance/quota
     /// data but does not track per-request token counts).
     pub async fn update(&self, info: QuotaInfo) {
-        let mut quotas = self.quotas.write().await;
+        let mut quotas = self.store.write().await;
         let merged = if let Some(existing) = quotas.get(&info.channel_id) {
             QuotaInfo {
                 // Preserve accumulated token usage from passive tracking
@@ -204,7 +209,7 @@ impl QuotaStore {
         remaining_tok: Option<u64>,
         limit_tok: Option<u64>,
     ) {
-        let mut quotas = self.quotas.write().await;
+        let mut quotas = self.store.write().await;
         if let Some(info) = quotas.get_mut(&channel_id) {
             info.update_from_headers(remaining_req, limit_req, remaining_tok, limit_tok);
         } else {
@@ -216,18 +221,18 @@ impl QuotaStore {
     }
 
     pub async fn get(&self, channel_id: Uuid) -> Option<QuotaInfo> {
-        let quotas = self.quotas.read().await;
+        let quotas = self.store.read().await;
         quotas.get(&channel_id).cloned()
     }
 
     pub async fn list(&self) -> Vec<QuotaInfo> {
-        let quotas = self.quotas.read().await;
+        let quotas = self.store.read().await;
         quotas.values().cloned().collect()
     }
 
     /// Remove the quota entry for a channel (e.g. when the channel is deleted).
     pub async fn delete(&self, channel_id: Uuid) {
-        let mut quotas = self.quotas.write().await;
+        let mut quotas = self.store.write().await;
         quotas.remove(&channel_id);
     }
 
@@ -238,100 +243,18 @@ impl QuotaStore {
 
     /// Persist all quota data to disk (JSON). Best-effort — errors are logged.
     pub async fn persist_to_file(&self) {
-        let quotas = self.quotas.read().await;
-        let data = match serde_json::to_string(&*quotas) {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::error!("Failed to serialize quota store: {}", e);
-                return;
-            }
-        };
-        drop(quotas); // release read lock before I/O
-
-        let path = Self::store_path();
-        if let Some(parent) = path.parent() {
-            if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                tracing::error!("Failed to create quota store dir: {}", e);
-                return;
-            }
-        }
-        if let Err(e) = tokio::fs::write(&path, &data).await {
-            tracing::error!("Failed to write quota store: {}", e);
-        }
+        self.store.persist().await;
     }
 
     /// Load persisted quota data from disk. Merges into the current store —
     /// existing entries are NOT overwritten (the poller will refresh them).
     pub async fn load_from_file(&self) {
-        let path = Self::store_path();
-        let data = match tokio::fs::read_to_string(&path).await {
-            Ok(d) => d,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
-            Err(e) => {
-                tracing::warn!("Failed to read quota store file: {e}");
-                return;
-            }
-        };
-
-        let loaded: HashMap<Uuid, QuotaInfo> = match serde_json::from_str(&data) {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::warn!("Failed to parse quota store: {}", e);
-                return;
-            }
-        };
-
-        let mut quotas = self.quotas.write().await;
-        for (id, info) in loaded {
-            // Only insert if not already present (poller may have populated it)
-            quotas.entry(id).or_insert(info);
-        }
-        tracing::info!(
-            count = quotas.len(),
-            "Loaded persisted quota data from disk"
-        );
+        self.store.load().await;
     }
 
     /// Synchronous persist for shutdown path (no async runtime needed).
-    /// Uses `try_read()` with a short retry loop to handle lock contention.
     pub fn persist_sync(&self) {
-        let quotas = {
-            let mut guard = None;
-            for _ in 0..10 {
-                match self.quotas.try_read() {
-                    Ok(g) => {
-                        guard = Some(g);
-                        break;
-                    }
-                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
-                }
-            }
-            match guard {
-                Some(g) => g,
-                None => {
-                    tracing::warn!("QuotaStore lock contention during shutdown — skipping persist after 10 retries");
-                    return;
-                }
-            }
-        };
-        let data = match serde_json::to_string(&*quotas) {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::error!("Failed to serialize quota store on shutdown: {}", e);
-                return;
-            }
-        };
-        drop(quotas);
-
-        let path = Self::store_path();
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Err(e) = std::fs::write(&path, &data) {
-            tracing::error!("Failed to write quota store on shutdown: {}", e);
-        } else {
-            tracing::info!("Quota store persisted on shutdown");
-        }
+        self.store.persist_sync();
     }
 
     /// Accumulate token usage from an API response into a channel's QuotaInfo.
@@ -344,7 +267,7 @@ impl QuotaStore {
         cache_miss_tokens: Option<u64>,
         estimated_cost: Option<f64>,
     ) {
-        let mut quotas = self.quotas.write().await;
+        let mut quotas = self.store.write().await;
         if let Some(info) = quotas.get_mut(&channel_id) {
             if let Some(v) = input_tokens {
                 info.total_input_tokens = Some(info.total_input_tokens.unwrap_or(0) + v);

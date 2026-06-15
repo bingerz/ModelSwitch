@@ -3,7 +3,9 @@ use std::sync::Mutex;
 use std::time::Instant;
 use uuid::Uuid;
 
-/// Sliding window rate limiter for a single metric (tokens or requests).
+const WINDOW_MS: u64 = 60_000; // 1 minute
+
+/// Sliding window for a single metric (tokens or requests).
 struct SlidingWindow {
     entries: Vec<(u64, u64)>, // (relative_ms, count)
     window_ms: u64,
@@ -45,90 +47,101 @@ impl SlidingWindow {
     }
 }
 
-/// Per-channel rate limiting for tokens per minute (TPM) and requests per minute (RPM).
-pub struct RateLimiter {
-    tpm_windows: Mutex<HashMap<Uuid, SlidingWindow>>,
-    rpm_windows: Mutex<HashMap<Uuid, SlidingWindow>>,
-    tpm_limits: Mutex<HashMap<Uuid, u64>>,
-    rpm_limits: Mutex<HashMap<Uuid, u64>>,
-    global_tpm_limit: Option<u64>,
-    global_tpm_window: Mutex<SlidingWindow>,
+/// Per-channel rate limit configuration.
+struct ChannelLimits {
+    tpm: Option<u64>,
+    rpm: u64,
 }
 
-const WINDOW_MS: u64 = 60_000; // 1 minute
+impl Default for ChannelLimits {
+    fn default() -> Self {
+        Self { tpm: None, rpm: 60 }
+    }
+}
+
+/// Per-channel sliding windows for TPM and RPM.
+struct ChannelWindows {
+    tpm: SlidingWindow,
+    rpm: SlidingWindow,
+}
+
+impl ChannelWindows {
+    fn new() -> Self {
+        Self {
+            tpm: SlidingWindow::new(WINDOW_MS),
+            rpm: SlidingWindow::new(WINDOW_MS),
+        }
+    }
+}
+
+/// Internal state behind a single Mutex.
+struct RateLimiterState {
+    channels: HashMap<Uuid, (ChannelWindows, ChannelLimits)>,
+    global_tpm_window: SlidingWindow,
+}
+
+/// Per-channel rate limiting for tokens per minute (TPM) and requests per minute (RPM).
+/// All state is behind a single Mutex to avoid multi-lock overhead.
+pub struct RateLimiter {
+    state: Mutex<RateLimiterState>,
+    global_tpm_limit: Option<u64>,
+}
 
 impl RateLimiter {
     pub fn new(global_tpm_limit: Option<u64>) -> Self {
         Self {
-            tpm_windows: Mutex::new(HashMap::new()),
-            rpm_windows: Mutex::new(HashMap::new()),
-            tpm_limits: Mutex::new(HashMap::new()),
-            rpm_limits: Mutex::new(HashMap::new()),
+            state: Mutex::new(RateLimiterState {
+                channels: HashMap::new(),
+                global_tpm_window: SlidingWindow::new(WINDOW_MS),
+            }),
             global_tpm_limit,
-            global_tpm_window: Mutex::new(SlidingWindow::new(WINDOW_MS)),
         }
     }
 
     pub fn set_channel_tpm_limit(&self, channel_id: Uuid, limit: u64) {
-        self.tpm_limits.lock().unwrap().insert(channel_id, limit);
-        self.tpm_windows
-            .lock()
-            .unwrap()
+        let mut state = self.state.lock().unwrap();
+        let entry = state
+            .channels
             .entry(channel_id)
-            .or_insert_with(|| SlidingWindow::new(WINDOW_MS));
+            .or_insert_with(|| (ChannelWindows::new(), ChannelLimits::default()));
+        entry.1.tpm = Some(limit);
     }
 
     pub fn set_channel_rpm_limit(&self, channel_id: Uuid, limit: u64) {
-        self.rpm_limits.lock().unwrap().insert(channel_id, limit);
-        self.rpm_windows
-            .lock()
-            .unwrap()
+        let mut state = self.state.lock().unwrap();
+        let entry = state
+            .channels
             .entry(channel_id)
-            .or_insert_with(|| SlidingWindow::new(WINDOW_MS));
-    }
-
-    fn get_rpm_limit(&self, channel_id: Uuid) -> u64 {
-        self.rpm_limits
-            .lock()
-            .unwrap()
-            .get(&channel_id)
-            .copied()
-            .unwrap_or(60)
-    }
-
-    fn get_tpm_limit(&self, channel_id: Uuid) -> Option<u64> {
-        self.tpm_limits.lock().unwrap().get(&channel_id).copied()
+            .or_insert_with(|| (ChannelWindows::new(), ChannelLimits::default()));
+        entry.1.rpm = limit;
     }
 
     /// Check if a request with the given estimated token count is allowed.
+    /// Returns (allowed, reason).
     pub fn check(&self, channel_id: Uuid, estimated_tokens: u64) -> (bool, &'static str) {
+        let mut state = self.state.lock().unwrap();
+
         // Check global TPM
         if let Some(global_limit) = self.global_tpm_limit {
-            let mut guard = self.global_tpm_window.lock().unwrap();
-            if !guard.check_and_add(estimated_tokens, global_limit) {
+            if !state.global_tpm_window.check_and_add(estimated_tokens, global_limit) {
                 return (false, "global_tpm_exceeded");
             }
         }
 
+        // Get or create channel entry
+        let entry = state
+            .channels
+            .entry(channel_id)
+            .or_insert_with(|| (ChannelWindows::new(), ChannelLimits::default()));
+
         // Check per-channel RPM
-        {
-            let rpm_limit = self.get_rpm_limit(channel_id);
-            let mut guard = self.rpm_windows.lock().unwrap();
-            let window = guard
-                .entry(channel_id)
-                .or_insert_with(|| SlidingWindow::new(WINDOW_MS));
-            if window.current_total() >= rpm_limit {
-                return (false, "channel_rpm_exceeded");
-            }
+        if entry.0.rpm.current_total() >= entry.1.rpm {
+            return (false, "channel_rpm_exceeded");
         }
 
         // Check per-channel TPM (only if limit is configured)
-        if let Some(tpm_limit) = self.get_tpm_limit(channel_id) {
-            let mut guard = self.tpm_windows.lock().unwrap();
-            let window = guard
-                .entry(channel_id)
-                .or_insert_with(|| SlidingWindow::new(WINDOW_MS));
-            if window.current_total() + estimated_tokens > tpm_limit {
+        if let Some(tpm_limit) = entry.1.tpm {
+            if entry.0.tpm.current_total() + estimated_tokens > tpm_limit {
                 return (false, "channel_tpm_exceeded");
             }
         }
@@ -138,23 +151,17 @@ impl RateLimiter {
 
     /// Record that a request was dispatched to a channel.
     pub fn record(&self, channel_id: Uuid, tokens: u64) {
-        {
-            let mut guard = self.tpm_windows.lock().unwrap();
-            let window = guard
-                .entry(channel_id)
-                .or_insert_with(|| SlidingWindow::new(WINDOW_MS));
-            window.add(tokens);
-        }
-        {
-            let mut guard = self.rpm_windows.lock().unwrap();
-            let window = guard
-                .entry(channel_id)
-                .or_insert_with(|| SlidingWindow::new(WINDOW_MS));
-            window.add(1);
-        }
+        let mut state = self.state.lock().unwrap();
+
+        let entry = state
+            .channels
+            .entry(channel_id)
+            .or_insert_with(|| (ChannelWindows::new(), ChannelLimits::default()));
+        entry.0.tpm.add(tokens);
+        entry.0.rpm.add(1);
+
         if self.global_tpm_limit.is_some() {
-            let mut guard = self.global_tpm_window.lock().unwrap();
-            guard.add(tokens);
+            state.global_tpm_window.add(tokens);
         }
     }
 }
@@ -175,9 +182,12 @@ mod tests {
     fn record_tracks_requests() {
         let limiter = RateLimiter::new(None);
         let ch_id = Uuid::new_v4();
-        limiter.record(ch_id, 500);
-        let rpm_guard = limiter.rpm_windows.lock().unwrap();
-        assert!(rpm_guard.contains_key(&ch_id));
+        limiter.set_channel_rpm_limit(ch_id, 2);
+        limiter.record(ch_id, 100);
+        assert!(limiter.check(ch_id, 10).0);
+        limiter.record(ch_id, 100);
+        // Now at RPM limit (2), next check should fail
+        assert!(!limiter.check(ch_id, 10).0);
     }
 
     #[test]
@@ -217,10 +227,7 @@ mod tests {
     fn window_prunes_old_entries() {
         let mut window = SlidingWindow::new(100); // 100ms window
         window.add(10);
-        // Simulate time passing by manipulating epoch — we can't, so test with a very short window
-        // Instead, verify entries exist and can be pruned
         assert_eq!(window.current_total(), 10);
-        // After adding more, old entries are still within window
         window.add(20);
         assert_eq!(window.current_total(), 30);
     }

@@ -1,6 +1,8 @@
-use crate::channel::manager::ChannelManager;
+use crate::channel::{manager::ChannelManager, Channel};
 use crate::config::AppConfig;
 use crate::mcp::McpManager;
+use crate::proxy::payload_rules::ChannelPayloadRules;
+use crate::proxy::rate_limiter::RateLimiter;
 use notify::Watcher;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -10,6 +12,8 @@ pub fn start_config_watcher(
     config_path: PathBuf,
     channel_mgr: Arc<ChannelManager>,
     mcp_mgr: Arc<McpManager>,
+    rate_limiter: Arc<RateLimiter>,
+    payload_rules: Arc<ChannelPayloadRules>,
 ) {
     crate::spawn_bg(async move {
         let mut notify = match notify::recommended_watcher(
@@ -82,45 +86,7 @@ pub fn start_config_watcher(
                                         let _ = channel_mgr.update(id, updated).await;
                                     } else {
                                         // New channel — create it
-                                        use crate::channel::{
-                                            Channel, ChannelStatus, Credential, CredentialType,
-                                            Provider,
-                                        };
-                                        let cred_type = match cc.credential_type.as_str() {
-                                            "web_session" => CredentialType::WebSession,
-                                            _ => CredentialType::ApiKey,
-                                        };
-                                        let new_channel = Channel {
-                                            id,
-                                            name: cc.name.clone(),
-                                            provider: Provider::from_str(&cc.provider),
-                                            priority: cc.priority,
-                                            weight: cc.weight,
-                                            cost_per_token: cc.cost_per_token,
-                                            input_cost_per_mtok: cc.input_cost_per_mtok,
-                                            output_cost_per_mtok: cc.output_cost_per_mtok,
-                                            credential: Credential {
-                                                cred_type,
-                                                key_ref: cc.credential_ref.clone(),
-                                                api_key: cc.api_key.clone(),
-                                                expires_at: None,
-                                            },
-                                            enabled: cc.enabled,
-                                            status: ChannelStatus::Healthy,
-                                            circuit_open_until: None,
-                                            base_url: cc.base_url.clone(),
-                                            model_mapping: cc.model_mapping.clone(),
-                                            created_at: chrono::Utc::now(),
-                                            updated_at: chrono::Utc::now(),
-                                            avg_latency_ms: 0,
-                                            consecutive_failures: 0,
-                                            cooldown_minutes: cc.cooldown_minutes,
-                                            rpm_limit: cc.rpm_limit,
-                                            tpm_limit: cc.tpm_limit,
-                                            account_group: cc.account_group.clone(),
-                                            failure_window_start: None,
-                                            window_failure_count: 0,
-                                        };
+                                        let new_channel = Channel::from_config(&cc);
                                         let _ = channel_mgr.create(new_channel).await;
                                     }
                                 }
@@ -139,6 +105,32 @@ pub fn start_config_watcher(
                                 // stop removed servers, add new servers (not auto-started).
                                 mcp_mgr.reload_configs(&new_config.mcp_servers).await;
                                 tracing::info!("MCP servers reloaded");
+
+                                // Hot-reload rate limits and payload rules from channel configs
+                                for cc in &new_config.channels {
+                                    let id = uuid::Uuid::parse_str(&cc.id)
+                                        .unwrap_or_else(|_| uuid::Uuid::new_v4());
+
+                                    if let Some(rpm) = cc.rpm_limit {
+                                        rate_limiter.set_channel_rpm_limit(id, rpm);
+                                    }
+                                    if let Some(tpm) = cc.tpm_limit {
+                                        rate_limiter.set_channel_tpm_limit(id, tpm);
+                                    }
+
+                                    if let Some(ref rules) = cc.payload_rules {
+                                        use crate::proxy::payload_rules::PayloadRules;
+                                        payload_rules.add(
+                                            id,
+                                            PayloadRules {
+                                                defaults: rules.defaults.clone(),
+                                                overrides: rules.overrides.clone(),
+                                                strip: rules.strip.clone(),
+                                            },
+                                        );
+                                    }
+                                }
+                                tracing::info!("Rate limits and payload rules reloaded");
                             }
                             Err(e) => {
                                 tracing::error!(error = %e, "Failed to reload config");

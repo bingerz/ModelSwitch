@@ -1,8 +1,6 @@
 pub mod active_requests;
 pub mod affinity;
-pub mod circuit;
 pub mod fallback;
-pub mod priority;
 pub mod strategy;
 pub mod weighted;
 

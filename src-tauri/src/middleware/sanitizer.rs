@@ -193,7 +193,7 @@ pub async fn sanitizer_middleware(
     req: Request<Body>,
     next: Next,
 ) -> Response {
-    let config = &state.sanitizer_config;
+    let config = &state.security.sanitizer_config;
 
     // Fast path: pass-through when disabled or when redaction is off.
     if !config.enabled || !config.redact_secrets {

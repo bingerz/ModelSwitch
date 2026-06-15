@@ -19,35 +19,66 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Gateway parameters (timeouts, retries, fallback strategy).
+pub struct GatewayParams {
+    pub request_timeout_secs: Option<u64>,
+    pub stream_keepalive_secs: Option<u64>,
+    pub max_retries: u32,
+    pub model_fallbacks: HashMap<String, Vec<String>>,
+    pub routing_strategy: String,
+}
+
+/// Router state (session affinity, active request tracking).
+pub struct RouterState {
+    pub session_affinity: SessionAffinity,
+    pub active_requests: Arc<ActiveRequests>,
+}
+
+/// Cache state (request cache + coalescing).
+pub struct CacheState {
+    pub request_cache: Arc<RequestCache>,
+    pub in_flight: Arc<InFlightRequests>,
+}
+
+/// Limits state (rate limiter + payload rules).
+pub struct LimitsState {
+    pub payload_rules: Arc<ChannelPayloadRules>,
+    pub rate_limiter: Arc<RateLimiter>,
+}
+
+/// Billing state (quota + virtual key tracking).
+pub struct BillingState {
+    pub quota_store: SharedQuotaStore,
+    pub virtual_key_store: SharedVirtualKeyStore,
+}
+
+/// MCP integration state.
+pub struct McpState {
+    pub mcp_manager: Arc<McpManager>,
+    pub mcp_max_iterations: u32,
+    pub mcp_auto_inject: bool,
+    pub mcp_gateway_enabled: bool,
+}
+
+/// Security state (auth + sanitizer).
+pub struct SecurityState {
+    pub admin_token: Option<String>,
+    pub sanitizer_config: crate::config::SanitizerConfig,
+}
+
 /// Shared application state for the proxy.
 pub struct AppState {
     pub channel_mgr: Arc<ChannelManager>,
     pub credential_store: SharedCredentialStore,
-    pub admin_token: Option<String>,
-    pub request_timeout_secs: Option<u64>,
-    pub stream_keepalive_secs: Option<u64>,
     pub logger: Arc<DispatchLogger>,
     pub http_client: reqwest::Client,
-    pub max_retries: u32,
-    pub model_fallbacks: HashMap<String, Vec<String>>,
-    pub routing_strategy: String,
-    pub session_affinity: SessionAffinity,
-    pub active_requests: Arc<ActiveRequests>,
-    pub request_cache: Arc<RequestCache>,
-    pub payload_rules: Arc<ChannelPayloadRules>,
-    pub rate_limiter: Arc<RateLimiter>,
-    pub quota_store: SharedQuotaStore,
-    pub virtual_key_store: SharedVirtualKeyStore,
-    pub in_flight: Arc<InFlightRequests>,
-    pub mcp_manager: Arc<McpManager>,
-    /// Maximum MCP tool-call loop iterations.
-    pub mcp_max_iterations: u32,
-    /// Whether to auto-inject MCP tools into chat completion requests.
-    pub mcp_auto_inject: bool,
-    /// Privacy guardrail configuration consumed by the sanitizer middleware.
-    pub sanitizer_config: crate::config::SanitizerConfig,
-    /// Whether MCP Gateway Mode is enabled (expose /mcp endpoint).
-    pub mcp_gateway_enabled: bool,
+    pub gateway: GatewayParams,
+    pub router: RouterState,
+    pub cache: CacheState,
+    pub limits: LimitsState,
+    pub billing: BillingState,
+    pub mcp: McpState,
+    pub security: SecurityState,
     pub started_at: std::time::Instant,
 }
 
@@ -86,11 +117,11 @@ pub async fn handle_chat_completions(
     };
 
     // If MCP auto-inject is disabled (or no servers running), short-circuit.
-    if !state.mcp_auto_inject {
+    if !state.mcp.mcp_auto_inject {
         return dispatch(&state, &headers, &body, &proxy_config).await;
     }
 
-    let (mut current_body, injected) = mcp_tools::inject_mcp_tools(&body, &state.mcp_manager).await;
+    let (mut current_body, injected) = mcp_tools::inject_mcp_tools(&body, &state.mcp.mcp_manager).await;
     if injected.is_empty() {
         // Nothing to intercept — normal dispatch path.
         return dispatch(&state, &headers, &body, &proxy_config).await;
@@ -105,7 +136,7 @@ pub async fn handle_chat_completions(
         obj.insert("stream".to_string(), json!(false));
     }
 
-    let max_iter = state.mcp_max_iterations.max(1);
+    let max_iter = state.mcp.mcp_max_iterations.max(1);
 
     for iteration in 0..max_iter {
         let response = dispatch(&state, &headers, &current_body, &proxy_config).await;
@@ -140,7 +171,7 @@ pub async fn handle_chat_completions(
             calls = mcp_calls.len(),
             "MCP tool calls detected, executing"
         );
-        let tool_results = mcp_tools::execute_mcp_tool_calls(&mcp_calls, &state.mcp_manager).await;
+        let tool_results = mcp_tools::execute_mcp_tool_calls(&mcp_calls, &state.mcp.mcp_manager).await;
         current_body =
             mcp_tools::build_followup_request(&current_body, &response_body, &tool_results);
     }
@@ -242,7 +273,7 @@ pub async fn handle_list_models(State(state): State<Arc<AppState>>) -> axum::res
 /// envelope so any client that supports custom function calling can
 /// discover the available MCP tools without a separate discovery protocol.
 pub async fn handle_list_tools(State(state): State<Arc<AppState>>) -> axum::response::Response {
-    let mut tools = crate::mcp::aggregator::aggregate_all_tools(&state.mcp_manager).await;
+    let mut tools = crate::mcp::aggregator::aggregate_all_tools(&state.mcp.mcp_manager).await;
 
     // Respect the per-server `expose_tools` flag so admins can run private
     // MCP servers without leaking their tools to LLM clients. Resolve the
@@ -254,7 +285,7 @@ pub async fn handle_list_tools(State(state): State<Arc<AppState>>) -> axum::resp
         std::collections::HashMap::with_capacity(unique_server_ids.len());
     for id in unique_server_ids {
         let is_exposed = state
-            .mcp_manager
+            .mcp.mcp_manager
             .get_config(&id)
             .await
             .map(|c| c.expose_tools)

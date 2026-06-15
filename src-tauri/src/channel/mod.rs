@@ -1,5 +1,6 @@
 pub mod manager;
 
+use crate::config::ChannelConfig;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -231,6 +232,45 @@ impl Channel {
 
         // Open circuit if threshold exceeded within the window
         self.window_failure_count >= 5
+    }
+
+    /// Create a new Channel from a ChannelConfig with fresh runtime state.
+    pub fn from_config(c: &ChannelConfig) -> Self {
+        let cred_type = match c.credential_type.as_str() {
+            "web_session" => crate::channel::CredentialType::WebSession,
+            _ => crate::channel::CredentialType::ApiKey,
+        };
+        Channel {
+            id: Uuid::parse_str(&c.id).unwrap_or_else(|_| Uuid::new_v4()),
+            name: c.name.clone(),
+            provider: Provider::from_str(&c.provider),
+            priority: c.priority,
+            weight: c.weight,
+            cost_per_token: c.cost_per_token,
+            input_cost_per_mtok: c.input_cost_per_mtok,
+            output_cost_per_mtok: c.output_cost_per_mtok,
+            credential: crate::channel::Credential {
+                cred_type,
+                key_ref: c.credential_ref.clone(),
+                api_key: c.api_key.clone(),
+                expires_at: None,
+            },
+            enabled: c.enabled,
+            status: crate::channel::ChannelStatus::Healthy,
+            circuit_open_until: None,
+            base_url: c.base_url.clone(),
+            model_mapping: c.model_mapping.clone(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            avg_latency_ms: 0,
+            consecutive_failures: 0,
+            cooldown_minutes: c.cooldown_minutes,
+            rpm_limit: c.rpm_limit,
+            tpm_limit: c.tpm_limit,
+            account_group: c.account_group.clone(),
+            failure_window_start: None,
+            window_failure_count: 0,
+        }
     }
 }
 

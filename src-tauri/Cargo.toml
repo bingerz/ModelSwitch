@@ -70,3 +70,6 @@ rmcp = { version = "1.7", default-features = false, features = [
     "transport-io",
     "transport-streamable-http-server",
 ] }
+
+[dev-dependencies]
+wiremock = "0.6"

@@ -27,7 +27,7 @@ pub async fn admin_auth_middleware(
     req: Request<Body>,
     next: Next,
 ) -> Result<Response, (StatusCode, &'static str)> {
-    let token = match &state.admin_token {
+    let token = match &state.security.admin_token {
         Some(t) => t,
         None => return Ok(next.run(req).await),
     };

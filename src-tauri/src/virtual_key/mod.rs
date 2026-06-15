@@ -6,15 +6,15 @@
 //! the proxy enforces that incoming requests carry a valid key; otherwise
 //! the gateway behaves exactly as before (open proxy keyed on channel creds).
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{Local, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
-use tokio::sync::RwLock;
 use uuid::Uuid;
+
+use crate::persisted_store::PersistedStore;
 
 /// A virtual API key with budget limits and spend tracking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,7 +99,7 @@ impl VirtualKey {
 }
 
 pub struct VirtualKeyStore {
-    keys: RwLock<HashMap<Uuid, VirtualKey>>,
+    store: PersistedStore<Uuid, VirtualKey>,
 }
 
 pub type SharedVirtualKeyStore = Arc<VirtualKeyStore>;
@@ -107,7 +107,14 @@ pub type SharedVirtualKeyStore = Arc<VirtualKeyStore>;
 impl VirtualKeyStore {
     pub fn new() -> Self {
         Self {
-            keys: RwLock::new(HashMap::new()),
+            store: PersistedStore::new(persistence_path()),
+        }
+    }
+
+    /// Construct with a custom persistence path (for testing).
+    pub fn with_store_path(path: std::path::PathBuf) -> Self {
+        Self {
+            store: PersistedStore::new(path),
         }
     }
 
@@ -117,7 +124,7 @@ impl VirtualKeyStore {
     pub async fn validate(&self, plaintext: &str) -> Option<VirtualKey> {
         let hash = sha256_hex(plaintext);
         let hash_bytes = hash.into_bytes();
-        let keys = self.keys.read().await;
+        let keys = self.store.read().await;
         for vk in keys.values() {
             let stored = vk.key_hash.as_bytes();
             // Only compare equal-length buffers via ct_eq.
@@ -159,20 +166,20 @@ impl VirtualKeyStore {
             spend: VirtualKeySpend::default(),
         };
         let vk_clone = vk.clone();
-        self.keys.write().await.insert(vk.id, vk);
+        self.store.write().await.insert(vk.id, vk);
         (vk_clone, plaintext)
     }
 
     pub async fn list(&self) -> Vec<VirtualKey> {
-        self.keys.read().await.values().cloned().collect()
+        self.store.read().await.values().cloned().collect()
     }
 
     pub async fn get(&self, id: Uuid) -> Option<VirtualKey> {
-        self.keys.read().await.get(&id).cloned()
+        self.store.read().await.get(&id).cloned()
     }
 
     pub async fn delete(&self, id: Uuid) -> bool {
-        self.keys.write().await.remove(&id).is_some()
+        self.store.write().await.remove(&id).is_some()
     }
 
     /// Update fields on a virtual key. Each `Option<T>` field, when `Some`,
@@ -186,7 +193,7 @@ impl VirtualKeyStore {
         monthly_budget_cents: Option<Option<u64>>,
         enabled: Option<bool>,
     ) -> Option<VirtualKey> {
-        let mut keys = self.keys.write().await;
+        let mut keys = self.store.write().await;
         let vk = keys.get_mut(&id)?;
         if let Some(n) = name {
             vk.name = n;
@@ -209,7 +216,7 @@ impl VirtualKeyStore {
         let today = Local::now().format("%Y-%m-%d").to_string();
         let this_month = Local::now().format("%Y-%m").to_string();
 
-        let mut keys = self.keys.write().await;
+        let mut keys = self.store.write().await;
         let Some(vk) = keys.get_mut(&vk_id) else {
             return;
         };
@@ -233,38 +240,18 @@ impl VirtualKeyStore {
     /// Returns true if at least one virtual key is configured. The middleware
     /// uses this to decide whether enforcement is active (open proxy vs. gated).
     pub async fn has_keys(&self) -> bool {
-        !self.keys.read().await.is_empty()
+        !self.store.read().await.is_empty()
     }
 
-    /// Persist all keys to a JSON file.
-    pub async fn persist(&self, path: &std::path::Path) -> anyhow::Result<()> {
-        let keys: Vec<_> = self.keys.read().await.values().cloned().collect();
-        let json = serde_json::to_string_pretty(&keys)?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(path, json)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-        }
+    /// Persist all keys to disk. Best-effort — errors are logged internally.
+    pub async fn persist(&self) -> anyhow::Result<()> {
+        self.store.persist().await;
         Ok(())
     }
 
-    /// Load keys from a JSON file written by [`persist`](Self::persist).
-    /// A missing file is treated as an empty store.
-    pub async fn load(&self, path: &std::path::Path) -> anyhow::Result<()> {
-        if !path.exists() {
-            return Ok(());
-        }
-        let json = std::fs::read_to_string(path)?;
-        let keys: Vec<VirtualKey> = serde_json::from_str(&json)?;
-        let mut map = self.keys.write().await;
-        map.clear();
-        for vk in keys {
-            map.insert(vk.id, vk);
-        }
+    /// Load keys from disk. A missing file is treated as an empty store.
+    pub async fn load(&self) -> anyhow::Result<()> {
+        self.store.load().await;
         Ok(())
     }
 }
@@ -372,7 +359,7 @@ mod tests {
         };
         vk.spend.total_cents = 999;
         let vk_id = vk.id;
-        store.keys.write().await.insert(vk.id, vk);
+        store.store.write().await.insert(vk.id, vk);
 
         store.accumulate_spend(vk_id, 10).await;
         let fetched = store.get(vk_id).await.unwrap();
@@ -512,16 +499,16 @@ mod tests {
         // Clean up before and after so a previous panicked run can't poison us.
         let _ = std::fs::remove_file(&path);
 
-        let store = VirtualKeyStore::new();
+        let store = VirtualKeyStore::with_store_path(path.clone());
         let (vk, plaintext) = store
             .create("persisted".to_string(), Some(10), Some(100))
             .await;
         store.accumulate_spend(vk.id, 5).await;
-        store.persist(&path).await.unwrap();
+        store.persist().await.unwrap();
         assert!(path.exists());
 
-        let store2 = VirtualKeyStore::new();
-        store2.load(&path).await.unwrap();
+        let store2 = VirtualKeyStore::with_store_path(path.clone());
+        store2.load().await.unwrap();
         let keys = store2.list().await;
         assert_eq!(keys.len(), 1);
         let loaded = &keys[0];

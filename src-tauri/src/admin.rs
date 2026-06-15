@@ -12,6 +12,19 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Unified API response envelope.
+#[derive(serde::Serialize)]
+pub struct ApiResponse<T: serde::Serialize> {
+    pub ok: bool,
+    pub data: T,
+}
+
+impl<T: serde::Serialize> ApiResponse<T> {
+    pub fn ok(data: T) -> Self {
+        Self { ok: true, data }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PaginationParams {
     #[serde(default = "default_offset")]
@@ -37,9 +50,11 @@ fn default_true() -> bool {
 
 // ─── Channel CRUD ─────────────────────────────────────
 
-pub async fn list_channels(State(state): State<Arc<AppState>>) -> Json<Vec<Channel>> {
+pub async fn list_channels(
+    State(state): State<Arc<AppState>>,
+) -> Json<ApiResponse<Vec<Channel>>> {
     let channels = state.channel_mgr.list().await;
-    Json(channels)
+    Json(ApiResponse::ok(channels))
 }
 
 #[derive(Debug, Deserialize)]
@@ -225,7 +240,7 @@ pub async fn delete_channel(
     }
 
     if state.channel_mgr.delete(id).await {
-        state.quota_store.delete(id).await;
+        state.billing.quota_store.delete(id).await;
         state.channel_mgr.persist().await;
         StatusCode::NO_CONTENT.into_response()
     } else {
@@ -332,7 +347,7 @@ pub async fn set_payload_rules(
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Channel not found"))?;
 
     use crate::proxy::payload_rules::PayloadRules;
-    state.payload_rules.add(
+    state.limits.payload_rules.add(
         id,
         PayloadRules {
             defaults: rules.defaults,
@@ -358,9 +373,11 @@ pub async fn get_logs(
     Json(logs)
 }
 
-pub async fn get_stats(State(state): State<Arc<AppState>>) -> Json<crate::log::DispatchStats> {
+pub async fn get_stats(
+    State(state): State<Arc<AppState>>,
+) -> Json<ApiResponse<crate::log::DispatchStats>> {
     let stats = state.logger.stats().await;
-    Json(stats)
+    Json(ApiResponse::ok(stats))
 }
 
 pub async fn get_cost_stats(State(state): State<Arc<AppState>>) -> Json<crate::log::CostStats> {
@@ -368,9 +385,11 @@ pub async fn get_cost_stats(State(state): State<Arc<AppState>>) -> Json<crate::l
     Json(stats)
 }
 
-pub async fn get_quota(State(state): State<Arc<AppState>>) -> Json<Vec<crate::quota::QuotaInfo>> {
-    let quotas = state.quota_store.list().await;
-    Json(quotas)
+pub async fn get_quota(
+    State(state): State<Arc<AppState>>,
+) -> Json<ApiResponse<Vec<crate::quota::QuotaInfo>>> {
+    let quotas = state.billing.quota_store.list().await;
+    Json(ApiResponse::ok(quotas))
 }
 
 #[derive(Debug, Deserialize)]
@@ -413,8 +432,8 @@ pub async fn reset_circuit(
 
 /// Flush all cached responses.
 pub async fn flush_cache(State(state): State<Arc<AppState>>) -> axum::response::Response {
-    state.request_cache.flush();
-    let count = state.request_cache.len();
+    state.cache.request_cache.flush();
+    let count = state.cache.request_cache.len();
     Json(serde_json::json!({
         "flushed": true,
         "remaining": count
@@ -457,42 +476,7 @@ pub async fn reload_config(State(state): State<Arc<AppState>>) -> axum::response
                     let _ = state.channel_mgr.update(id, ch).await;
                     updated += 1;
                 } else {
-                    use crate::channel::{Channel, ChannelStatus, Credential, CredentialType};
-                    let cred_type = match cc.credential_type.as_str() {
-                        "web_session" => CredentialType::WebSession,
-                        _ => CredentialType::ApiKey,
-                    };
-                    let new_channel = Channel {
-                        id,
-                        name: cc.name.clone(),
-                        provider: Provider::from_str(&cc.provider),
-                        priority: cc.priority,
-                        weight: cc.weight,
-                        cost_per_token: cc.cost_per_token,
-                        input_cost_per_mtok: cc.input_cost_per_mtok,
-                        output_cost_per_mtok: cc.output_cost_per_mtok,
-                        credential: Credential {
-                            cred_type,
-                            key_ref: cc.credential_ref.clone(),
-                            api_key: cc.api_key.clone(),
-                            expires_at: None,
-                        },
-                        enabled: cc.enabled,
-                        status: ChannelStatus::Healthy,
-                        circuit_open_until: None,
-                        base_url: cc.base_url.clone(),
-                        model_mapping: cc.model_mapping.clone(),
-                        created_at: chrono::Utc::now(),
-                        updated_at: chrono::Utc::now(),
-                        avg_latency_ms: 0,
-                        consecutive_failures: 0,
-                        cooldown_minutes: cc.cooldown_minutes,
-                        rpm_limit: cc.rpm_limit,
-                        tpm_limit: cc.tpm_limit,
-                        account_group: cc.account_group.clone(),
-                        failure_window_start: None,
-                        window_failure_count: 0,
-                    };
+                    let new_channel = Channel::from_config(&cc);
                     let _ = state.channel_mgr.create(new_channel).await;
                     created += 1;
                 }
@@ -507,7 +491,7 @@ pub async fn reload_config(State(state): State<Arc<AppState>>) -> axum::response
             for ch in &channels {
                 if !config_ids.contains(&ch.id) {
                     state.channel_mgr.delete(ch.id).await;
-                    state.quota_store.delete(ch.id).await;
+                    state.billing.quota_store.delete(ch.id).await;
                     removed += 1;
                 }
             }
@@ -519,10 +503,10 @@ pub async fn reload_config(State(state): State<Arc<AppState>>) -> axum::response
                     Err(_) => continue,
                 };
                 if let Some(rpm) = cc.rpm_limit {
-                    state.rate_limiter.set_channel_rpm_limit(id, rpm);
+                    state.limits.rate_limiter.set_channel_rpm_limit(id, rpm);
                 }
                 if let Some(tpm) = cc.tpm_limit {
-                    state.rate_limiter.set_channel_tpm_limit(id, tpm);
+                    state.limits.rate_limiter.set_channel_tpm_limit(id, tpm);
                 }
             }
 
@@ -683,10 +667,10 @@ fn mcp_error_to_response(e: anyhow::Error) -> axum::response::Response {
 
 /// GET /api/mcp/servers — list all servers with config and status.
 pub async fn list_mcp_servers(State(state): State<Arc<AppState>>) -> Json<Vec<McpServerResponse>> {
-    let statuses = state.mcp_manager.list_status().await;
+    let statuses = state.mcp.mcp_manager.list_status().await;
     let mut responses = Vec::with_capacity(statuses.len());
     for (id, _name, status) in statuses {
-        if let Some(config) = state.mcp_manager.get_config(&id).await {
+        if let Some(config) = state.mcp.mcp_manager.get_config(&id).await {
             responses.push(McpServerResponse {
                 id: config.id,
                 name: config.name,
@@ -745,7 +729,7 @@ pub async fn create_mcp_server(
         ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to save config")
     })?;
 
-    state.mcp_manager.reload_configs(&config.mcp_servers).await;
+    state.mcp.mcp_manager.reload_configs(&config.mcp_servers).await;
 
     Ok((
         StatusCode::CREATED,
@@ -797,10 +781,9 @@ pub async fn update_mcp_server(
         ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to save config")
     })?;
 
-    state.mcp_manager.reload_configs(&config.mcp_servers).await;
+    state.mcp.mcp_manager.reload_configs(&config.mcp_servers).await;
 
-    let status = state
-        .mcp_manager
+    let status = state.mcp.mcp_manager
         .list_status()
         .await
         .into_iter()
@@ -844,7 +827,7 @@ pub async fn delete_mcp_server(
     })?;
 
     // reload_configs will stop the server if running
-    state.mcp_manager.reload_configs(&config.mcp_servers).await;
+    state.mcp.mcp_manager.reload_configs(&config.mcp_servers).await;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -854,8 +837,7 @@ pub async fn start_mcp_server(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<axum::response::Response, axum::response::Response> {
-    state
-        .mcp_manager
+    state.mcp.mcp_manager
         .start_server(&id)
         .await
         .map_err(mcp_error_to_response)?;
@@ -868,8 +850,7 @@ pub async fn stop_mcp_server(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<axum::response::Response, axum::response::Response> {
-    state
-        .mcp_manager
+    state.mcp.mcp_manager
         .stop_server(&id)
         .await
         .map_err(mcp_error_to_response)?;
@@ -882,8 +863,7 @@ pub async fn list_mcp_server_tools(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<axum::response::Response, axum::response::Response> {
-    let tools = state
-        .mcp_manager
+    let tools = state.mcp.mcp_manager
         .list_tools(&id)
         .await
         .map_err(mcp_error_to_response)?;
@@ -909,7 +889,7 @@ pub async fn list_mcp_server_tools(
 pub async fn list_all_mcp_tools(
     State(state): State<Arc<AppState>>,
 ) -> Json<Vec<crate::mcp::AggregatedTool>> {
-    Json(crate::mcp::aggregator::aggregate_all_tools(&state.mcp_manager).await)
+    Json(crate::mcp::aggregator::aggregate_all_tools(&state.mcp.mcp_manager).await)
 }
 
 // ─── Virtual Key CRUD ──────────────────────────────────
@@ -966,8 +946,7 @@ impl From<&crate::virtual_key::VirtualKey> for VirtualKeyResponse {
 /// Persist virtual keys to disk. Logs a warning on failure so that one bad
 /// write does not crash an otherwise-successful CRUD call.
 async fn persist_virtual_keys(state: &Arc<AppState>) {
-    let path = crate::virtual_key::persistence_path();
-    if let Err(e) = state.virtual_key_store.persist(&path).await {
+    if let Err(e) = state.billing.virtual_key_store.persist().await {
         tracing::warn!(error = %e, "Failed to persist virtual keys");
     }
 }
@@ -977,7 +956,7 @@ async fn persist_virtual_keys(state: &Arc<AppState>) {
 pub async fn list_virtual_keys(
     State(state): State<Arc<AppState>>,
 ) -> Json<Vec<VirtualKeyResponse>> {
-    let keys = state.virtual_key_store.list().await;
+    let keys = state.billing.virtual_key_store.list().await;
     Json(keys.iter().map(VirtualKeyResponse::from).collect())
 }
 
@@ -1001,8 +980,7 @@ pub async fn create_virtual_key(
             }
         }
     }
-    let (vk, plaintext) = state
-        .virtual_key_store
+    let (vk, plaintext) = state.billing.virtual_key_store
         .create(req.name, req.daily_budget_cents, req.monthly_budget_cents)
         .await;
     persist_virtual_keys(&state).await;
@@ -1026,8 +1004,7 @@ pub async fn update_virtual_key(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateVirtualKeyRequest>,
 ) -> Result<axum::response::Response, axum::response::Response> {
-    let updated = state
-        .virtual_key_store
+    let updated = state.billing.virtual_key_store
         .update(
             id,
             req.name,
@@ -1046,7 +1023,7 @@ pub async fn delete_virtual_key(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> axum::response::Response {
-    if state.virtual_key_store.delete(id).await {
+    if state.billing.virtual_key_store.delete(id).await {
         persist_virtual_keys(&state).await;
         StatusCode::NO_CONTENT.into_response()
     } else {

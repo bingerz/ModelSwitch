@@ -377,7 +377,7 @@ pub async fn scrape_webview_quota(
             .unwrap_or("Unknown error");
         let mut info = QuotaInfo::new(ch_id, &channel.name, config.provider_id, "webview");
         info.error = Some(error_msg.to_string());
-        state.quota_store.update(info.clone()).await;
+        state.billing.quota_store.update(info.clone()).await;
         return Err(error_msg.to_string());
     }
 
@@ -396,13 +396,13 @@ pub async fn scrape_webview_quota(
     match info {
         Ok(mut info) => {
             info.updated_at = chrono::Utc::now();
-            state.quota_store.update(info.clone()).await;
+            state.billing.quota_store.update(info.clone()).await;
             Ok(serde_json::to_value(info).unwrap_or_default())
         }
         Err(e) => {
             let mut info = QuotaInfo::new(ch_id, &channel.name, config.provider_id, "webview");
             info.error = Some(e.clone());
-            state.quota_store.update(info).await;
+            state.billing.quota_store.update(info).await;
             Err(e)
         }
     }

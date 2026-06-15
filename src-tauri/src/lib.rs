@@ -2,10 +2,12 @@ mod admin;
 mod channel;
 pub mod config;
 pub mod credential;
+pub mod error;
 mod health;
 mod log;
 mod mcp;
 mod middleware;
+pub mod persisted_store;
 mod proxy;
 mod quota;
 mod router;
@@ -21,7 +23,10 @@ use credential::create_credential_store;
 use log::DispatchLogger;
 use mcp::McpManager;
 use proxy::cache::RequestCache;
-use proxy::openai::AppState;
+use proxy::openai::{
+    AppState, BillingState, CacheState, GatewayParams, LimitsState, McpState,
+    RouterState, SecurityState,
+};
 use proxy::payload_rules::ChannelPayloadRules;
 use proxy::rate_limiter::RateLimiter;
 use quota::registry::QuotaProviderRegistry;
@@ -125,7 +130,7 @@ impl GatewayManager {
         inner.running = false;
 
         // Persist quota data before shutting down (synchronous, no async needed)
-        self.app_state.quota_store.persist_sync();
+        self.app_state.billing.quota_store.persist_sync();
 
         if let Some(shutdown) = inner.shutdown.take() {
             shutdown.notify_waiters();
@@ -237,7 +242,7 @@ async fn gateway_stop(manager: tauri::State<'_, GatewayManager>) -> Result<(), S
         inner.running = false;
 
         // Persist quota data before shutting down
-        manager.app_state.quota_store.persist_sync();
+        manager.app_state.billing.quota_store.persist_sync();
 
         let rx = inner.stopped_rx.take();
         let shutdown = inner.shutdown.take();
@@ -289,10 +294,10 @@ async fn mcp_list_servers(
     manager: tauri::State<'_, GatewayManager>,
 ) -> Result<Vec<admin::McpServerResponse>, String> {
     let state = &manager.app_state;
-    let statuses = state.mcp_manager.list_status().await;
+    let statuses = state.mcp.mcp_manager.list_status().await;
     let mut responses = Vec::with_capacity(statuses.len());
     for (id, _name, status) in statuses {
-        if let Some(config) = state.mcp_manager.get_config(&id).await {
+        if let Some(config) = state.mcp.mcp_manager.get_config(&id).await {
             responses.push(admin::McpServerResponse {
                 id: config.id,
                 name: config.name,
@@ -317,7 +322,7 @@ async fn mcp_start_server(
 ) -> Result<(), String> {
     manager
         .app_state
-        .mcp_manager
+        .mcp.mcp_manager
         .start_server(&server_id)
         .await
         .map_err(|e| e.to_string())
@@ -331,7 +336,7 @@ async fn mcp_stop_server(
 ) -> Result<(), String> {
     manager
         .app_state
-        .mcp_manager
+        .mcp.mcp_manager
         .stop_server(&server_id)
         .await
         .map_err(|e| e.to_string())
@@ -345,7 +350,7 @@ async fn mcp_list_tools(
 ) -> Result<Vec<admin::McpToolResponse>, String> {
     let tools = manager
         .app_state
-        .mcp_manager
+        .mcp.mcp_manager
         .list_tools(&server_id)
         .await
         .map_err(|e| e.to_string())?;
@@ -458,27 +463,41 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     let state = Arc::new(AppState {
         channel_mgr: Arc::clone(&channel_mgr),
         credential_store,
-        admin_token,
-        request_timeout_secs: config.gateway.request_timeout_secs,
-        stream_keepalive_secs: config.gateway.stream_keepalive_secs,
         logger: Arc::clone(&logger),
         http_client: http_client.clone(),
-        max_retries,
-        model_fallbacks,
-        routing_strategy,
-        session_affinity: SessionAffinity::default(),
-        active_requests: Arc::clone(&active_requests),
-        request_cache: Arc::clone(&request_cache),
-        payload_rules: Arc::clone(&payload_rules),
-        rate_limiter: Arc::clone(&rate_limiter),
-        quota_store: Arc::clone(&quota_store),
-        virtual_key_store: Arc::clone(&virtual_key_store),
-        in_flight: Arc::clone(&in_flight),
-        mcp_manager: Arc::clone(&mcp_manager),
-        mcp_max_iterations: config.gateway.mcp_max_iterations,
-        mcp_auto_inject: config.gateway.mcp_auto_inject,
-        sanitizer_config: config.gateway.sanitizer.clone(),
-        mcp_gateway_enabled: config.gateway.mcp_gateway_enabled,
+        gateway: GatewayParams {
+            request_timeout_secs: config.gateway.request_timeout_secs,
+            stream_keepalive_secs: config.gateway.stream_keepalive_secs,
+            max_retries,
+            model_fallbacks,
+            routing_strategy,
+        },
+        router: RouterState {
+            session_affinity: SessionAffinity::default(),
+            active_requests: Arc::clone(&active_requests),
+        },
+        cache: CacheState {
+            request_cache: Arc::clone(&request_cache),
+            in_flight: Arc::clone(&in_flight),
+        },
+        limits: LimitsState {
+            payload_rules: Arc::clone(&payload_rules),
+            rate_limiter: Arc::clone(&rate_limiter),
+        },
+        billing: BillingState {
+            quota_store: Arc::clone(&quota_store),
+            virtual_key_store: Arc::clone(&virtual_key_store),
+        },
+        mcp: McpState {
+            mcp_manager: Arc::clone(&mcp_manager),
+            mcp_max_iterations: config.gateway.mcp_max_iterations,
+            mcp_auto_inject: config.gateway.mcp_auto_inject,
+            mcp_gateway_enabled: config.gateway.mcp_gateway_enabled,
+        },
+        security: SecurityState {
+            admin_token,
+            sanitizer_config: config.gateway.sanitizer.clone(),
+        },
         started_at: std::time::Instant::now(),
     });
 
@@ -512,9 +531,8 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     {
         let boot_vk = Arc::clone(&virtual_key_store);
         spawn_bg(async move {
-            let path = virtual_key::persistence_path();
-            if let Err(e) = boot_vk.load(&path).await {
-                tracing::warn!(error = %e, ?path, "Failed to load virtual keys");
+            if let Err(e) = boot_vk.load().await {
+                tracing::warn!(error = %e, "Failed to load virtual keys");
             } else {
                 let count = boot_vk.list().await.len();
                 tracing::info!(count, "Loaded virtual keys from disk");
@@ -529,8 +547,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
                 interval.tick().await;
-                let path = virtual_key::persistence_path();
-                if let Err(e) = persist_vk.persist(&path).await {
+                if let Err(e) = persist_vk.persist().await {
                     tracing::warn!(error = %e, "Failed to persist virtual keys");
                 }
             }
@@ -573,7 +590,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
 
     // Periodic session affinity cleanup
     {
-        let affinity_cleanup = state.session_affinity.clone();
+        let affinity_cleanup = state.router.session_affinity.clone();
         spawn_bg(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(300)).await;
@@ -589,6 +606,8 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             path,
             Arc::clone(&channel_mgr),
             Arc::clone(&mcp_manager),
+            Arc::clone(&rate_limiter),
+            Arc::clone(&payload_rules),
         );
     }
     GatewayHandles {
@@ -693,12 +712,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     let base_router = Router::new().merge(proxy_router).merge(admin_router);
 
     // Conditionally mount MCP Gateway Mode endpoint.
-    let router = if state.mcp_gateway_enabled {
+    let router = if state.mcp.mcp_gateway_enabled {
         use mcp::McpGatewayHandler;
         use rmcp::transport::streamable_http_server::{
             session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
         };
-        let mcp_manager = Arc::clone(&state.mcp_manager);
+        let mcp_manager = Arc::clone(&state.mcp.mcp_manager);
         let service: StreamableHttpService<McpGatewayHandler, LocalSessionManager> =
             StreamableHttpService::new(
                 move || Ok(McpGatewayHandler::new(Arc::clone(&mcp_manager))),
@@ -732,8 +751,8 @@ pub async fn start_gateway(
     bind_notify: Option<oneshot::Sender<Result<(), String>>>,
 ) {
     let app = build_router(state.clone());
-    let quota_for_shutdown = Arc::clone(&state.quota_store);
-    let mcp_for_shutdown = Arc::clone(&state.mcp_manager);
+    let quota_for_shutdown = Arc::clone(&state.billing.quota_store);
+    let mcp_for_shutdown = Arc::clone(&state.mcp.mcp_manager);
     let addr = format!("{}:{}", host, port);
 
     // Write PID file for CLI management

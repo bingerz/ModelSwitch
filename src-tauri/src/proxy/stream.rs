@@ -4,7 +4,7 @@ use bytes::Bytes;
 use futures::stream::Stream;
 use reqwest::StatusCode;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::Mutex;
 use tokio_stream::StreamExt;
 
 /// Create an SSE streaming response that accumulates chunks for telemetry.
@@ -28,7 +28,8 @@ pub fn sse_stream_response_with_telemetry(
         let text = String::from_utf8_lossy(&bytes);
 
         // Accumulate data lines for telemetry
-        if let Ok(mut guard) = chunks_clone.try_lock() {
+        {
+            let mut guard = chunks_clone.lock().unwrap();
             for line in text.split('\n') {
                 let trimmed = line.trim();
                 if trimmed.starts_with("data: ") {
