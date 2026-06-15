@@ -386,7 +386,7 @@ mod tests {
     fn redacts_aws_access_key() {
         let patterns = builtin_patterns();
         let input = "my key is AKIAIOSFODNN7EXAMPLE and stuff";
-        let (output, count) = scan_and_redact(input, &patterns);
+        let (output, count) = scan_and_redact(input, patterns);
         assert!(output.contains("[REDACTED:AWS_KEY]"));
         assert!(!output.contains("AKIAIOSFODNN7EXAMPLE"));
         assert_eq!(count, 1);
@@ -396,7 +396,7 @@ mod tests {
     fn redacts_stripe_live_key() {
         let patterns = builtin_patterns();
         let input = r#"{"key": "sk_live_REDACTED_FOR_PUSH"}"#;
-        let (output, count) = scan_and_redact(input, &patterns);
+        let (output, count) = scan_and_redact(input, patterns);
         assert!(output.contains("[REDACTED:STRIPE_KEY]"));
         assert!(count >= 1, "expected at least one redaction, got {count}");
     }
@@ -405,7 +405,7 @@ mod tests {
     fn redacts_stripe_restricted_key() {
         let patterns = builtin_patterns();
         let input = "token rk_live_REDACTED_FOR_PUSH";
-        let (output, count) = scan_and_redact(input, &patterns);
+        let (output, count) = scan_and_redact(input, patterns);
         assert!(output.contains("[REDACTED:STRIPE_KEY]"));
         assert!(!output.contains("rk_live_REDACTED_FOR_PUSH"));
         assert!(count >= 1);
@@ -415,7 +415,7 @@ mod tests {
     fn redacts_full_private_key_block() {
         let patterns = builtin_patterns();
         let input = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAI...\n-----END RSA PRIVATE KEY-----";
-        let (output, _) = scan_and_redact(input, &patterns);
+        let (output, _) = scan_and_redact(input, patterns);
         assert!(output.contains("[REDACTED:PRIVATE_KEY]"));
         assert!(!output.contains("MIIEpAI"));
     }
@@ -424,7 +424,7 @@ mod tests {
     fn redacts_truncated_private_key_header() {
         let patterns = builtin_patterns();
         let input = "leaked: -----BEGIN OPENSSH PRIVATE KEY-----";
-        let (output, count) = scan_and_redact(input, &patterns);
+        let (output, count) = scan_and_redact(input, patterns);
         assert!(output.contains("[REDACTED:PRIVATE_KEY]"));
         assert!(count >= 1);
     }
@@ -433,7 +433,7 @@ mod tests {
     fn redacts_github_pat() {
         let patterns = builtin_patterns();
         let input = "token: ghp_1234567890abcdefghijklmnopqrstuvwxyz";
-        let (output, _) = scan_and_redact(input, &patterns);
+        let (output, _) = scan_and_redact(input, patterns);
         assert!(
             output.contains("[REDACTED"),
             "expected redaction in output: {output}"
@@ -445,7 +445,7 @@ mod tests {
     fn redacts_slack_bot_token() {
         let patterns = builtin_patterns();
         let input = "xoxb-REDACTED-FOR-PUSH";
-        let (output, _) = scan_and_redact(input, &patterns);
+        let (output, _) = scan_and_redact(input, patterns);
         assert!(output.contains("[REDACTED:SLACK_TOKEN]"));
     }
 
@@ -453,7 +453,7 @@ mod tests {
     fn redacts_db_connection_string() {
         let patterns = builtin_patterns();
         let input = r#"DATABASE_URL=postgresql://user:secretpass@localhost:5432/db"#;
-        let (output, _) = scan_and_redact(input, &patterns);
+        let (output, _) = scan_and_redact(input, patterns);
         assert!(output.contains("[REDACTED"));
         assert!(!output.contains("secretpass"));
     }
@@ -462,7 +462,7 @@ mod tests {
     fn redacts_aws_secret_key_assignment() {
         let patterns = builtin_patterns();
         let input = r#"aws_secret_access_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY""#;
-        let (output, count) = scan_and_redact(input, &patterns);
+        let (output, count) = scan_and_redact(input, patterns);
         assert!(count >= 1, "expected redaction, got {count}");
         assert!(output.contains("[REDACTED"));
         assert!(!output.contains("wJalrXUtnFEMI"));
@@ -472,7 +472,7 @@ mod tests {
     fn redacts_generic_api_key_assignment() {
         let patterns = builtin_patterns();
         let input = r#"api_key = "sk_test_abcdef1234567890abcdef""#;
-        let (output, count) = scan_and_redact(input, &patterns);
+        let (output, count) = scan_and_redact(input, patterns);
         assert!(count > 0, "expected redaction, got {count}");
         assert!(output.contains("[REDACTED"));
     }
@@ -481,7 +481,7 @@ mod tests {
     fn redacts_generic_password_assignment() {
         let patterns = builtin_patterns();
         let input = r#"password = "supersecretvalue12345678""#;
-        let (output, count) = scan_and_redact(input, &patterns);
+        let (output, count) = scan_and_redact(input, patterns);
         assert!(count > 0, "expected redaction, got {count}");
         assert!(output.contains("[REDACTED"));
         assert!(!output.contains("supersecretvalue12345678"));
@@ -491,7 +491,7 @@ mod tests {
     fn does_not_redact_normal_text() {
         let patterns = builtin_patterns();
         let input = "Hello, how are you today? The weather is nice.";
-        let (output, count) = scan_and_redact(input, &patterns);
+        let (output, count) = scan_and_redact(input, patterns);
         assert_eq!(count, 0);
         assert_eq!(output, input);
     }
@@ -499,7 +499,7 @@ mod tests {
     #[test]
     fn handles_empty_input() {
         let patterns = builtin_patterns();
-        let (output, count) = scan_and_redact("", &patterns);
+        let (output, count) = scan_and_redact("", patterns);
         assert_eq!(count, 0);
         assert_eq!(output, "");
     }
@@ -544,7 +544,7 @@ mod tests {
     fn preserves_json_structure() {
         let patterns = builtin_patterns();
         let input = r#"{"messages":[{"role":"user","content":"key=AKIAIOSFODNN7EXAMPLE"}]}"#;
-        let (output, _) = scan_and_redact(input, &patterns);
+        let (output, _) = scan_and_redact(input, patterns);
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(&output);
         assert!(
             parsed.is_ok(),
@@ -568,7 +568,7 @@ mod tests {
     fn multiple_secrets_in_one_body() {
         let patterns = builtin_patterns();
         let input = "keys: AKIAIOSFODNN7EXAMPLE and ghp_1234567890abcdefghijklmnopqrstuvwxyz";
-        let (output, count) = scan_and_redact(input, &patterns);
+        let (output, count) = scan_and_redact(input, patterns);
         assert!(count >= 2, "expected at least 2 redactions, got {count}");
         assert!(output.contains("[REDACTED:AWS_KEY]"));
         assert!(output.contains("[REDACTED:GITHUB_TOKEN]"));

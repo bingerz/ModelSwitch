@@ -140,6 +140,59 @@ impl Default for RequestCache {
     }
 }
 
+/// Tracks in-flight requests for coalescing duplicate concurrent requests.
+/// When multiple requests with the same cache key arrive, only one is sent
+/// upstream; the rest wait and reuse the cached result.
+pub struct InFlightRequests {
+    inflight: Mutex<HashMap<u128, Arc<tokio::sync::Notify>>>,
+}
+
+impl InFlightRequests {
+    pub fn new() -> Self {
+        Self {
+            inflight: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Register an in-flight request. Returns `true` if this is the first
+    /// request for this key (caller should proceed with the real request),
+    /// or `false` if another request is already in flight (caller should wait).
+    pub fn register(&self, key: u128) -> bool {
+        let mut guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
+        if let std::collections::hash_map::Entry::Vacant(e) = guard.entry(key) {
+            e.insert(Arc::new(tokio::sync::Notify::new()));
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Wait for an in-flight request with the given key to complete.
+    pub async fn wait(&self, key: u128) {
+        let notify = {
+            let guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
+            guard.get(&key).cloned()
+        };
+        if let Some(n) = notify {
+            n.notified().await;
+        }
+    }
+
+    /// Complete an in-flight request, waking all waiters.
+    pub fn complete(&self, key: u128) {
+        let mut guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(notify) = guard.remove(&key) {
+            notify.notify_waiters();
+        }
+    }
+}
+
+impl Default for InFlightRequests {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,58 +295,5 @@ mod tests {
         // Lookup with same material -> should hit
         let result = cache.get(42u128, "request_A_material");
         assert_eq!(result, Some("response_A".to_string()));
-    }
-}
-
-/// Tracks in-flight requests for coalescing duplicate concurrent requests.
-/// When multiple requests with the same cache key arrive, only one is sent
-/// upstream; the rest wait and reuse the cached result.
-pub struct InFlightRequests {
-    inflight: Mutex<HashMap<u128, Arc<tokio::sync::Notify>>>,
-}
-
-impl InFlightRequests {
-    pub fn new() -> Self {
-        Self {
-            inflight: Mutex::new(HashMap::new()),
-        }
-    }
-
-    /// Register an in-flight request. Returns `true` if this is the first
-    /// request for this key (caller should proceed with the real request),
-    /// or `false` if another request is already in flight (caller should wait).
-    pub fn register(&self, key: u128) -> bool {
-        let mut guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
-        if let std::collections::hash_map::Entry::Vacant(e) = guard.entry(key) {
-            e.insert(Arc::new(tokio::sync::Notify::new()));
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Wait for an in-flight request with the given key to complete.
-    pub async fn wait(&self, key: u128) {
-        let notify = {
-            let guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
-            guard.get(&key).cloned()
-        };
-        if let Some(n) = notify {
-            n.notified().await;
-        }
-    }
-
-    /// Complete an in-flight request, waking all waiters.
-    pub fn complete(&self, key: u128) {
-        let mut guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(notify) = guard.remove(&key) {
-            notify.notify_waiters();
-        }
-    }
-}
-
-impl Default for InFlightRequests {
-    fn default() -> Self {
-        Self::new()
     }
 }

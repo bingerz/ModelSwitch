@@ -177,12 +177,7 @@ fn cmd_validate(config_path: Option<&str>) {
             println!(
                 "  Channels: {} ({})",
                 config.channels.len(),
-                config
-                    .channels
-                    .iter()
-                    .filter(|c| c.enabled)
-                    .count()
-                    .to_string()
+                config.channels.iter().filter(|c| c.enabled).count()
             );
             println!("  Routing: {}", config.gateway.routing_strategy);
             println!(
@@ -217,8 +212,8 @@ fn cmd_channels(config_path: Option<&str>) {
                 return;
             }
             println!(
-                "{:<20} {:<12} {:<6} {:<8} {:<8} {}",
-                "ID", "PROVIDER", "PRI", "WEIGHT", "ENABLED", "NAME"
+                "{:<20} {:<12} {:<6} {:<8} {:<8} NAME",
+                "ID", "PROVIDER", "PRI", "WEIGHT", "ENABLED"
             );
             for ch in &config.channels {
                 println!(
