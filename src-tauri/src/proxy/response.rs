@@ -12,9 +12,7 @@ use crate::proxy::stream::{json_response, keepalive_stream, sse_stream_response_
 use crate::proxy::translate::gemini_to_openai;
 
 use super::usage::{extract_usage, extract_usage_from_stream};
-use super::{
-    estimate_tokens, make_log, AuthStyle, ProxyConfig, PASSTHROUGH_RESPONSE_HEADERS,
-};
+use super::{estimate_tokens, make_log, AuthStyle, ProxyConfig, PASSTHROUGH_RESPONSE_HEADERS};
 
 /// Extract passthrough headers from an upstream response.
 pub(super) fn extract_passthrough_headers(resp: &reqwest::Response) -> Vec<(String, String)> {
@@ -101,6 +99,10 @@ pub(super) async fn handle_streaming_success(
         .channel_mgr
         .record_latency(channel.id, start.elapsed().as_millis() as u64)
         .await;
+    state
+        .router
+        .latency_tracker
+        .record(channel.id, start.elapsed().as_millis() as u64);
     state.router.active_requests.decrement(channel.id);
 
     // Spawn background task to extract real token counts from stream
@@ -127,13 +129,19 @@ pub(super) async fn handle_streaming_success(
                         guard.len()
                     };
                     if cur_len > 0 && cur_len == prev_len {
-                        break telemetry_chunks.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                        break telemetry_chunks
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .clone();
                     }
                     prev_len = cur_len;
                     if cur_len == 0 {
                         empty_rounds += 1;
                         if empty_rounds > 150 {
-                            break telemetry_chunks.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                            break telemetry_chunks
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .clone();
                         }
                     }
                 }
@@ -295,6 +303,10 @@ pub(super) async fn handle_json_success(
         .channel_mgr
         .record_latency(channel.id, start.elapsed().as_millis() as u64)
         .await;
+    state
+        .router
+        .latency_tracker
+        .record(channel.id, start.elapsed().as_millis() as u64);
 
     // Cache non-streaming responses
     let (cache_key, key_material) = RequestCache::compute_key(original_model, body);

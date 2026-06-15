@@ -41,8 +41,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     // Initialize tracing (no-op if already initialized, e.g. by CLI main)
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .try_init();
 
@@ -85,6 +84,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
 
     // Build shared components
     let active_requests = Arc::new(ActiveRequests::new());
+    let latency_tracker = Arc::new(crate::router::latency_tracker::LatencyTracker::new());
     let request_cache = Arc::new(RequestCache::new(
         std::time::Duration::from_secs(config.gateway.cache_ttl_secs),
         config.gateway.max_cache_entries,
@@ -152,6 +152,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         router: RouterState {
             session_affinity: SessionAffinity::default(),
             active_requests: Arc::clone(&active_requests),
+            latency_tracker: Arc::clone(&latency_tracker),
         },
         cache: CacheState {
             request_cache: Arc::clone(&request_cache),
@@ -314,10 +315,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/v1/models", get(proxy::openai::handle_list_models))
         .route("/v1/tools", get(proxy::openai::handle_list_tools))
         .route("/v1/messages", post(proxy::anthropic::handle_messages))
-        .route(
-            "/v1beta/models/{*path}",
-            post(proxy::gemini::handle_gemini),
-        )
+        .route("/v1beta/models/{*path}", post(proxy::gemini::handle_gemini))
         .route("/health", get(proxy::openai::health_check))
         // Claude Code Protocol -- provider-prefixed routes for agentic tools
         .route(
@@ -371,14 +369,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/mcp/servers", post(admin::create_mcp_server))
         .route("/api/mcp/servers/{id}", put(admin::update_mcp_server))
         .route("/api/mcp/servers/{id}", delete(admin::delete_mcp_server))
-        .route(
-            "/api/mcp/servers/{id}/start",
-            post(admin::start_mcp_server),
-        )
-        .route(
-            "/api/mcp/servers/{id}/stop",
-            post(admin::stop_mcp_server),
-        )
+        .route("/api/mcp/servers/{id}/start", post(admin::start_mcp_server))
+        .route("/api/mcp/servers/{id}/stop", post(admin::stop_mcp_server))
         .route(
             "/api/mcp/servers/{id}/tools",
             get(admin::list_mcp_server_tools),
@@ -387,10 +379,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/virtual-keys", get(admin::list_virtual_keys))
         .route("/api/virtual-keys", post(admin::create_virtual_key))
         .route("/api/virtual-keys/{id}", put(admin::update_virtual_key))
-        .route(
-            "/api/virtual-keys/{id}",
-            delete(admin::delete_virtual_key),
-        )
+        .route("/api/virtual-keys/{id}", delete(admin::delete_virtual_key))
         .with_state(admin_route_state)
         .layer(axum::middleware::from_fn_with_state(
             admin_auth_state,

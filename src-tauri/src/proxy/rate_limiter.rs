@@ -123,7 +123,10 @@ impl RateLimiter {
 
         // Check global TPM
         if let Some(global_limit) = self.global_tpm_limit {
-            if !state.global_tpm_window.check_and_add(estimated_tokens, global_limit) {
+            if !state
+                .global_tpm_window
+                .check_and_add(estimated_tokens, global_limit)
+            {
                 return (false, "global_tpm_exceeded");
             }
         }
@@ -163,6 +166,24 @@ impl RateLimiter {
         if self.global_tpm_limit.is_some() {
             state.global_tpm_window.add(tokens);
         }
+    }
+
+    /// Get the current TPM usage for a channel (0 if no data).
+    pub fn current_tpm(&self, channel_id: Uuid) -> u64 {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let entry = state.channels.get_mut(&channel_id);
+        entry
+            .map(|(windows, _)| windows.tpm.current_total())
+            .unwrap_or(0)
+    }
+
+    /// Get the TPM limit for a channel (None if not configured).
+    pub fn tpm_limit(&self, channel_id: Uuid) -> Option<u64> {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state
+            .channels
+            .get(&channel_id)
+            .and_then(|(_, limits)| limits.tpm)
     }
 }
 
@@ -230,5 +251,24 @@ mod tests {
         assert_eq!(window.current_total(), 10);
         window.add(20);
         assert_eq!(window.current_total(), 30);
+    }
+
+    #[test]
+    fn current_tpm_reflects_recorded_usage() {
+        let limiter = RateLimiter::new(None);
+        let ch_id = Uuid::new_v4();
+        assert_eq!(limiter.current_tpm(ch_id), 0);
+        limiter.record(ch_id, 500);
+        limiter.record(ch_id, 300);
+        assert_eq!(limiter.current_tpm(ch_id), 800);
+    }
+
+    #[test]
+    fn tpm_limit_returns_configured_value() {
+        let limiter = RateLimiter::new(None);
+        let ch_id = Uuid::new_v4();
+        assert_eq!(limiter.tpm_limit(ch_id), None);
+        limiter.set_channel_tpm_limit(ch_id, 10_000);
+        assert_eq!(limiter.tpm_limit(ch_id), Some(10_000));
     }
 }

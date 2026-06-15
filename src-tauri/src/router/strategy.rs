@@ -1,5 +1,7 @@
 use crate::channel::Channel;
+use crate::proxy::rate_limiter::RateLimiter;
 use crate::router::active_requests::ActiveRequests;
+use crate::router::latency_tracker::LatencyTracker;
 use rand::Rng;
 
 /// Strategy for selecting a channel from a list of candidates.
@@ -17,33 +19,33 @@ impl RoutingStrategy for WeightedRandomStrategy {
 }
 
 /// Latency-based selection: prefer channels with lower average latency.
+/// Uses the sliding-window LatencyTracker for responsive decisions.
 /// Falls back to weighted random if no latency data is available.
 pub struct LatencyBasedStrategy {
     /// Maximum number of "fast" candidates to random-pick from (top N by latency)
     pub top_k: usize,
+    latency_tracker: std::sync::Arc<LatencyTracker>,
 }
 
 impl LatencyBasedStrategy {
-    pub fn new() -> Self {
-        Self { top_k: 2 }
-    }
-}
-
-impl Default for LatencyBasedStrategy {
-    fn default() -> Self {
-        Self::new()
+    pub fn new(latency_tracker: std::sync::Arc<LatencyTracker>) -> Self {
+        Self {
+            top_k: 2,
+            latency_tracker,
+        }
     }
 }
 
 impl RoutingStrategy for LatencyBasedStrategy {
     fn select(&self, candidates: &[Channel]) -> Option<Channel> {
         // Separate candidates into those with latency data and those without
-        let mut with_latency: Vec<&Channel> = Vec::new();
+        let mut with_latency: Vec<(&Channel, u64)> = Vec::new();
         let mut without_latency: Vec<&Channel> = Vec::new();
 
         for c in candidates {
-            if c.avg_latency_ms > 0 {
-                with_latency.push(c);
+            let lat = self.latency_tracker.avg_latency(c.id);
+            if lat > 0 {
+                with_latency.push((c, lat));
             } else {
                 without_latency.push(c);
             }
@@ -51,10 +53,10 @@ impl RoutingStrategy for LatencyBasedStrategy {
 
         // If we have latency data, sort by latency and pick from top K
         if !with_latency.is_empty() {
-            with_latency.sort_by_key(|c| c.avg_latency_ms);
+            with_latency.sort_by_key(|(_, lat)| *lat);
             let top = &with_latency[..self.top_k.min(with_latency.len())];
             let idx = rand::rng().random_range(0..top.len());
-            return Some(top[idx].clone());
+            return Some(top[idx].0.clone());
         }
 
         // No latency data — fall back to weighted random
@@ -104,10 +106,55 @@ impl RoutingStrategy for LeastBusyStrategy {
     }
 }
 
+/// Usage-based selection: prefer channels with the lowest TPM utilization ratio.
+/// Channels without a TPM limit are treated as fully available (ratio 0).
+/// Picks randomly from the top 2 least-utilized to avoid thundering herd.
+pub struct UsageBasedStrategy {
+    rate_limiter: std::sync::Arc<RateLimiter>,
+}
+
+impl UsageBasedStrategy {
+    pub fn new(rate_limiter: std::sync::Arc<RateLimiter>) -> Self {
+        Self { rate_limiter }
+    }
+}
+
+impl RoutingStrategy for UsageBasedStrategy {
+    fn select(&self, candidates: &[Channel]) -> Option<Channel> {
+        if candidates.is_empty() {
+            return None;
+        }
+
+        // Score each candidate by TPM utilization ratio (current_tpm / tpm_limit)
+        // Lower ratio = less utilized = preferred
+        // Channels without TPM limit get ratio of 0 (always preferred)
+        let mut scored: Vec<(&Channel, f64)> = candidates
+            .iter()
+            .map(|c| {
+                let current = self.rate_limiter.current_tpm(c.id);
+                let limit = self.rate_limiter.tpm_limit(c.id);
+                let ratio = match limit {
+                    Some(lim) if lim > 0 => current as f64 / lim as f64,
+                    _ => 0.0, // No limit = treat as fully available
+                };
+                (c, ratio)
+            })
+            .collect();
+
+        // Sort by utilization ratio ascending (lowest utilization first)
+        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Pick from top 2 (lowest utilization) randomly to avoid thundering herd
+        let top_k = scored.len().min(2);
+        let idx = rand::rng().random_range(0..top_k);
+        Some(scored[idx].0.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::channel::{Channel, ChannelStatus, Credential, Provider};
+    use crate::channel::{Channel, ChannelStatus, Credential, CredentialType, Provider};
     use std::collections::HashMap;
     use std::sync::Arc;
     use uuid::Uuid;
@@ -123,7 +170,7 @@ mod tests {
             input_cost_per_mtok: None,
             output_cost_per_mtok: None,
             credential: Credential {
-                cred_type: crate::channel::CredentialType::ApiKey,
+                cred_type: CredentialType::ApiKey,
                 key_ref: format!("test-{}", name),
                 api_key: None,
                 expires_at: None,
@@ -143,16 +190,23 @@ mod tests {
             account_group: None,
             failure_window_start: None,
             window_failure_count: 0,
+            max_concurrent: None,
         }
     }
 
     #[test]
     fn latency_strategy_prefers_fast_channels() {
+        let tracker = Arc::new(LatencyTracker::new());
         let fast = make_channel("fast", 1, 100, 100);
         let slow = make_channel("slow", 1, 100, 5000);
+
+        // Record latency data in the tracker
+        tracker.record(fast.id, 100);
+        tracker.record(slow.id, 5000);
+
         let candidates = vec![slow.clone(), fast.clone()];
 
-        let strategy = LatencyBasedStrategy::new();
+        let strategy = LatencyBasedStrategy::new(Arc::clone(&tracker));
         // With only top_k=2, both are candidates. Run many times to check bias.
         let mut fast_count = 0;
         for _ in 0..100 {
@@ -167,11 +221,12 @@ mod tests {
 
     #[test]
     fn latency_strategy_falls_back_without_data() {
+        let tracker = Arc::new(LatencyTracker::new());
         let ch1 = make_channel("ch1", 1, 100, 0);
         let ch2 = make_channel("ch2", 1, 100, 0);
         let candidates = vec![ch1, ch2];
 
-        let strategy = LatencyBasedStrategy::new();
+        let strategy = LatencyBasedStrategy::new(tracker);
         let selected = strategy.select(&candidates);
         assert!(selected.is_some());
     }
@@ -215,5 +270,75 @@ mod tests {
         }
         // Should be roughly 50/50
         assert!(ch1_count > 20 && ch1_count < 80);
+    }
+
+    #[test]
+    fn usage_based_prefers_lower_utilization() {
+        let limiter = Arc::new(RateLimiter::new(None));
+        let ch_high = make_channel("high", 1, 100, 0);
+        let ch_mid = make_channel("mid", 1, 100, 0);
+        let ch_low = make_channel("low", 1, 100, 0);
+
+        // Set TPM limits
+        limiter.set_channel_tpm_limit(ch_high.id, 10_000);
+        limiter.set_channel_tpm_limit(ch_mid.id, 10_000);
+        limiter.set_channel_tpm_limit(ch_low.id, 10_000);
+
+        // Record usage — high is 80%, mid is 50%, low is 10%
+        limiter.record(ch_high.id, 8_000);
+        limiter.record(ch_mid.id, 5_000);
+        limiter.record(ch_low.id, 1_000);
+
+        let candidates = vec![ch_high.clone(), ch_mid.clone(), ch_low.clone()];
+        let strategy = UsageBasedStrategy::new(limiter);
+
+        // top_k = 2, so the highest (80%) should never be picked
+        for _ in 0..50 {
+            let selected = strategy.select(&candidates).unwrap();
+            assert!(
+                selected.id == ch_low.id || selected.id == ch_mid.id,
+                "should never pick the highest-utilization channel"
+            );
+        }
+    }
+
+    #[test]
+    fn usage_based_treats_no_limit_as_available() {
+        let limiter = Arc::new(RateLimiter::new(None));
+        let ch_with_limit = make_channel("limited", 1, 100, 0);
+        let ch_with_limit_2 = make_channel("limited2", 1, 100, 0);
+        let ch_no_limit = make_channel("unlimited", 1, 100, 0);
+
+        // Set limits on two channels
+        limiter.set_channel_tpm_limit(ch_with_limit.id, 1_000);
+        limiter.record(ch_with_limit.id, 900); // 90% utilized
+        limiter.set_channel_tpm_limit(ch_with_limit_2.id, 1_000);
+        limiter.record(ch_with_limit_2.id, 800); // 80% utilized
+
+        // No limit on ch_no_limit — ratio is 0 (preferred)
+        let candidates = vec![
+            ch_with_limit.clone(),
+            ch_with_limit_2.clone(),
+            ch_no_limit.clone(),
+        ];
+        let strategy = UsageBasedStrategy::new(limiter);
+
+        // top_k = 2, so both the no-limit (ratio 0) and 80% channels are eligible.
+        // The 90% channel should never be picked.
+        for _ in 0..50 {
+            let selected = strategy.select(&candidates).unwrap();
+            assert!(
+                selected.id == ch_no_limit.id || selected.id == ch_with_limit_2.id,
+                "should never pick the 90%-utilized channel"
+            );
+        }
+    }
+
+    #[test]
+    fn usage_based_returns_none_for_empty() {
+        let limiter = Arc::new(RateLimiter::new(None));
+        let strategy = UsageBasedStrategy::new(limiter);
+        let candidates: Vec<Channel> = vec![];
+        assert!(strategy.select(&candidates).is_none());
     }
 }

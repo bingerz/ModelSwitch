@@ -28,10 +28,11 @@ pub struct GatewayParams {
     pub routing_strategy: String,
 }
 
-/// Router state (session affinity, active request tracking).
+/// Router state (session affinity, active request tracking, latency tracking).
 pub struct RouterState {
     pub session_affinity: SessionAffinity,
     pub active_requests: Arc<ActiveRequests>,
+    pub latency_tracker: Arc<crate::router::latency_tracker::LatencyTracker>,
 }
 
 /// Cache state (request cache + coalescing).
@@ -121,7 +122,8 @@ pub async fn handle_chat_completions(
         return dispatch(&state, &headers, &body, &proxy_config).await;
     }
 
-    let (mut current_body, injected) = mcp_tools::inject_mcp_tools(&body, &state.mcp.mcp_manager).await;
+    let (mut current_body, injected) =
+        mcp_tools::inject_mcp_tools(&body, &state.mcp.mcp_manager).await;
     if injected.is_empty() {
         // Nothing to intercept — normal dispatch path.
         return dispatch(&state, &headers, &body, &proxy_config).await;
@@ -178,7 +180,8 @@ pub async fn handle_chat_completions(
             calls = mcp_calls.len(),
             "MCP tool calls detected, executing"
         );
-        let tool_results = mcp_tools::execute_mcp_tool_calls(&mcp_calls, &state.mcp.mcp_manager).await;
+        let tool_results =
+            mcp_tools::execute_mcp_tool_calls(&mcp_calls, &state.mcp.mcp_manager).await;
         current_body =
             mcp_tools::build_followup_request(&current_body, &response_body, &tool_results);
     }
@@ -297,7 +300,8 @@ pub async fn handle_list_tools(State(state): State<Arc<AppState>>) -> axum::resp
         std::collections::HashMap::with_capacity(unique_server_ids.len());
     for id in unique_server_ids {
         let is_exposed = state
-            .mcp.mcp_manager
+            .mcp
+            .mcp_manager
             .get_config(&id)
             .await
             .map(|c| c.expose_tools)

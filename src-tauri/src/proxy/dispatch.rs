@@ -8,12 +8,13 @@ use crate::channel::Channel;
 use crate::proxy::cache::RequestCache;
 use crate::proxy::stream::{all_channels_exhausted_response, json_response};
 use crate::router;
+use crate::router::RoutingContext;
 
 use super::attempt::{try_channel_attempt, AttemptOutcome};
 use super::request_meta::{
     extract_request_meta, extract_virtual_key_id, is_affinity_valid, RequestMeta,
 };
-use super::{FailureReason, make_log, ProxyConfig};
+use super::{make_log, FailureReason, ProxyConfig};
 
 /// Log the all-channels-exhausted outcome, wake coalesced waiters, and return 429.
 async fn log_all_exhausted(
@@ -84,7 +85,7 @@ async fn select_channel_for_attempt(
     channels: &crate::channel::SharedChannels,
     current_model: &str,
     routing_strategy: &str,
-    active_requests: &Arc<crate::router::active_requests::ActiveRequests>,
+    ctx: &RoutingContext<'_>,
 ) -> Option<Channel> {
     // Try affinity channel first if still valid
     if let Some(aff_id) = affinity_channel {
@@ -102,13 +103,7 @@ async fn select_channel_for_attempt(
         }
     }
     // No valid affinity channel — use normal routing
-    router::select_channel(
-        channels.clone(),
-        current_model,
-        routing_strategy,
-        active_requests,
-    )
-    .await
+    router::select_channel(channels.clone(), current_model, routing_strategy, ctx).await
 }
 
 /// Shared dispatch logic for both OpenAI and Anthropic proxy handlers.
@@ -172,7 +167,11 @@ pub(crate) async fn dispatch(
                 &channels,
                 current_model,
                 &state.gateway.routing_strategy,
-                &state.router.active_requests,
+                &RoutingContext {
+                    active_requests: &state.router.active_requests,
+                    rate_limiter: &state.limits.rate_limiter,
+                    latency_tracker: &state.router.latency_tracker,
+                },
             )
             .await
             {
@@ -234,7 +233,9 @@ mod tests {
     use crate::channel::{
         Channel, ChannelStatus, Credential, CredentialType, Provider, SharedChannels,
     };
+    use crate::proxy::rate_limiter::RateLimiter;
     use crate::router::active_requests::ActiveRequests;
+    use crate::router::latency_tracker::LatencyTracker;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -270,6 +271,19 @@ mod tests {
             account_group: None,
             failure_window_start: None,
             window_failure_count: 0,
+            max_concurrent: None,
+        }
+    }
+
+    fn make_routing_context<'a>(
+        active_requests: &'a Arc<ActiveRequests>,
+        rate_limiter: &'a Arc<RateLimiter>,
+        latency_tracker: &'a Arc<LatencyTracker>,
+    ) -> RoutingContext<'a> {
+        RoutingContext {
+            active_requests,
+            rate_limiter,
+            latency_tracker,
         }
     }
 
@@ -277,14 +291,10 @@ mod tests {
     async fn select_channel_returns_none_for_empty_channels() {
         let channels: SharedChannels = Arc::new(RwLock::new(vec![]));
         let active_requests = Arc::new(ActiveRequests::new());
-        let result = select_channel_for_attempt(
-            None,
-            &channels,
-            "gpt-4",
-            "weighted",
-            &active_requests,
-        )
-        .await;
+        let rate_limiter = Arc::new(RateLimiter::new(None));
+        let latency_tracker = Arc::new(LatencyTracker::new());
+        let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
+        let result = select_channel_for_attempt(None, &channels, "gpt-4", "weighted", &ctx).await;
         assert!(result.is_none());
     }
 
@@ -296,14 +306,10 @@ mod tests {
         let channel = make_test_channel(channel_id, model_mapping);
         let channels: SharedChannels = Arc::new(RwLock::new(vec![channel]));
         let active_requests = Arc::new(ActiveRequests::new());
-        let result = select_channel_for_attempt(
-            None,
-            &channels,
-            "gpt-4",
-            "weighted",
-            &active_requests,
-        )
-        .await;
+        let rate_limiter = Arc::new(RateLimiter::new(None));
+        let latency_tracker = Arc::new(LatencyTracker::new());
+        let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
+        let result = select_channel_for_attempt(None, &channels, "gpt-4", "weighted", &ctx).await;
         assert!(result.is_some());
     }
 
@@ -315,14 +321,12 @@ mod tests {
         let channel = make_test_channel(channel_id, model_mapping);
         let channels: SharedChannels = Arc::new(RwLock::new(vec![channel]));
         let active_requests = Arc::new(ActiveRequests::new());
-        let result = select_channel_for_attempt(
-            Some(channel_id),
-            &channels,
-            "gpt-4",
-            "weighted",
-            &active_requests,
-        )
-        .await;
+        let rate_limiter = Arc::new(RateLimiter::new(None));
+        let latency_tracker = Arc::new(LatencyTracker::new());
+        let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
+        let result =
+            select_channel_for_attempt(Some(channel_id), &channels, "gpt-4", "weighted", &ctx)
+                .await;
         assert!(result.is_some());
         assert_eq!(result.unwrap().id, channel_id);
     }

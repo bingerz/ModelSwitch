@@ -13,9 +13,7 @@ use uuid::Uuid;
 
 // ─── Channel CRUD ─────────────────────────────────────
 
-pub async fn list_channels(
-    State(state): State<Arc<AppState>>,
-) -> Json<ApiResponse<Vec<Channel>>> {
+pub async fn list_channels(State(state): State<Arc<AppState>>) -> Json<ApiResponse<Vec<Channel>>> {
     let channels = state.channel_mgr.list().await;
     Json(ApiResponse::ok(channels))
 }
@@ -123,6 +121,7 @@ pub async fn create_channel(
         account_group: None,
         failure_window_start: None,
         window_failure_count: 0,
+        max_concurrent: None,
     };
 
     let created = state.channel_mgr.create(channel).await;

@@ -1,12 +1,27 @@
 pub mod active_requests;
 pub mod affinity;
 pub mod fallback;
+pub mod latency_tracker;
 pub mod strategy;
 pub mod weighted;
 
 use crate::channel::{Channel, SharedChannels};
+use crate::proxy::rate_limiter::RateLimiter;
 use active_requests::ActiveRequests;
-use strategy::{LatencyBasedStrategy, LeastBusyStrategy, RoutingStrategy, WeightedRandomStrategy};
+use latency_tracker::LatencyTracker;
+use std::sync::Arc;
+use strategy::{
+    LatencyBasedStrategy, LeastBusyStrategy, RoutingStrategy, UsageBasedStrategy,
+    WeightedRandomStrategy,
+};
+
+/// Context references needed by the routing layer.
+/// Bundled into a struct to keep `select_channel` signatures manageable.
+pub struct RoutingContext<'a> {
+    pub active_requests: &'a ActiveRequests,
+    pub rate_limiter: &'a Arc<RateLimiter>,
+    pub latency_tracker: &'a Arc<LatencyTracker>,
+}
 
 /// Select a healthy channel using the specified routing strategy.
 /// Falls back to weighted_random for unknown strategy names.
@@ -14,7 +29,7 @@ pub async fn select_channel(
     channels: SharedChannels,
     requested_model: &str,
     routing_strategy: &str,
-    active_requests: &ActiveRequests,
+    ctx: &RoutingContext<'_>,
 ) -> Option<Channel> {
     let guard = channels.read().await;
 
@@ -27,6 +42,14 @@ pub async fn select_channel(
             c
         })
         .filter(|c| c.is_available())
+        .filter(|c| {
+            // Check concurrent request limit
+            if let Some(max) = c.max_concurrent {
+                ctx.active_requests.get(c.id) < max
+            } else {
+                true // No limit configured
+            }
+        })
         .filter(|c| {
             // Empty mapping = pass-through, supports all models
             // Non-empty mapping = only supports explicitly listed models
@@ -52,10 +75,11 @@ pub async fn select_channel(
     });
 
     let strategy: Box<dyn RoutingStrategy> = match routing_strategy {
-        "latency" => Box::new(LatencyBasedStrategy::new()),
-        "least_busy" => Box::new(LeastBusyStrategy::new(std::sync::Arc::new(
-            active_requests.clone(),
+        "latency" => Box::new(LatencyBasedStrategy::new(Arc::clone(ctx.latency_tracker))),
+        "least_busy" => Box::new(LeastBusyStrategy::new(Arc::new(
+            ctx.active_requests.clone(),
         ))),
+        "usage" => Box::new(UsageBasedStrategy::new(Arc::clone(ctx.rate_limiter))),
         _ => Box::new(WeightedRandomStrategy),
     };
 
@@ -84,9 +108,11 @@ pub async fn select_channel(
     for ch in candidates {
         if ch.priority != current_priority {
             // Try selection from previous priority
-            if let Some(selected) =
-                flush(&mut healthy_candidates, &mut halfopen_candidates, &*strategy)
-            {
+            if let Some(selected) = flush(
+                &mut healthy_candidates,
+                &mut halfopen_candidates,
+                &*strategy,
+            ) {
                 return Some(selected);
             }
             healthy_candidates.clear();
@@ -101,5 +127,9 @@ pub async fn select_channel(
     }
 
     // Try last priority
-    flush(&mut healthy_candidates, &mut halfopen_candidates, &*strategy)
+    flush(
+        &mut healthy_candidates,
+        &mut halfopen_candidates,
+        &*strategy,
+    )
 }

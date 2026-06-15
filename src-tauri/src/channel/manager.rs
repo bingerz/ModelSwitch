@@ -14,11 +14,7 @@ pub struct ChannelManager {
 
 impl ChannelManager {
     pub fn new(config: &AppConfig, credential_store: SharedCredentialStore) -> Self {
-        let channels: Vec<Channel> = config
-            .channels
-            .iter()
-            .map(Channel::from_config)
-            .collect();
+        let channels: Vec<Channel> = config.channels.iter().map(Channel::from_config).collect();
 
         Self {
             channels: Arc::new(RwLock::new(channels)),
@@ -141,6 +137,7 @@ impl ChannelManager {
                 account_group: c.account_group.clone(),
                 payload_rules: None,
                 quota: None,
+                max_concurrent: c.max_concurrent,
             })
             .collect();
         drop(channels);

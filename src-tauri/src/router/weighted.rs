@@ -63,6 +63,7 @@ mod tests {
             account_group: None,
             failure_window_start: None,
             window_failure_count: 0,
+            max_concurrent: None,
         }
     }
 

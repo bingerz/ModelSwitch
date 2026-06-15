@@ -130,6 +130,9 @@ pub struct Channel {
     /// Failure count within the current sliding window.
     #[serde(default)]
     pub window_failure_count: u32,
+    /// Maximum concurrent in-flight requests for this channel (None = no limit).
+    #[serde(default)]
+    pub max_concurrent: Option<u32>,
 }
 
 impl Channel {
@@ -269,6 +272,7 @@ impl Channel {
             account_group: c.account_group.clone(),
             failure_window_start: None,
             window_failure_count: 0,
+            max_concurrent: c.max_concurrent,
         }
     }
 }

@@ -97,6 +97,7 @@ fn channel_config(id: &str, name: &str, base_url: &str, priority: u8) -> Channel
         payload_rules: None,
         quota: None,
         account_group: None,
+        max_concurrent: None,
     }
 }
 
@@ -129,10 +130,7 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
         .expect("Failed to build HTTP client");
 
     let active_requests = Arc::new(ActiveRequests::new());
-    let request_cache = Arc::new(RequestCache::new(
-        Duration::from_secs(300),
-        1000,
-    ));
+    let request_cache = Arc::new(RequestCache::new(Duration::from_secs(300), 1000));
     let in_flight = Arc::new(InFlightRequests::new());
     let payload_rules = Arc::new(ChannelPayloadRules::new());
     let rate_limiter = Arc::new(RateLimiter::new(None));
@@ -155,6 +153,7 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
         router: RouterState {
             session_affinity: SessionAffinity::default(),
             active_requests,
+            latency_tracker: Arc::new(crate::router::latency_tracker::LatencyTracker::new()),
         },
         cache: CacheState {
             request_cache,
@@ -284,7 +283,10 @@ async fn dispatch_retry_on_429() {
         "dispatch should succeed after retrying on the second channel"
     );
     let json = response_json(response).await;
-    assert_eq!(json["choices"][0]["message"]["content"], "Retried successfully!");
+    assert_eq!(
+        json["choices"][0]["message"]["content"],
+        "Retried successfully!"
+    );
 
     // The failing server should have been hit at least once
     let fail_requests = mock_fail.received_requests().await.unwrap();

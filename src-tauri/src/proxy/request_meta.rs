@@ -79,7 +79,9 @@ pub(super) async fn extract_request_meta<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::channel::{Channel, ChannelStatus, Credential, CredentialType, Provider, SharedChannels};
+    use crate::channel::{
+        Channel, ChannelStatus, Credential, CredentialType, Provider, SharedChannels,
+    };
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -115,6 +117,7 @@ mod tests {
             account_group: None,
             failure_window_start: None,
             window_failure_count: 0,
+            max_concurrent: None,
         }
     }
 
@@ -123,9 +126,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "x-virtual-key-id",
-            "550e8400-e29b-41d4-a716-446655440000"
-                .parse()
-                .unwrap(),
+            "550e8400-e29b-41d4-a716-446655440000".parse().unwrap(),
         );
         let id = extract_virtual_key_id(&headers);
         assert!(id.is_some());

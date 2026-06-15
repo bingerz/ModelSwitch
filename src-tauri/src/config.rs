@@ -208,6 +208,9 @@ pub struct ChannelConfig {
     /// Optional account group tag for multi-account pool management.
     #[serde(default)]
     pub account_group: Option<String>,
+    /// Maximum concurrent in-flight requests for this channel (None = no limit).
+    #[serde(default)]
+    pub max_concurrent: Option<u32>,
 }
 
 /// Per-channel quota polling configuration.
