@@ -1,6 +1,6 @@
 # ModelSwitch 架构评估报告（修订版）
 
-> 修订日期: 2026-06-15  
+> 修订日期: 2026-06-15 (Phase 8 完成)  
 > 基于第一轮架构重构完成后的代码库状态
 
 ## Context
@@ -37,6 +37,9 @@ ModelSwitch 是一个用 Rust (Tauri + Axum 0.8) 构建的 LLM 智能网关。�
 | 20 | 惰性正则编译 | `builtin_patterns()` 改为 `LazyLock<Vec<CompiledPattern>>` 静态变量 | ✅ |
 | 21 | Clippy 零警告 | 26+ 项修复覆盖 28 个文件, `cargo clippy --lib -- --deny warnings` 通过 | ✅ |
 | 22 | 分页 `total` 字段 | `PaginatedResponse<T>` 类型 + `get_logs` 返回 total 计数 + `DispatchLogger::total()` | ✅ |
+| 23 | `GatewayError` IntoResponse | 15 变体映射到 HTTP 状态码 + 结构化错误体 | ✅ |
+| 24 | Admin API 信封迁移 | 22 个端点迁移到 `ApiResponse<T>` (总计 26/29 使用信封) | ✅ |
+| 25 | `proxy/attempt.rs` 拆分 | 676 行 → attempt.rs 384行 + response.rs 312行 | ✅ |
 
 ### 关键指标变化
 
@@ -63,7 +66,7 @@ ModelSwitch 是一个用 Rust (Tauri + Axum 0.8) 构建的 LLM 智能网关。�
 |------|------|------|------|------|
 | 管理 API | `admin/mod.rs` | 55 | ✅ | 已拆分为 6 文件 (channels 327, mcp 317, virtual_keys 154, system 184, auth 74) |
 | 网关启动 | `lib.rs` | 174 | ✅ | 已拆分为 tauri_cmds (279), server (494), shutdown (39) |
-| HTTP 调用 | `proxy/attempt.rs` | 676 | 🟡 偏大 | try_channel_attempt 仍为大型函数 |
+| HTTP 调用 | `proxy/attempt.rs` + `proxy/response.rs` | 384 + 312 | ✅ | 已拆分为 attempt.rs + response.rs |
 | 隐私过滤 | `middleware/sanitizer.rs` | 568 | ✅ | builtin_patterns 改为 LazyLock |
 | 调度日志 | `log.rs` | 537 | ✅ | 分页 total 已实现 |
 | 虚拟密钥 | `virtual_key/mod.rs` | 523 | ✅ | |
@@ -71,7 +74,7 @@ ModelSwitch 是一个用 Rust (Tauri + Axum 0.8) 构建的 LLM 智能网关。�
 | 代理核心 | `proxy/mod.rs` | 295 | ✅ | 已拆分 |
 | 调度循环 | `proxy/dispatch.rs` | 329 | ✅ | 已拆分 |
 | 请求缓存 | `proxy/cache.rs` | 296 | ✅ | |
-| 统一错误 | `error.rs` | 60 | ⚠️ | 已定义但未被采用 |
+| 统一错误 | `error.rs` | 60 | ✅ | IntoResponse 已实现，渐进采用中 |
 
 ---
 
@@ -97,18 +100,18 @@ ModelSwitch 是一个用 Rust (Tauri + Axum 0.8) 构建的 LLM 智能网关。�
 - `server.rs` (494行) — start_gateway_services, build_router, start_gateway
 - `shutdown.rs` (39行) — shutdown_signal + run_gateway 便捷封装
 
-#### 3. `GatewayError` 已定义但未采用
+#### 3. `GatewayError` IntoResponse 已实现，生产采用渐进进行中
 
-**问题**: `error.rs` 定义了 16 变体的 `GatewayError` 枚举和 `GatewayResult<T>` 别名，但生产代码完全没有使用。所有错误处理仍依赖 4 种不一致的策略：
+**进展**: `error.rs` 中的 `GatewayError` 枚举已实现 `IntoResponse` trait（commit 060b53e），15 个变体映射到对应的 HTTP 状态码并返回结构化错误体。但生产代码中采用 `GatewayError` 仍是渐进过程。
 
 | 策略 | 使用量 | 位置 |
 |------|--------|------|
 | `anyhow::Result` | ~11 处 | CredentialStore, McpManager, VirtualKeyStore, Config |
 | `Result<T, String>` | ~16 处 | 所有 Tauri commands |
 | `.unwrap()` / `.expect()` | 64 处 | 全局分布 (34 个是锁 unwrap) |
-| `GatewayError` | 0 处 | 仅在 error.rs 内部引用 |
+| `GatewayError` IntoResponse | ✅ 已实现 | error.rs |
 
-**建议**: 渐进式采用 — 从新代码和重构代码开始使用 `GatewayError`，不要一次性迁移。
+**建议**: 渐进式采用已完成 IntoResponse 实现。从新代码和重构代码开始使用 GatewayError，不要一次性迁移。
 
 ---
 
@@ -120,11 +123,9 @@ ModelSwitch 是一个用 Rust (Tauri + Axum 0.8) 构建的 LLM 智能网关。�
 
 剩余 unwrap（request_id parse、Gemini response 等）仍需逐步处理。
 
-#### 5. Admin API 信封未完成
+#### 5. ✅ Admin API 信封迁移 — 基本完成
 
-**问题**: `ApiResponse<T>` 已定义并应用于 3 个端点，但 26 个端点仍使用不一致的响应格式。
-
-**建议**: 在拆分 `admin.rs` 时一并迁移所有端点到统一信封。
+**已完成**: 26/29 个端点已迁移到 `ApiResponse<T>` / `PaginatedResponse<T>` 信封。仅 `auth.rs` 的 2 个 Cookie 端点（login/logout）有意跳过，因为它们使用重定向而非 JSON 响应。
 
 #### 6. MCP 流式工具注入限制
 
@@ -146,11 +147,11 @@ ModelSwitch 是一个用 Rust (Tauri + Axum 0.8) 构建的 LLM 智能网关。�
 
 **已完成**: 26+ 项 clippy 警告全部修复，覆盖 28 个文件 (map_or→is_none_or, and_then→map, for_kv_map, io_other_error, collapsible_if, borrowed_box, let_unit_value, Entry API, dead_code allows 等)。`cargo clippy --lib -- --deny warnings` 现以 **零警告** 通过。
 
-#### 9. `proxy/attempt.rs` 偏大 (676 行)
+#### 9. ✅ `proxy/attempt.rs` 拆分 — 已完成
 
-**问题**: `try_channel_attempt()` 函数本身仍较大（~400 行），包含 HTTP 调用、流式处理、JSON 处理、遥测累积、日志记录、计费。
-
-**建议**: 可以进一步提取 `handle_streaming_success()` 和 `handle_json_success()` 到独立模块，但这不是紧急事项。
+**已完成**: 676 行的 `proxy/attempt.rs` 已拆分为：
+- `proxy/attempt.rs` (384行) — 核心 attempt 调度逻辑
+- `proxy/response.rs` (312行) — 流式/JSON 响应处理
 
 #### 10. ✅ Admin API 分页 `total` 字段 — 已完成 (Phase 7, Commit b6b24df)
 
@@ -183,12 +184,12 @@ ModelSwitch 是一个用 Rust (Tauri + Axum 0.8) 构建的 LLM 智能网关。�
 2. ✅ 清理所有 clippy 警告（零警告通过）
 3. ✅ 补全 Admin API 分页 `total` 字段
 
-### Phase 8: 后续改进方向
+### ✅ Phase 8: 后续改进方向 — 基本完成
 
-1. **GatewayError 采用** — 渐进式从新代码开始使用统一错误类型
-2. **Admin API 信封迁移** — 将剩余 26 个端点迁移到 `ApiResponse<T>` / `PaginatedResponse<T>`
-3. **MCP 流式工具循环** — 实现 SSE 流式客户端的 MCP 工具注入
-4. **`proxy/attempt.rs` 进一步拆分** — 提取 `handle_streaming_success()` / `handle_json_success()`
+1. ✅ **GatewayError 采用** — IntoResponse 已实现 (commit 060b53e)，渐进式采用进行中
+2. ✅ **Admin API 信封迁移** — 22 端点迁移完成，总计 26/29 使用信封
+3. ⬜ **MCP 流式工具循环** — 实现 SSE 流式客户端的 MCP 工具注入（唯一剩余项）
+4. ✅ **`proxy/attempt.rs` 进一步拆分** — 已拆分为 attempt.rs (384行) + response.rs (312行)
 
 ---
 
