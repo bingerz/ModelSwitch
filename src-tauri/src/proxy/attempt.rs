@@ -18,6 +18,43 @@ use super::{
     PASSTHROUGH_RESPONSE_HEADERS, SKIP_HEADERS,
 };
 
+/// Validate and sanitize a model name for safe URL interpolation.
+///
+/// Model names must be flat identifiers (e.g. `gpt-4`, `claude-3-opus-20240229`,
+/// `gemini-1.5-pro`). This function:
+/// - Removes any character outside `[a-zA-Z0-9._:-]`
+/// - Strips leading/trailing dots and collapses consecutive dots to prevent
+///   path-traversal sequences (`..`)
+/// - Rejects empty results (returns "unknown" as fallback)
+fn sanitize_model_for_url(model: &str) -> String {
+    // Allow only alphanumeric, hyphens, dots, underscores, colons
+    let mut sanitized: String = model
+        .chars()
+        .filter(|c| c.is_alphanumeric() || matches!(c, '-' | '.' | '_' | ':'))
+        .collect();
+
+    // Collapse consecutive dots and strip leading/trailing dots
+    while sanitized.contains("..") {
+        sanitized = sanitized.replace("..", ".");
+    }
+    sanitized = sanitized.trim_matches('.').to_string();
+
+    // Fallback for empty or all-unsafe input
+    if sanitized.is_empty() {
+        tracing::warn!(original = %model, "Model name was entirely unsafe, using fallback");
+        return "unknown".to_string();
+    }
+
+    if sanitized != model {
+        tracing::warn!(
+            original = %model,
+            sanitized = %sanitized,
+            "Model name contained unsafe characters, sanitized for URL"
+        );
+    }
+    sanitized
+}
+
 /// Outcome of a single channel dispatch attempt.
 pub(super) enum AttemptOutcome {
     /// Got a response — dispatch should return it immediately.
@@ -432,10 +469,15 @@ pub(super) async fn try_channel_attempt(
             if is_stream {
                 format!(
                     "{}/v1beta/models/{}:streamGenerateContent?alt=sse",
-                    base, upstream_model
+                    base,
+                    sanitize_model_for_url(&upstream_model)
                 )
             } else {
-                format!("{}/v1beta/models/{}:generateContent", base, upstream_model)
+                format!(
+                    "{}/v1beta/models/{}:generateContent",
+                    base,
+                    sanitize_model_for_url(&upstream_model)
+                )
             }
         }
         _ => upstream_url(channel, proxy_config.upstream_path),

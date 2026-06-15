@@ -25,6 +25,8 @@ pub async fn virtual_key_middleware(
 ) -> Result<Response, (StatusCode, &'static str)> {
     // Open-proxy mode: no virtual keys configured.
     if !state.billing.virtual_key_store.has_keys().await {
+        // Strip any client-provided virtual key header to prevent spoofing
+        req.headers_mut().remove("x-virtual-key-id");
         return Ok(next.run(req).await);
     }
 
@@ -45,6 +47,8 @@ pub async fn virtual_key_middleware(
             // Inject virtual key ID for downstream spend tracking.
             // Handler extractors only see HeaderMap, not request extensions,
             // so we use a synthetic header to thread the id through.
+            // Remove any client-provided value before setting our validated one.
+            req.headers_mut().remove("x-virtual-key-id");
             req.headers_mut().insert(
                 "x-virtual-key-id",
                 vk.id.to_string().parse().unwrap_or_else(|_| {

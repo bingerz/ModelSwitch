@@ -58,18 +58,30 @@ where
                 return;
             }
         }
-        if let Err(e) = tokio::fs::write(&self.store_path, &json).await {
-            tracing::error!("Failed to write store: {e}");
-        }
-
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = tokio::task::spawn_blocking({
-                let path = self.store_path.clone();
-                move || std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-            })
-            .await;
+            use tokio::io::AsyncWriteExt;
+            match tokio::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&self.store_path)
+                .await
+            {
+                Ok(mut f) => {
+                    if let Err(e) = f.write_all(json.as_bytes()).await {
+                        tracing::error!("Failed to write store: {e}");
+                    }
+                }
+                Err(e) => tracing::error!("Failed to create store file: {e}"),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            if let Err(e) = tokio::fs::write(&self.store_path, &json).await {
+                tracing::error!("Failed to write store: {e}");
+            }
         }
     }
 
@@ -131,18 +143,37 @@ where
         if let Some(parent) = self.store_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Err(e) = std::fs::write(&self.store_path, &json) {
-            tracing::error!("Failed to write store (sync): {e}");
-        } else {
-            #[cfg(unix)]
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            match std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&self.store_path)
             {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(
-                    &self.store_path,
-                    std::fs::Permissions::from_mode(0o600),
-                );
+                Ok(mut f) => {
+                    use std::io::Write;
+                    if let Err(e) = f.write_all(json.as_bytes()) {
+                        tracing::error!("Failed to write store (sync): {e}");
+                        return;
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create store file (sync): {e}");
+                    return;
+                }
             }
             tracing::info!("Store persisted on shutdown");
+        }
+        #[cfg(not(unix))]
+        {
+            if let Err(e) = std::fs::write(&self.store_path, &json) {
+                tracing::error!("Failed to write store (sync): {e}");
+            } else {
+                tracing::info!("Store persisted on shutdown");
+            }
         }
     }
 
