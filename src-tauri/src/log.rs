@@ -399,7 +399,7 @@ mod tests {
         let logger = DispatchLogger::new(100);
         let ch1 = Uuid::new_v4();
         let ch2 = Uuid::new_v4();
-        let now = Utc::now();
+        let now = Utc::now().with_minute(5).unwrap().with_second(0).unwrap().with_nanosecond(0).unwrap();
         let one_hour_ago = now - chrono::Duration::hours(1);
         let two_hours_ago = now - chrono::Duration::hours(2);
 
@@ -505,7 +505,7 @@ mod tests {
     async fn usage_history_respects_hours_param() {
         let logger = DispatchLogger::new(100);
         let ch = Uuid::new_v4();
-        let now = Utc::now();
+        let now = Utc::now().with_minute(5).unwrap().with_second(0).unwrap().with_nanosecond(0).unwrap();
 
         // Request 3 hours ago
         logger
