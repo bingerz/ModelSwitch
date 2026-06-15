@@ -66,6 +66,11 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         .timeout(std::time::Duration::from_secs(
             config.gateway.http_timeout_secs,
         ))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
+        .pool_max_idle_per_host(20)
+        .tcp_keepalive(std::time::Duration::from_secs(60))
+        .tcp_nodelay(true)
         .build()
         .expect("Failed to build HTTP client");
 

@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 /// A simple in-memory request cache with bounded size.
 /// Caches non-streaming requests by hash of model + body (excluding stream field).
 pub struct RequestCache {
-    entries: Mutex<HashMap<u64, CacheEntry>>,
+    entries: Mutex<HashMap<u128, CacheEntry>>,
     /// Insertion order for LRU eviction.
-    order: Mutex<Vec<u64>>,
+    order: Mutex<Vec<u128>>,
     ttl: Duration,
     max_entries: usize,
 }
@@ -31,30 +31,26 @@ impl RequestCache {
     }
 
     /// Compute a cache key from the model and request body (excluding dynamic fields).
-    pub fn cache_key(model: &str, body: &serde_json::Value) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut h = DefaultHasher::new();
-        canonical_key_material(model, body).hash(&mut h);
-        h.finish()
+    pub fn cache_key(model: &str, body: &serde_json::Value) -> u128 {
+        let material = canonical_key_material(model, body);
+        let hash = blake3::hash(material.as_bytes());
+        u128::from_be_bytes(hash.as_bytes()[..16].try_into().unwrap())
     }
 
     /// Compute both the hash key and the canonical key material.
     /// Callers should prefer this over `cache_key` + `canonical_key_material` separately
     /// to avoid recomputing the canonical string.
-    pub fn compute_key(model: &str, body: &serde_json::Value) -> (u64, String) {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
+    pub fn compute_key(model: &str, body: &serde_json::Value) -> (u128, String) {
         let material = canonical_key_material(model, body);
-        let mut h = DefaultHasher::new();
-        material.hash(&mut h);
-        (h.finish(), material)
+        let hash = blake3::hash(material.as_bytes());
+        let key = u128::from_be_bytes(hash.as_bytes()[..16].try_into().unwrap());
+        (key, material)
     }
 
     /// Try to get a cached response. Returns None if expired, not found, or hash collision detected.
     /// The `key_material` is compared against the stored material to eliminate false positives
-    /// from `u64` hash collisions.
-    pub fn get(&self, key: u64, key_material: &str) -> Option<String> {
+    /// from `u128` hash collisions.
+    pub fn get(&self, key: u128, key_material: &str) -> Option<String> {
         let mut guard = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         let mut order = self.order.lock().unwrap_or_else(|e| e.into_inner());
         // Clean expired entries on every read
@@ -81,7 +77,7 @@ impl RequestCache {
     }
 
     /// Insert a response into the cache.
-    pub fn insert(&self, key: u64, key_material: String, response_body: String) {
+    pub fn insert(&self, key: u128, key_material: String, response_body: String) {
         let mut guard = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         let mut order = self.order.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -181,63 +177,63 @@ mod tests {
     fn cache_tracks_length() {
         let cache = RequestCache::default();
         assert_eq!(cache.len(), 0);
-        cache.insert(1, "mat_1".to_string(), "a".to_string());
-        cache.insert(2, "mat_2".to_string(), "b".to_string());
+        cache.insert(1u128, "mat_1".to_string(), "a".to_string());
+        cache.insert(2u128, "mat_2".to_string(), "b".to_string());
         assert_eq!(cache.len(), 2);
     }
 
     #[test]
     fn evicts_oldest_when_over_capacity() {
         let cache = RequestCache::new(Duration::from_secs(300), 3);
-        cache.insert(1, "mat_1".to_string(), "a".to_string());
-        cache.insert(2, "mat_2".to_string(), "b".to_string());
-        cache.insert(3, "mat_3".to_string(), "c".to_string());
+        cache.insert(1u128, "mat_1".to_string(), "a".to_string());
+        cache.insert(2u128, "mat_2".to_string(), "b".to_string());
+        cache.insert(3u128, "mat_3".to_string(), "c".to_string());
         assert_eq!(cache.len(), 3);
         // Adding 4th should evict key 1 (oldest)
-        cache.insert(4, "mat_4".to_string(), "d".to_string());
+        cache.insert(4u128, "mat_4".to_string(), "d".to_string());
         assert_eq!(cache.len(), 3);
-        assert!(cache.get(1, "mat_1").is_none());
-        assert_eq!(cache.get(2, "mat_2"), Some("b".to_string()));
-        assert_eq!(cache.get(4, "mat_4"), Some("d".to_string()));
+        assert!(cache.get(1u128, "mat_1").is_none());
+        assert_eq!(cache.get(2u128, "mat_2"), Some("b".to_string()));
+        assert_eq!(cache.get(4u128, "mat_4"), Some("d".to_string()));
     }
 
     #[test]
     fn update_existing_key_preserves_capacity() {
         let cache = RequestCache::new(Duration::from_secs(300), 2);
-        cache.insert(1, "mat_1".to_string(), "a".to_string());
-        cache.insert(2, "mat_2".to_string(), "b".to_string());
-        cache.insert(1, "mat_1".to_string(), "updated".to_string());
+        cache.insert(1u128, "mat_1".to_string(), "a".to_string());
+        cache.insert(2u128, "mat_2".to_string(), "b".to_string());
+        cache.insert(1u128, "mat_1".to_string(), "updated".to_string());
         assert_eq!(cache.len(), 2);
-        assert_eq!(cache.get(1, "mat_1"), Some("updated".to_string()));
+        assert_eq!(cache.get(1u128, "mat_1"), Some("updated".to_string()));
         // Key 3 should evict key 2 (oldest insertion order, key 1 was just updated)
-        cache.insert(3, "mat_3".to_string(), "c".to_string());
+        cache.insert(3u128, "mat_3".to_string(), "c".to_string());
         assert_eq!(cache.len(), 2);
-        assert!(cache.get(2, "mat_2").is_none());
+        assert!(cache.get(2u128, "mat_2").is_none());
     }
 
     #[test]
     fn flush_clears_everything() {
         let cache = RequestCache::default();
-        cache.insert(1, "mat_1".to_string(), "a".to_string());
-        cache.insert(2, "mat_2".to_string(), "b".to_string());
+        cache.insert(1u128, "mat_1".to_string(), "a".to_string());
+        cache.insert(2u128, "mat_2".to_string(), "b".to_string());
         cache.flush();
         assert_eq!(cache.len(), 0);
-        assert!(cache.get(1, "mat_1").is_none());
+        assert!(cache.get(1u128, "mat_1").is_none());
     }
 
     #[test]
     fn detects_hash_collision() {
         let cache = RequestCache::default();
         // Insert with one key_material
-        cache.insert(42, "request_A_material".to_string(), "response_A".to_string());
+        cache.insert(42u128, "request_A_material".to_string(), "response_A".to_string());
         // Lookup with same hash but different material -> should miss
-        let result = cache.get(42, "request_B_material");
+        let result = cache.get(42u128, "request_B_material");
         assert!(
             result.is_none(),
             "Should not return response for different key material"
         );
         // Lookup with same material -> should hit
-        let result = cache.get(42, "request_A_material");
+        let result = cache.get(42u128, "request_A_material");
         assert_eq!(result, Some("response_A".to_string()));
     }
 }
@@ -246,7 +242,7 @@ mod tests {
 /// When multiple requests with the same cache key arrive, only one is sent
 /// upstream; the rest wait and reuse the cached result.
 pub struct InFlightRequests {
-    inflight: Mutex<HashMap<u64, Arc<tokio::sync::Notify>>>,
+    inflight: Mutex<HashMap<u128, Arc<tokio::sync::Notify>>>,
 }
 
 impl InFlightRequests {
@@ -259,7 +255,7 @@ impl InFlightRequests {
     /// Register an in-flight request. Returns `true` if this is the first
     /// request for this key (caller should proceed with the real request),
     /// or `false` if another request is already in flight (caller should wait).
-    pub fn register(&self, key: u64) -> bool {
+    pub fn register(&self, key: u128) -> bool {
         let mut guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
         if let std::collections::hash_map::Entry::Vacant(e) = guard.entry(key) {
             e.insert(Arc::new(tokio::sync::Notify::new()));
@@ -270,7 +266,7 @@ impl InFlightRequests {
     }
 
     /// Wait for an in-flight request with the given key to complete.
-    pub async fn wait(&self, key: u64) {
+    pub async fn wait(&self, key: u128) {
         let notify = {
             let guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
             guard.get(&key).cloned()
@@ -281,7 +277,7 @@ impl InFlightRequests {
     }
 
     /// Complete an in-flight request, waking all waiters.
-    pub fn complete(&self, key: u64) {
+    pub fn complete(&self, key: u128) {
         let mut guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(notify) = guard.remove(&key) {
             notify.notify_waiters();
