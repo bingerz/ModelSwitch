@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
+use super::ApiResponse;
+
 // ─── Types ─────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -73,9 +75,9 @@ async fn persist_virtual_keys(state: &Arc<AppState>) {
 /// Never returns `key_hash`. Plaintext is only returned once at creation time.
 pub async fn list_virtual_keys(
     State(state): State<Arc<AppState>>,
-) -> Json<Vec<VirtualKeyResponse>> {
+) -> Json<ApiResponse<Vec<VirtualKeyResponse>>> {
     let keys = state.billing.virtual_key_store.list().await;
-    Json(keys.iter().map(VirtualKeyResponse::from).collect())
+    Json(ApiResponse::ok(keys.iter().map(VirtualKeyResponse::from).collect()))
 }
 
 /// POST /api/virtual-keys -- create a new virtual key.
@@ -84,17 +86,17 @@ pub async fn list_virtual_keys(
 pub async fn create_virtual_key(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateVirtualKeyRequest>,
-) -> axum::response::Response {
+) -> Result<Json<ApiResponse<serde_json::Value>>, axum::response::Response> {
     if req.name.trim().is_empty() {
-        return ApiError::new(StatusCode::BAD_REQUEST, "Name is required");
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "Name is required"));
     }
     if let Some(d) = req.daily_budget_cents {
         if let Some(m) = req.monthly_budget_cents {
             if m < d {
-                return ApiError::new(
+                return Err(ApiError::new(
                     StatusCode::BAD_REQUEST,
                     "Monthly budget must be >= daily budget",
-                );
+                ));
             }
         }
     }
@@ -115,7 +117,7 @@ pub async fn create_virtual_key(
         "created_at": vk.created_at,
         "spend": vk.spend,
     });
-    (StatusCode::CREATED, Json(body)).into_response()
+    Ok(Json(ApiResponse::ok(body)))
 }
 
 /// PUT /api/virtual-keys/:id -- update fields on a virtual key.
@@ -123,7 +125,7 @@ pub async fn update_virtual_key(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateVirtualKeyRequest>,
-) -> Result<axum::response::Response, axum::response::Response> {
+) -> Result<Json<ApiResponse<VirtualKeyResponse>>, axum::response::Response> {
     let updated = state
         .billing
         .virtual_key_store
@@ -137,7 +139,7 @@ pub async fn update_virtual_key(
         .await
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Virtual key not found"))?;
     persist_virtual_keys(&state).await;
-    Ok(Json(VirtualKeyResponse::from(&updated)).into_response())
+    Ok(Json(ApiResponse::ok(VirtualKeyResponse::from(&updated))))
 }
 
 /// DELETE /api/virtual-keys/:id -- remove a virtual key permanently.

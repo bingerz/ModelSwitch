@@ -1,3 +1,4 @@
+use super::ApiResponse;
 use crate::config::McpServerConfig;
 use crate::middleware::error::ApiError;
 use crate::proxy::openai::AppState;
@@ -82,7 +83,9 @@ fn mcp_error_to_response(e: anyhow::Error) -> axum::response::Response {
 // ─── Endpoints ─────────────────────────────────────────
 
 /// GET /api/mcp/servers -- list all servers with config and status.
-pub async fn list_mcp_servers(State(state): State<Arc<AppState>>) -> Json<Vec<McpServerResponse>> {
+pub async fn list_mcp_servers(
+    State(state): State<Arc<AppState>>,
+) -> Json<ApiResponse<Vec<McpServerResponse>>> {
     let statuses = state.mcp.mcp_manager.list_status().await;
     let mut responses = Vec::with_capacity(statuses.len());
     for (id, _name, status) in statuses {
@@ -100,14 +103,14 @@ pub async fn list_mcp_servers(State(state): State<Arc<AppState>>) -> Json<Vec<Mc
             });
         }
     }
-    Json(responses)
+    Json(ApiResponse::ok(responses))
 }
 
 /// POST /api/mcp/servers -- add a new server config.
 pub async fn create_mcp_server(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateMcpServerRequest>,
-) -> Result<axum::response::Response, axum::response::Response> {
+) -> Result<Json<ApiResponse<McpServerResponse>>, axum::response::Response> {
     if req.id.trim().is_empty() || req.name.trim().is_empty() || req.command.trim().is_empty() {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -147,21 +150,17 @@ pub async fn create_mcp_server(
 
     state.mcp.mcp_manager.reload_configs(&config.mcp_servers).await;
 
-    Ok((
-        StatusCode::CREATED,
-        Json(McpServerResponse {
-            id: new_config.id,
-            name: new_config.name,
-            command: new_config.command,
-            args: new_config.args,
-            env: new_config.env,
-            cwd: new_config.cwd,
-            enabled: new_config.enabled,
-            expose_tools: new_config.expose_tools,
-            status: crate::mcp::McpServerStatus::Stopped,
-        }),
-    )
-        .into_response())
+    Ok(Json(ApiResponse::ok(McpServerResponse {
+        id: new_config.id,
+        name: new_config.name,
+        command: new_config.command,
+        args: new_config.args,
+        env: new_config.env,
+        cwd: new_config.cwd,
+        enabled: new_config.enabled,
+        expose_tools: new_config.expose_tools,
+        status: crate::mcp::McpServerStatus::Stopped,
+    })))
 }
 
 /// PUT /api/mcp/servers/:id -- update server config.
@@ -169,7 +168,7 @@ pub async fn update_mcp_server(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(req): Json<UpdateMcpServerRequest>,
-) -> Result<axum::response::Response, axum::response::Response> {
+) -> Result<Json<ApiResponse<McpServerResponse>>, axum::response::Response> {
     let mut config = crate::config::AppConfig::load().map_err(|e| {
         tracing::error!("Failed to load config: {}", e);
         ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load config")
@@ -209,7 +208,7 @@ pub async fn update_mcp_server(
         .map(|(_, _, s)| s)
         .unwrap_or(crate::mcp::McpServerStatus::Stopped);
 
-    Ok(Json(McpServerResponse {
+    Ok(Json(ApiResponse::ok(McpServerResponse {
         id: updated_config.id,
         name: updated_config.name,
         command: updated_config.command,
@@ -219,8 +218,7 @@ pub async fn update_mcp_server(
         enabled: updated_config.enabled,
         expose_tools: updated_config.expose_tools,
         status,
-    })
-    .into_response())
+    })))
 }
 
 /// DELETE /api/mcp/servers/:id -- remove server (stop if running).
@@ -254,7 +252,7 @@ pub async fn delete_mcp_server(
 pub async fn start_mcp_server(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<axum::response::Response, axum::response::Response> {
+) -> Result<Json<ApiResponse<serde_json::Value>>, axum::response::Response> {
     state
         .mcp
         .mcp_manager
@@ -262,14 +260,14 @@ pub async fn start_mcp_server(
         .await
         .map_err(mcp_error_to_response)?;
 
-    Ok(Json(serde_json::json!({ "ok": true })).into_response())
+    Ok(Json(ApiResponse::ok(serde_json::json!({ "ok": true }))))
 }
 
 /// POST /api/mcp/servers/:id/stop -- terminate the subprocess.
 pub async fn stop_mcp_server(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<axum::response::Response, axum::response::Response> {
+) -> Result<Json<ApiResponse<serde_json::Value>>, axum::response::Response> {
     state
         .mcp
         .mcp_manager
@@ -277,14 +275,14 @@ pub async fn stop_mcp_server(
         .await
         .map_err(mcp_error_to_response)?;
 
-    Ok(Json(serde_json::json!({ "ok": true })).into_response())
+    Ok(Json(ApiResponse::ok(serde_json::json!({ "ok": true }))))
 }
 
 /// GET /api/mcp/servers/:id/tools -- list tools from this server.
 pub async fn list_mcp_server_tools(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<axum::response::Response, axum::response::Response> {
+) -> Result<Json<ApiResponse<Vec<McpToolResponse>>>, axum::response::Response> {
     let tools = state
         .mcp
         .mcp_manager
@@ -300,7 +298,7 @@ pub async fn list_mcp_server_tools(
         })
         .collect();
 
-    Ok(Json(response).into_response())
+    Ok(Json(ApiResponse::ok(response)))
 }
 
 /// GET /api/mcp/tools -- aggregated tools across all running servers.
@@ -312,6 +310,8 @@ pub async fn list_mcp_server_tools(
 /// clients.
 pub async fn list_all_mcp_tools(
     State(state): State<Arc<AppState>>,
-) -> Json<Vec<crate::mcp::AggregatedTool>> {
-    Json(crate::mcp::aggregator::aggregate_all_tools(&state.mcp.mcp_manager).await)
+) -> Json<ApiResponse<Vec<crate::mcp::AggregatedTool>>> {
+    Json(ApiResponse::ok(
+        crate::mcp::aggregator::aggregate_all_tools(&state.mcp.mcp_manager).await,
+    ))
 }

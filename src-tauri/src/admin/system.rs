@@ -46,9 +46,11 @@ pub async fn get_stats(
     Json(ApiResponse::ok(stats))
 }
 
-pub async fn get_cost_stats(State(state): State<Arc<AppState>>) -> Json<crate::log::CostStats> {
+pub async fn get_cost_stats(
+    State(state): State<Arc<AppState>>,
+) -> Json<ApiResponse<crate::log::CostStats>> {
     let stats = state.logger.cost_stats().await;
-    Json(stats)
+    Json(ApiResponse::ok(stats))
 }
 
 pub async fn get_quota(
@@ -61,9 +63,9 @@ pub async fn get_quota(
 pub async fn get_usage_history(
     Query(params): Query<UsageParams>,
     State(state): State<Arc<AppState>>,
-) -> Json<crate::log::UsageHistory> {
+) -> Json<ApiResponse<crate::log::UsageHistory>> {
     let history = state.logger.usage_history(params.hours).await;
-    Json(history)
+    Json(ApiResponse::ok(history))
 }
 
 // ─── Operational Endpoints ────────────────────────────
@@ -72,7 +74,7 @@ pub async fn get_usage_history(
 pub async fn reset_circuit(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
-) -> Result<axum::response::Response, axum::response::Response> {
+) -> Result<Json<ApiResponse<serde_json::Value>>, axum::response::Response> {
     let channel = state
         .channel_mgr
         .get(id)
@@ -81,28 +83,30 @@ pub async fn reset_circuit(
 
     state.channel_mgr.force_recover(id).await;
 
-    Ok(Json(serde_json::json!({
+    Ok(Json(ApiResponse::ok(serde_json::json!({
         "id": channel.id,
         "name": channel.name,
         "status": "healthy",
         "message": "Circuit breaker reset"
-    }))
-    .into_response())
+    }))))
 }
 
 /// Flush all cached responses.
-pub async fn flush_cache(State(state): State<Arc<AppState>>) -> axum::response::Response {
+pub async fn flush_cache(
+    State(state): State<Arc<AppState>>,
+) -> Json<ApiResponse<serde_json::Value>> {
     state.cache.request_cache.flush();
     let count = state.cache.request_cache.len();
-    Json(serde_json::json!({
+    Json(ApiResponse::ok(serde_json::json!({
         "flushed": true,
         "remaining": count
-    }))
-    .into_response()
+    })))
 }
 
 /// Reload configuration from disk and update channels.
-pub async fn reload_config(State(state): State<Arc<AppState>>) -> axum::response::Response {
+pub async fn reload_config(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, axum::response::Response> {
     match crate::config::AppConfig::load() {
         Ok(new_config) => {
             let channels = state.channel_mgr.list().await;
@@ -173,18 +177,20 @@ pub async fn reload_config(State(state): State<Arc<AppState>>) -> axum::response
             tracing::info!(
                 "Config reload: {updated} updated, {created} created, {removed} removed"
             );
-            Json(serde_json::json!({
+            Ok(Json(ApiResponse::ok(serde_json::json!({
                 "reloaded": true,
                 "updated": updated,
                 "created": created,
                 "removed": removed
-            }))
-            .into_response()
+            }))))
         }
         Err(e) => {
             tracing::error!("Config reload failed: {}", e);
-            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to reload config")
-                .into_response()
+            Err(ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to reload config",
+            )
+            .into_response())
         }
     }
 }

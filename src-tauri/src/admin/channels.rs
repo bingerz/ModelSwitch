@@ -72,7 +72,7 @@ fn default_credential_type() -> String {
 pub async fn create_channel(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateChannelRequest>,
-) -> Result<axum::response::Response, axum::response::Response> {
+) -> Result<Json<ApiResponse<Channel>>, axum::response::Response> {
     let cred_type = match req.credential_type.as_str() {
         "web_session" => CredentialType::WebSession,
         _ => CredentialType::ApiKey,
@@ -127,14 +127,14 @@ pub async fn create_channel(
 
     let created = state.channel_mgr.create(channel).await;
     state.channel_mgr.persist().await;
-    Ok((StatusCode::CREATED, Json(created)).into_response())
+    Ok(Json(ApiResponse::ok(created)))
 }
 
 pub async fn update_channel(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateChannelRequest>,
-) -> Result<axum::response::Response, axum::response::Response> {
+) -> Result<Json<ApiResponse<Channel>>, axum::response::Response> {
     let mut existing = state
         .channel_mgr
         .get(id)
@@ -184,7 +184,7 @@ pub async fn update_channel(
     match result {
         Some(channel) => {
             state.channel_mgr.persist().await;
-            Ok(Json(channel).into_response())
+            Ok(Json(ApiResponse::ok(channel)))
         }
         None => Err(ApiError::new(StatusCode::NOT_FOUND, "Channel not found")),
     }
@@ -216,7 +216,7 @@ pub async fn delete_channel(
 pub async fn ping_channel(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
-) -> Result<axum::response::Response, axum::response::Response> {
+) -> Result<Json<ApiResponse<serde_json::Value>>, axum::response::Response> {
     let channel = state
         .channel_mgr
         .get(id)
@@ -261,39 +261,36 @@ pub async fn ping_channel(
         Ok(r) => {
             let latency = start.elapsed().as_millis() as u64;
             let success = r.status().is_success();
-            Ok(Json(serde_json::json!({
+            Ok(Json(ApiResponse::ok(serde_json::json!({
                 "success": success,
                 "status": r.status().as_u16(),
                 "latency_ms": latency,
-            }))
-            .into_response())
+            }))))
         }
-        Err(e) => Ok(Json(serde_json::json!({
+        Err(e) => Ok(Json(ApiResponse::ok(serde_json::json!({
             "success": false,
             "error": e.to_string(),
-        }))
-        .into_response()),
+        })))),
     }
 }
 
 pub async fn channel_status(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
-) -> Result<axum::response::Response, axum::response::Response> {
+) -> Result<Json<ApiResponse<serde_json::Value>>, axum::response::Response> {
     let channel = state
         .channel_mgr
         .get(id)
         .await
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Channel not found"))?;
 
-    Ok(Json(serde_json::json!({
+    Ok(Json(ApiResponse::ok(serde_json::json!({
         "id": channel.id,
         "name": channel.name,
         "status": channel.status,
         "enabled": channel.enabled,
         "circuit_open_until": channel.circuit_open_until,
-    }))
-    .into_response())
+    }))))
 }
 
 /// Set payload rules for a channel at runtime.
@@ -301,7 +298,7 @@ pub async fn set_payload_rules(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     Json(rules): Json<crate::config::PayloadRulesConfig>,
-) -> Result<axum::response::Response, axum::response::Response> {
+) -> Result<Json<ApiResponse<serde_json::Value>>, axum::response::Response> {
     // Verify channel exists
     state
         .channel_mgr
@@ -319,9 +316,8 @@ pub async fn set_payload_rules(
         },
     );
 
-    Ok(Json(serde_json::json!({
+    Ok(Json(ApiResponse::ok(serde_json::json!({
         "channel_id": id,
         "updated": true
-    }))
-    .into_response())
+    }))))
 }
