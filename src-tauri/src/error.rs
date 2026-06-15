@@ -66,6 +66,43 @@ struct GatewayErrorDetail {
     code: String,
 }
 
+impl GatewayError {
+    /// Returns a client-safe message that omits internal details.
+    ///
+    /// Only client-actionable variants (channel not found, rate limited, payload
+    /// rejected, etc.) include the full error text. Internal variants (upstream
+    /// body, config, io, internal) return a generic description to prevent
+    /// information disclosure.
+    fn safe_message(&self) -> String {
+        match self {
+            // Client-actionable — safe to expose details
+            GatewayError::ChannelNotFound(_)
+            | GatewayError::NoHealthyChannel(_)
+            | GatewayError::AllChannelsExhausted(_)
+            | GatewayError::RateLimited
+            | GatewayError::PayloadRejected(_)
+            | GatewayError::Timeout(_) => self.to_string(),
+
+            // Credential/key errors — omit the detail string
+            GatewayError::Credential(_) => "authentication or credential error".into(),
+            GatewayError::VirtualKey(_) => "virtual key error".into(),
+
+            // Upstream — expose status but not the body
+            GatewayError::Upstream { status, .. } => {
+                format!("upstream returned status {status}")
+            }
+
+            // Internal system errors — generic message only
+            GatewayError::Connection(_) => "upstream connection error".into(),
+            GatewayError::Config(_) => "configuration error".into(),
+            GatewayError::Mcp(_) => "MCP server error".into(),
+            GatewayError::Io(_) => "internal I/O error".into(),
+            GatewayError::Internal(_) => "internal server error".into(),
+            GatewayError::Quota(_) => "quota or billing limit exceeded".into(),
+        }
+    }
+}
+
 /// Maps each `GatewayError` variant to an HTTP status code and error code string.
 impl IntoResponse for GatewayError {
     fn into_response(self) -> Response {
@@ -98,7 +135,7 @@ impl IntoResponse for GatewayError {
                     StatusCode::BAD_GATEWAY,
                     axum::Json(GatewayErrorBody {
                         error: GatewayErrorDetail {
-                            message: self.to_string(),
+                            message: self.safe_message(),
                             code: code.to_string(),
                         },
                     }),
@@ -125,7 +162,7 @@ impl IntoResponse for GatewayError {
             status,
             axum::Json(GatewayErrorBody {
                 error: GatewayErrorDetail {
-                    message: self.to_string(),
+                    message: self.safe_message(),
                     code: code.to_string(),
                 },
             }),
