@@ -20,7 +20,7 @@ use crate::config::{AppConfig, ChannelConfig, GatewayConfig, SanitizerConfig};
 use crate::credential::{create_credential_store, SharedCredentialStore};
 use crate::log::DispatchLogger;
 use crate::mcp::McpManager;
-use crate::proxy::cache::{InFlightRequests, RequestCache};
+use crate::proxy::cache::{CacheMode, InFlightRequests, RequestCache};
 use crate::proxy::openai::{
     AppState, BillingState, CacheState, GatewayParams, LimitsState, McpState, RouterState,
     SecurityState,
@@ -130,7 +130,11 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
         .expect("Failed to build HTTP client");
 
     let active_requests = Arc::new(ActiveRequests::new());
-    let request_cache = Arc::new(RequestCache::new(Duration::from_secs(300), 1000));
+    let request_cache = Arc::new(RequestCache::new(
+        Duration::from_secs(300),
+        1000,
+        CacheMode::On,
+    ));
     let in_flight = Arc::new(InFlightRequests::new());
     let payload_rules = Arc::new(ChannelPayloadRules::new());
     let rate_limiter = Arc::new(RateLimiter::new(None));

@@ -10,7 +10,7 @@ use crate::log::DispatchLogger;
 use crate::mcp::McpManager;
 use crate::middleware;
 use crate::proxy;
-use crate::proxy::cache::{InFlightRequests, RequestCache};
+use crate::proxy::cache::{CacheMode, InFlightRequests, RequestCache};
 use crate::proxy::openai::{
     AppState, BillingState, CacheState, GatewayParams, LimitsState, McpState, RouterState,
     SecurityState,
@@ -85,9 +85,12 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     // Build shared components
     let active_requests = Arc::new(ActiveRequests::new());
     let latency_tracker = Arc::new(crate::router::latency_tracker::LatencyTracker::new());
+    let cache_mode = CacheMode::from_str(&config.gateway.cache_mode);
+    tracing::info!(cache_mode = ?cache_mode, "Request cache mode");
     let request_cache = Arc::new(RequestCache::new(
         std::time::Duration::from_secs(config.gateway.cache_ttl_secs),
         config.gateway.max_cache_entries,
+        cache_mode,
     ));
     let payload_rules = Arc::new(ChannelPayloadRules::new());
     let rate_limiter = Arc::new(RateLimiter::new(None));

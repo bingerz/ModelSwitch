@@ -94,6 +94,9 @@ pub struct GatewayConfig {
     /// Maximum number of cached responses (default 1000).
     #[serde(default = "default_max_cache_entries")]
     pub max_cache_entries: usize,
+    /// Cache mode: "on", "off", "readonly", or "writeonly" (default "on").
+    #[serde(default = "default_cache_mode")]
+    pub cache_mode: String,
     /// HTTP client timeout in seconds (default 300).
     #[serde(default = "default_http_timeout_secs")]
     pub http_timeout_secs: u64,
@@ -281,6 +284,9 @@ fn default_cache_ttl_secs() -> u64 {
 fn default_max_cache_entries() -> usize {
     1000
 }
+fn default_cache_mode() -> String {
+    "on".to_string()
+}
 fn default_http_timeout_secs() -> u64 {
     300
 }
@@ -329,6 +335,7 @@ impl Default for GatewayConfig {
             stream_keepalive_secs: None,
             cache_ttl_secs: default_cache_ttl_secs(),
             max_cache_entries: default_max_cache_entries(),
+            cache_mode: default_cache_mode(),
             http_timeout_secs: default_http_timeout_secs(),
             affinity_ttl_secs: default_affinity_ttl_secs(),
             log_max_entries: default_log_max_entries(),

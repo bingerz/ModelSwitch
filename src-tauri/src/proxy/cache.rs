@@ -2,6 +2,42 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Controls cache read/write behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CacheMode {
+    /// Cache is fully enabled (read + write).
+    #[default]
+    On,
+    /// Cache is disabled entirely.
+    Off,
+    /// Read from cache but do not write new entries.
+    ReadOnly,
+    /// Write to cache but do not serve cached responses.
+    WriteOnly,
+}
+
+impl CacheMode {
+    /// Whether cached responses should be served.
+    pub fn can_read(&self) -> bool {
+        matches!(self, Self::On | Self::ReadOnly)
+    }
+
+    /// Whether new responses should be cached.
+    pub fn can_write(&self) -> bool {
+        matches!(self, Self::On | Self::WriteOnly)
+    }
+
+    /// Parse a cache mode from a configuration string.
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "off" | "disabled" | "false" => Self::Off,
+            "readonly" | "read-only" | "ro" => Self::ReadOnly,
+            "writeonly" | "write-only" | "wo" => Self::WriteOnly,
+            _ => Self::On,
+        }
+    }
+}
+
 /// A simple in-memory request cache with bounded size.
 /// Caches non-streaming requests by hash of model + body (excluding stream field).
 pub struct RequestCache {
@@ -10,6 +46,7 @@ pub struct RequestCache {
     order: Mutex<Vec<u128>>,
     ttl: Duration,
     max_entries: usize,
+    mode: CacheMode,
 }
 
 struct CacheEntry {
@@ -20,13 +57,14 @@ struct CacheEntry {
 }
 
 impl RequestCache {
-    /// Create a new cache with the given TTL and max entries.
-    pub fn new(ttl: Duration, max_entries: usize) -> Self {
+    /// Create a new cache with the given TTL, max entries, and cache mode.
+    pub fn new(ttl: Duration, max_entries: usize, mode: CacheMode) -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
             order: Mutex::new(Vec::new()),
             ttl,
             max_entries,
+            mode,
         }
     }
 
@@ -51,6 +89,9 @@ impl RequestCache {
     /// The `key_material` is compared against the stored material to eliminate false positives
     /// from `u128` hash collisions.
     pub fn get(&self, key: u128, key_material: &str) -> Option<String> {
+        if !self.mode.can_read() {
+            return None;
+        }
         let mut guard = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         let mut order = self.order.lock().unwrap_or_else(|e| e.into_inner());
         // Clean expired entries on every read
@@ -78,6 +119,9 @@ impl RequestCache {
 
     /// Insert a response into the cache.
     pub fn insert(&self, key: u128, key_material: String, response_body: String) {
+        if !self.mode.can_write() {
+            return;
+        }
         let mut guard = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         let mut order = self.order.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -120,6 +164,11 @@ impl RequestCache {
         guard.clear();
         order.clear();
     }
+
+    /// Returns the current cache mode.
+    pub fn mode(&self) -> CacheMode {
+        self.mode
+    }
 }
 
 /// Compute the canonical string used for cache keying (model + body without stream field).
@@ -136,7 +185,7 @@ fn canonical_key_material(model: &str, body: &serde_json::Value) -> String {
 /// Default TTL: 5 minutes, max 1000 entries
 impl Default for RequestCache {
     fn default() -> Self {
-        Self::new(Duration::from_secs(300), 1000)
+        Self::new(Duration::from_secs(300), 1000, CacheMode::default())
     }
 }
 
@@ -240,7 +289,7 @@ mod tests {
 
     #[test]
     fn evicts_oldest_when_over_capacity() {
-        let cache = RequestCache::new(Duration::from_secs(300), 3);
+        let cache = RequestCache::new(Duration::from_secs(300), 3, CacheMode::On);
         cache.insert(1u128, "mat_1".to_string(), "a".to_string());
         cache.insert(2u128, "mat_2".to_string(), "b".to_string());
         cache.insert(3u128, "mat_3".to_string(), "c".to_string());
@@ -255,7 +304,7 @@ mod tests {
 
     #[test]
     fn update_existing_key_preserves_capacity() {
-        let cache = RequestCache::new(Duration::from_secs(300), 2);
+        let cache = RequestCache::new(Duration::from_secs(300), 2, CacheMode::On);
         cache.insert(1u128, "mat_1".to_string(), "a".to_string());
         cache.insert(2u128, "mat_2".to_string(), "b".to_string());
         cache.insert(1u128, "mat_1".to_string(), "updated".to_string());
@@ -295,5 +344,63 @@ mod tests {
         // Lookup with same material -> should hit
         let result = cache.get(42u128, "request_A_material");
         assert_eq!(result, Some("response_A".to_string()));
+    }
+
+    #[test]
+    fn cache_mode_read_only_serves_but_doesnt_write() {
+        let cache = RequestCache::new(Duration::from_secs(300), 10, CacheMode::ReadOnly);
+        // Can't write in ReadOnly mode
+        cache.insert(1u128, "mat".to_string(), "response".to_string());
+        assert_eq!(cache.len(), 0);
+        // Can't read either since nothing was written
+        assert!(cache.get(1u128, "mat").is_none());
+    }
+
+    #[test]
+    fn cache_mode_write_only_writes_but_doesnt_serve() {
+        let cache = RequestCache::new(Duration::from_secs(300), 10, CacheMode::WriteOnly);
+        // Can write
+        cache.insert(1u128, "mat".to_string(), "response".to_string());
+        assert_eq!(cache.len(), 1);
+        // Can't read in WriteOnly mode
+        assert!(cache.get(1u128, "mat").is_none());
+    }
+
+    #[test]
+    fn cache_mode_off_disables_everything() {
+        let cache = RequestCache::new(Duration::from_secs(300), 10, CacheMode::Off);
+        cache.insert(1u128, "mat".to_string(), "response".to_string());
+        assert_eq!(cache.len(), 0);
+        assert!(cache.get(1u128, "mat").is_none());
+    }
+
+    #[test]
+    fn cache_mode_from_str_parses_correctly() {
+        assert_eq!(CacheMode::from_str("on"), CacheMode::On);
+        assert_eq!(CacheMode::from_str("off"), CacheMode::Off);
+        assert_eq!(CacheMode::from_str("readonly"), CacheMode::ReadOnly);
+        assert_eq!(CacheMode::from_str("read-only"), CacheMode::ReadOnly);
+        assert_eq!(CacheMode::from_str("ro"), CacheMode::ReadOnly);
+        assert_eq!(CacheMode::from_str("writeonly"), CacheMode::WriteOnly);
+        assert_eq!(CacheMode::from_str("write-only"), CacheMode::WriteOnly);
+        assert_eq!(CacheMode::from_str("wo"), CacheMode::WriteOnly);
+        assert_eq!(CacheMode::from_str("disabled"), CacheMode::Off);
+        assert_eq!(CacheMode::from_str("false"), CacheMode::Off);
+        assert_eq!(CacheMode::from_str("invalid"), CacheMode::On);
+    }
+
+    #[test]
+    fn cache_mode_getter_returns_correct_mode() {
+        let on = RequestCache::new(Duration::from_secs(300), 10, CacheMode::On);
+        assert_eq!(on.mode(), CacheMode::On);
+
+        let off = RequestCache::new(Duration::from_secs(300), 10, CacheMode::Off);
+        assert_eq!(off.mode(), CacheMode::Off);
+
+        let ro = RequestCache::new(Duration::from_secs(300), 10, CacheMode::ReadOnly);
+        assert_eq!(ro.mode(), CacheMode::ReadOnly);
+
+        let wo = RequestCache::new(Duration::from_secs(300), 10, CacheMode::WriteOnly);
+        assert_eq!(wo.mode(), CacheMode::WriteOnly);
     }
 }
