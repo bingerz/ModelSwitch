@@ -98,6 +98,19 @@ pub fn json_response(status: StatusCode, body: String) -> Response {
         .unwrap()
 }
 
+/// Create an SSE response containing a single JSON chunk followed by [DONE].
+/// Used when the MCP tool loop completes and the client originally requested streaming.
+pub fn sse_single_chunk_response(status: StatusCode, body_json: &str) -> Response {
+    let sse_body = format!("data: {}\n\ndata: [DONE]\n\n", body_json);
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .body(Body::from(sse_body))
+        .unwrap()
+}
+
 /// Create the "all channels rate limited" error response.
 pub fn all_channels_exhausted_response() -> Response {
     let body = serde_json::json!({

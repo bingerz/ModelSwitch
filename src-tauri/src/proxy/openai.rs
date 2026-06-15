@@ -128,7 +128,7 @@ pub async fn handle_chat_completions(
     }
 
     // Force non-streaming for internal loop iterations.
-    let _was_streaming = current_body
+    let was_streaming = current_body
         .get("stream")
         .and_then(|s| s.as_bool())
         .unwrap_or(false);
@@ -163,6 +163,13 @@ pub async fn handle_chat_completions(
                     "MCP tool loop completed, returning final response"
                 );
             }
+            if was_streaming {
+                tracing::info!(iteration, "MCP loop completed, returning as SSE stream");
+                return crate::proxy::stream::sse_single_chunk_response(
+                    status,
+                    &response_body.to_string(),
+                );
+            }
             return json_response(status, response_body.to_string());
         }
 
@@ -184,6 +191,11 @@ pub async fn handle_chat_completions(
     if let Some(obj) = current_body.as_object_mut() {
         obj.remove("tools");
         obj.remove("tool_choice");
+        // Restore the client's original streaming preference so the final
+        // response is delivered as SSE if they asked for it.
+        if was_streaming {
+            obj.insert("stream".to_string(), json!(true));
+        }
     }
     dispatch(&state, &headers, &current_body, &proxy_config).await
 }
