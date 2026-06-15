@@ -9,6 +9,7 @@ use crate::proxy::cache::RequestCache;
 use crate::proxy::stream::{all_channels_exhausted_response, json_response};
 use crate::router;
 use crate::router::RoutingContext;
+use crate::virtual_key::ReserveResult;
 
 use super::attempt::{try_channel_attempt, AttemptOutcome};
 use super::request_meta::{
@@ -135,11 +136,28 @@ pub(crate) async fn dispatch(
         let est_tokens = estimate_tokens(body, is_stream);
         // Rough estimate: ~$0.01 per 1000 tokens as a conservative default
         let estimated_cost_cents = (est_tokens as f64 / 1000.0 * 0.01 * 100.0) as u64 + 1;
-        reserved_cents = state
+        match state
             .billing
             .virtual_key_store
             .reserve_spend(vk, estimated_cost_cents)
-            .await;
+            .await
+        {
+            ReserveResult::Exceeded => {
+                let error_body = serde_json::json!({
+                    "error": {
+                        "message": "Virtual key budget exceeded. Please increase your budget limit or try again later.",
+                        "type": "budget_exceeded",
+                        "code": "virtual_key_budget_exceeded"
+                    }
+                });
+                return json_response(
+                    reqwest::StatusCode::PAYMENT_REQUIRED,
+                    error_body.to_string(),
+                );
+            }
+            ReserveResult::NoBudget => {}
+            ReserveResult::Reserved(n) => reserved_cents = n,
+        }
     }
 
     let max_retries = state.gateway.max_retries;
