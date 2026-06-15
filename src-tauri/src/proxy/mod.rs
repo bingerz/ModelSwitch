@@ -11,6 +11,7 @@ pub mod translate;
 mod attempt;
 mod dispatch;
 mod request_meta;
+mod response;
 mod usage;
 
 #[cfg(test)]
