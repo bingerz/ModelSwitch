@@ -1,6 +1,5 @@
 /// Baidu Qianfan coding plan scraping script.
 /// Fetches console.bce.baidu.com/api/qianfan/charge/codingPlan/resourceList.
-
 pub const BAIDU_CODING_PLAN_SCRIPT: &str = r#"
 (async () => {
   try {

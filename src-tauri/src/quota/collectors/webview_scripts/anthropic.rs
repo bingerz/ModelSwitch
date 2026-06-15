@@ -1,6 +1,5 @@
 /// Anthropic OAuth usage scraping script.
 /// Fetches console.anthropic.com/api/oauth/usage with session cookies.
-
 /// JavaScript to inject into the Anthropic console WebView.
 /// Navigates to the OAuth usage API and extracts 5h/7d utilization data.
 pub const ANTHROPIC_USAGE_SCRIPT: &str = r#"

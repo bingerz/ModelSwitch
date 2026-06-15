@@ -69,8 +69,10 @@ impl ServerHandler for McpGatewayHandler {
                 })
                 .collect();
 
-            let mut result = ListToolsResult::default();
-            result.tools = tools;
+            let result = ListToolsResult {
+                tools,
+                ..Default::default()
+            };
             Ok(result)
         }
     }

@@ -14,6 +14,7 @@ pub struct ApiErrorDetail {
 }
 
 impl ApiError {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(status: StatusCode, message: impl Into<String>) -> Response {
         let code = match status {
             StatusCode::UNAUTHORIZED => "invalid_api_key",

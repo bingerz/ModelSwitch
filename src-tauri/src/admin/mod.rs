@@ -43,3 +43,12 @@ pub use channels::*;
 pub use mcp::*;
 pub use system::*;
 pub use virtual_keys::*;
+
+/// Paginated response wrapper with total count.
+#[derive(serde::Serialize)]
+pub struct PaginatedResponse<T: serde::Serialize> {
+    pub data: T,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+}

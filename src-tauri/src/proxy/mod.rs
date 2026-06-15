@@ -33,6 +33,7 @@ pub fn upstream_url(channel: &Channel, path: &str) -> String {
 }
 
 /// Build a DispatchLog entry.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn make_log(
     model: &str,
     channel_id: Uuid,
@@ -71,11 +72,12 @@ pub(crate) fn make_log(
 
 /// Validate required fields in a chat completion request.
 /// Returns OpenAI-compatible 400 error if validation fails.
+#[allow(clippy::result_large_err)]
 pub(crate) fn validate_chat_request(body: &Value) -> Result<(), Response> {
     if body
         .get("model")
         .and_then(|m| m.as_str())
-        .map_or(true, |s| s.is_empty())
+        .is_none_or(|s| s.is_empty())
     {
         return Err(json_response(StatusCode::BAD_REQUEST, serde_json::json!({
             "error": { "message": "Missing required field: model", "type": "invalid_request_error", "code": "missing_model" }
@@ -84,7 +86,7 @@ pub(crate) fn validate_chat_request(body: &Value) -> Result<(), Response> {
     if body
         .get("messages")
         .and_then(|m| m.as_array())
-        .map_or(true, |a| a.is_empty())
+        .is_none_or(|a| a.is_empty())
     {
         return Err(json_response(StatusCode::BAD_REQUEST, serde_json::json!({
             "error": { "message": "Missing required field: messages", "type": "invalid_request_error", "code": "missing_messages" }
@@ -107,24 +109,22 @@ fn estimate_tokens(body: &Value, _is_stream: bool) -> u64 {
             m.as_array().map(|arr| {
                 arr.iter()
                     .filter_map(|msg| {
-                        msg.get("content").and_then(|c| {
+                        msg.get("content").map(|c| {
                             if let Some(s) = c.as_str() {
-                                Some(s.len())
+                                s.len()
                             } else {
-                                Some(
-                                    c.as_array()
-                                        .map(|blocks| {
-                                            blocks
-                                                .iter()
-                                                .filter_map(|b| {
-                                                    b.get("text")
-                                                        .and_then(|t| t.as_str())
-                                                        .map(|t| t.len())
-                                                })
-                                                .sum::<usize>()
-                                        })
-                                        .unwrap_or(0),
-                                )
+                                c.as_array()
+                                    .map(|blocks| {
+                                        blocks
+                                            .iter()
+                                            .filter_map(|b| {
+                                                b.get("text")
+                                                    .and_then(|t| t.as_str())
+                                                    .map(|t| t.len())
+                                            })
+                                            .sum::<usize>()
+                                    })
+                                    .unwrap_or(0)
                             }
                         })
                     })

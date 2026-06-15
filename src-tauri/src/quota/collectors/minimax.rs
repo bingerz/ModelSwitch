@@ -84,7 +84,7 @@ impl QuotaProvider for MiniMaxCollector {
 
         // balance is the usable dollar-equivalent amount
         // limit is total capacity, usage is consumed amount
-        let quota_balance = balance.or_else(|| remaining);
+        let quota_balance = balance.or(remaining);
         let quota_limit = total;
         let quota_usage = used;
 

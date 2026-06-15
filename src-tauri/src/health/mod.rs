@@ -23,7 +23,7 @@ pub fn start_health_checker(
 
                 let start = std::time::Instant::now();
                 let api_key = channel_mgr.get_credential(ch.id).await;
-                let healthy = probe::probe_channel(&http_client, &ch, api_key.as_deref()).await;
+                let healthy = probe::probe_channel(&http_client, ch, api_key.as_deref()).await;
                 let latency = start.elapsed().as_millis() as u64;
 
                 if healthy {

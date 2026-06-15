@@ -1,6 +1,5 @@
 /// DouBao / Volcengine Ark quota scraping script.
 /// Fetches usage/quota data from the Volcengine Ark console using session cookies.
-
 pub const DOUBAO_USAGE_SCRIPT: &str = r#"
 (async () => {
   try {

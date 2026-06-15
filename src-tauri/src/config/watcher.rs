@@ -86,7 +86,7 @@ pub fn start_config_watcher(
                                         let _ = channel_mgr.update(id, updated).await;
                                     } else {
                                         // New channel — create it
-                                        let new_channel = Channel::from_config(&cc);
+                                        let new_channel = Channel::from_config(cc);
                                         let _ = channel_mgr.create(new_channel).await;
                                     }
                                 }

@@ -244,7 +244,7 @@ pub async fn handle_list_models(State(state): State<Arc<AppState>>) -> axum::res
         if !ch.enabled {
             continue;
         }
-        for (alias, _) in &ch.model_mapping {
+        for alias in ch.model_mapping.keys() {
             if seen.insert(alias.clone()) {
                 models.push(serde_json::json!({
                     "id": alias,

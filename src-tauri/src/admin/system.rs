@@ -28,9 +28,15 @@ pub struct UsageParams {
 pub async fn get_logs(
     State(state): State<Arc<AppState>>,
     Query(params): Query<PaginationParams>,
-) -> Json<Vec<DispatchLog>> {
+) -> Json<super::PaginatedResponse<Vec<DispatchLog>>> {
     let logs = state.logger.list(params.offset, params.limit).await;
-    Json(logs)
+    let total = state.logger.total().await;
+    Json(super::PaginatedResponse {
+        data: logs,
+        total,
+        offset: params.offset,
+        limit: params.limit,
+    })
 }
 
 pub async fn get_stats(
@@ -130,7 +136,7 @@ pub async fn reload_config(State(state): State<Arc<AppState>>) -> axum::response
                     let _ = state.channel_mgr.update(id, ch).await;
                     updated += 1;
                 } else {
-                    let new_channel = Channel::from_config(&cc);
+                    let new_channel = Channel::from_config(cc);
                     let _ = state.channel_mgr.create(new_channel).await;
                     created += 1;
                 }

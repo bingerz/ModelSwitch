@@ -21,7 +21,7 @@ pub fn sse_stream_response_with_telemetry(
         let bytes = match result {
             Ok(b) => b,
             Err(e) => {
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
+                return Err(std::io::Error::other(e));
             }
         };
 
@@ -147,10 +147,10 @@ pub fn keepalive_stream(
                     }
                 }
                 _ = ticker.tick() => {
-                    if !data_sent {
-                        if tx.send(Ok(Bytes::from(": ping\n\n"))).await.is_err() {
-                            break;
-                        }
+                    if !data_sent
+                        && tx.send(Ok(Bytes::from(": ping\n\n"))).await.is_err()
+                    {
+                        break;
                     }
                     data_sent = false;
                 }
@@ -163,6 +163,7 @@ pub fn keepalive_stream(
 
 /// Check if an SSE data line contains an error indicator.
 /// Returns Some(reason) if an error is detected, None otherwise.
+#[allow(dead_code)]
 pub fn detect_sse_error(data: &str) -> Option<String> {
     let trimmed = data.trim();
     if trimmed.is_empty() || trimmed == "[DONE]" {
@@ -192,6 +193,7 @@ pub fn detect_sse_error(data: &str) -> Option<String> {
 }
 
 /// Build an SSE error event payload for mid-stream errors.
+#[allow(dead_code)]
 pub fn sse_error_event(message: &str) -> Bytes {
     let escaped = message.replace('"', "\\\"");
     Bytes::from(format!(

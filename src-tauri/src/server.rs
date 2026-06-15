@@ -429,7 +429,7 @@ pub async fn start_gateway(
     state: Arc<AppState>,
     host: &str,
     port: u16,
-    drain_timeout_secs: u64,
+    _drain_timeout_secs: u64,
     shutdown_notify: Option<Arc<Notify>>,
     bind_notify: Option<oneshot::Sender<Result<(), String>>>,
 ) {

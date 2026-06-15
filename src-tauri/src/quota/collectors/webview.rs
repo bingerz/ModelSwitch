@@ -6,7 +6,6 @@
 
 use crate::quota::collectors::webview_scripts;
 
-use crate::quota::QuotaGroup;
 use crate::quota::QuotaInfo;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,12 +13,15 @@ use tokio::sync::{oneshot, Mutex};
 use uuid::Uuid;
 
 /// Maximum number of concurrent WebViews.
+#[allow(dead_code)]
 const MAX_ACTIVE_WEBVIEWS: usize = 3;
 
 /// Pending result receivers keyed by a unique scrape ID.
+#[allow(dead_code)]
 type PendingMap = Arc<Mutex<HashMap<String, oneshot::Sender<WebViewQuotaResult>>>>;
 
 /// Result from a WebView scrape operation.
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct WebViewQuotaResult {
     pub provider: String,
@@ -31,11 +33,13 @@ pub struct WebViewQuotaResult {
 }
 
 /// Manages WebView-based quota scraping sessions.
+#[allow(dead_code)]
 pub struct WebViewManager {
     pending: PendingMap,
     active_count: Arc<Mutex<usize>>,
 }
 
+#[allow(dead_code)]
 impl WebViewManager {
     pub fn new() -> Self {
         Self {
@@ -76,7 +80,7 @@ impl WebViewManager {
         let result = self
             .run_webview_scrape(
                 "https://console.anthropic.com",
-                &webview_scripts::anthropic::ANTHROPIC_USAGE_SCRIPT,
+                webview_scripts::anthropic::ANTHROPIC_USAGE_SCRIPT,
                 app,
             )
             .await;
@@ -121,8 +125,8 @@ impl WebViewManager {
     /// Open a hidden WebView, inject JS, and wait for result via event.
     async fn run_webview_scrape(
         &self,
-        url: &str,
-        script: &str,
+        _url: &str,
+        _script: &str,
         _app: &tauri::AppHandle,
     ) -> Option<WebViewQuotaResult> {
         let (tx, rx) = oneshot::channel();
@@ -154,6 +158,7 @@ impl WebViewManager {
 }
 
 /// Helper trait for QuotaInfo builder pattern.
+#[allow(dead_code)]
 trait QuotaInfoExt {
     fn with_error(self, msg: &str) -> Self;
 }

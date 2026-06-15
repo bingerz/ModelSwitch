@@ -69,7 +69,7 @@ impl QuotaProvider for OpenAiCompatCollector {
 
         // Fetch usage for current month
         let now = chrono::Utc::now();
-        let start_date = format!("{}-{:02}-01", now.format("%Y").to_string(), now.month());
+        let start_date = format!("{}-{:02}-01", now.format("%Y"), now.month());
         let end_date = now.format("%Y-%m-%d").to_string();
 
         let usage_paths = [

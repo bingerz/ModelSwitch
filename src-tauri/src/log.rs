@@ -1,7 +1,7 @@
 use chrono::{DateTime, Timelike, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -146,6 +146,11 @@ impl DispatchLogger {
             .collect()
     }
 
+    /// Total number of log entries stored.
+    pub async fn total(&self) -> usize {
+        self.logs.read().await.len()
+    }
+
     pub async fn stats(&self) -> DispatchStats {
         let logs = self.logs.read().await;
         let total = logs.len();
@@ -273,7 +278,7 @@ impl DispatchLogger {
 
 // Private helpers for file persistence
 impl DispatchLogger {
-    async fn ensure_parent_dir(path: &PathBuf) -> std::io::Result<()> {
+    async fn ensure_parent_dir(path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
@@ -329,7 +334,7 @@ impl DispatchLogger {
         Ok(())
     }
 
-    fn rotated_path(path: &PathBuf) -> PathBuf {
+    fn rotated_path(path: &Path) -> PathBuf {
         path.with_extension("ndjson.1")
     }
 }

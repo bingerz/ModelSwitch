@@ -1,4 +1,3 @@
-use crate::channel::manager::ChannelManager;
 use crate::proxy::openai::AppState;
 use crate::quota::collectors::webview_scripts::aliyun::ALIYUN_BAILIAN_SCRIPT;
 use crate::quota::collectors::webview_scripts::anthropic::{
@@ -6,9 +5,9 @@ use crate::quota::collectors::webview_scripts::anthropic::{
 };
 use crate::quota::collectors::webview_scripts::baidu::BAIDU_CODING_PLAN_SCRIPT;
 use crate::quota::collectors::webview_scripts::doubao::DOUBAO_USAGE_SCRIPT;
-use crate::quota::{QuotaGroup, QuotaInfo, QuotaItem, SharedQuotaStore};
+use crate::quota::{QuotaInfo, QuotaItem};
 use std::sync::Arc;
-use tauri::{Listener, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Listener, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::oneshot;
 
 /// Try to extract an f64 from a JSON value — accept either a number or a numeric string.
@@ -128,7 +127,7 @@ fn parse_baidu_result(
             .and_then(value_as_f64)
             .unwrap_or(0.0);
         let total = res.get("totalAmount").and_then(value_as_f64).unwrap_or(0.0);
-        let used = res.get("usedAmount").and_then(value_as_f64).unwrap_or(0.0);
+        let _used = res.get("usedAmount").and_then(value_as_f64).unwrap_or(0.0);
 
         total_remain += remain;
         total_amount += total;

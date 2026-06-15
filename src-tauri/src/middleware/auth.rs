@@ -13,8 +13,7 @@ fn verify_bearer_token(header_value: &str, expected: &str) -> bool {
         return false;
     }
     use subtle::ConstantTimeEq;
-    header_value[7..]
-        .as_bytes()
+    header_value.as_bytes()[7..]
         .ct_eq(expected.as_bytes())
         .into()
 }

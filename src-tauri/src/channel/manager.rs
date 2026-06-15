@@ -17,7 +17,7 @@ impl ChannelManager {
         let channels: Vec<Channel> = config
             .channels
             .iter()
-            .map(|c| Channel::from_config(c))
+            .map(Channel::from_config)
             .collect();
 
         Self {

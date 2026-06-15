@@ -1,7 +1,6 @@
 /// Passive rate-limit header extraction from upstream responses.
 /// Supports both `x-ratelimit-*` (OpenAI/Azure/pipeLLM) and
 /// `anthropic-ratelimit-*` header prefixes.
-
 /// Extracted rate-limit data from response headers.
 #[derive(Debug, Clone, Default)]
 pub struct QuotaHeaders {

@@ -13,6 +13,12 @@ pub struct FileCredentialStore {
     cache: RwLock<HashMap<String, String>>,
 }
 
+impl Default for FileCredentialStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FileCredentialStore {
     pub fn new() -> Self {
         let path = app_config_dir().join("credentials.toml");

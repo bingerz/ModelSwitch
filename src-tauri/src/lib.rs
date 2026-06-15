@@ -160,7 +160,7 @@ pub fn run() {
                 // Open DevTools in debug builds to help diagnose rendering issues
                 #[cfg(debug_assertions)]
                 {
-                    let _ = window.open_devtools();
+                    window.open_devtools();
                 }
             }
 

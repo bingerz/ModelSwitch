@@ -261,11 +261,11 @@ impl InFlightRequests {
     /// or `false` if another request is already in flight (caller should wait).
     pub fn register(&self, key: u64) -> bool {
         let mut guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
-        if guard.contains_key(&key) {
-            false
-        } else {
-            guard.insert(key, Arc::new(tokio::sync::Notify::new()));
+        if let std::collections::hash_map::Entry::Vacant(e) = guard.entry(key) {
+            e.insert(Arc::new(tokio::sync::Notify::new()));
             true
+        } else {
+            false
         }
     }
 

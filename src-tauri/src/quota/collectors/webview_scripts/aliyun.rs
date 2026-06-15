@@ -1,6 +1,5 @@
 /// Aliyun Bailian quota scraping script.
 /// Fetches billing data from the Bailian console using session cookies.
-
 pub const ALIYUN_BAILIAN_SCRIPT: &str = r#"
 (async () => {
   try {

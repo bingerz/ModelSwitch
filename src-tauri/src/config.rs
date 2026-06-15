@@ -50,7 +50,7 @@ pub struct McpServerConfig {
     pub expose_tools: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     pub gateway: GatewayConfig,
     pub channels: Vec<ChannelConfig>,
@@ -330,16 +330,6 @@ impl Default for GatewayConfig {
                 scan_response: false,
                 custom_patterns: vec![],
             },
-        }
-    }
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            gateway: GatewayConfig::default(),
-            channels: vec![],
-            mcp_servers: vec![],
         }
     }
 }

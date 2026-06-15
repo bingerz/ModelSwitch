@@ -65,7 +65,7 @@ pub async fn select_channel(
 
     let flush = |healthy: &mut Vec<Channel>,
                  halfopen: &mut Vec<Channel>,
-                 strategy: &Box<dyn RoutingStrategy>|
+                 strategy: &dyn RoutingStrategy|
      -> Option<Channel> {
         // Try Healthy candidates first, then fall back to HalfOpen probes
         if !healthy.is_empty() {
@@ -85,7 +85,7 @@ pub async fn select_channel(
         if ch.priority != current_priority {
             // Try selection from previous priority
             if let Some(selected) =
-                flush(&mut healthy_candidates, &mut halfopen_candidates, &strategy)
+                flush(&mut healthy_candidates, &mut halfopen_candidates, &*strategy)
             {
                 return Some(selected);
             }
@@ -101,5 +101,5 @@ pub async fn select_channel(
     }
 
     // Try last priority
-    flush(&mut healthy_candidates, &mut halfopen_candidates, &strategy)
+    flush(&mut healthy_candidates, &mut halfopen_candidates, &*strategy)
 }

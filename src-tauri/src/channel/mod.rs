@@ -173,10 +173,9 @@ impl Channel {
             let in_rate = self.input_cost_per_mtok.unwrap_or(0.0);
             let out_rate = self.output_cost_per_mtok.unwrap_or(0.0);
             Some(in_tok / 1_000_000.0 * in_rate + out_tok / 1_000_000.0 * out_rate)
-        } else if let Some(rate_per_1k) = self.cost_per_token {
-            Some((in_tok + out_tok) / 1000.0 * rate_per_1k)
         } else {
-            None
+            self.cost_per_token
+                .map(|rate_per_1k| (in_tok + out_tok) / 1000.0 * rate_per_1k)
         }
     }
 
