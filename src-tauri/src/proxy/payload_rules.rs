@@ -57,11 +57,18 @@ impl ChannelPayloadRules {
     }
 
     pub fn add(&self, channel_id: uuid::Uuid, rules: PayloadRules) {
-        self.rules.write().unwrap_or_else(|e| e.into_inner()).insert(channel_id, rules);
+        self.rules
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(channel_id, rules);
     }
 
     pub fn get(&self, channel_id: uuid::Uuid) -> Option<PayloadRules> {
-        self.rules.read().unwrap_or_else(|e| e.into_inner()).get(&channel_id).cloned()
+        self.rules
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&channel_id)
+            .cloned()
     }
 }
 

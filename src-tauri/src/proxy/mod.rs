@@ -202,6 +202,7 @@ pub(super) enum FailureReason {
     ServerError,
     ConnectionError,
     NoCredential,
+    Timeout,
     #[allow(dead_code)]
     ModelFallback,
     AllExhausted,
@@ -214,6 +215,7 @@ impl FailureReason {
             Self::RateLimited => "429".into(),
             Self::ServerError => "5xx".into(),
             Self::ConnectionError => "connection_error".into(),
+            Self::Timeout => "ttft_timeout".into(),
             Self::NoCredential => "no_credential".into(),
             Self::ModelFallback => "model_fallback".into(),
             Self::AllExhausted => "all_exhausted".into(),

@@ -8,9 +8,7 @@ use uuid::Uuid;
 use crate::channel::Channel;
 use crate::proxy::stream::json_response;
 
-use super::response::{
-    extract_passthrough_headers, handle_json_success, handle_streaming_success,
-};
+use super::response::{extract_passthrough_headers, handle_json_success, handle_streaming_success};
 use super::{
     estimate_tokens, make_log, upstream_url, AuthStyle, FailureReason, ProxyConfig, SKIP_HEADERS,
 };
@@ -122,7 +120,10 @@ pub(super) async fn try_channel_attempt(
 
     // Estimate tokens and check rate limiter before sending
     let estimated_tokens = estimate_tokens(&upstream_body, is_stream);
-    let (allowed, rate_reason) = state.limits.rate_limiter.check(channel.id, estimated_tokens);
+    let (allowed, rate_reason) = state
+        .limits
+        .rate_limiter
+        .check(channel.id, estimated_tokens);
     if !allowed {
         tracing::warn!(
             channel = %channel.name,
@@ -161,8 +162,9 @@ pub(super) async fn try_channel_attempt(
                 .map(|so| !so.contains_key("include_usage"))
                 .unwrap_or(true);
             if needs_injection {
-                if let Some(existing) =
-                    obj.get_mut("stream_options").and_then(|v| v.as_object_mut())
+                if let Some(existing) = obj
+                    .get_mut("stream_options")
+                    .and_then(|v| v.as_object_mut())
                 {
                     existing.insert("include_usage".to_string(), serde_json::Value::Bool(true));
                 } else {
@@ -247,10 +249,50 @@ pub(super) async fn try_channel_attempt(
     // Track active request count for least-busy routing
     state.router.active_requests.increment(channel.id);
 
-    let resp_result = req_builder.send().await;
+    let resp_result = if is_stream {
+        match state.gateway.stream_ttft_timeout_secs {
+            Some(secs) if secs > 0 => {
+                let send_future = req_builder.send();
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(secs),
+                    send_future,
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_elapsed) => {
+                        tracing::warn!(
+                            channel = %channel.name,
+                            ttft_timeout_secs = secs,
+                            "TTFT timeout exceeded — aborting channel"
+                        );
+                        state.limits.rate_limiter.record(channel.id, estimated_tokens);
+                        state.router.active_requests.decrement(channel.id);
+                        log_attempt_failure(
+                            &state.logger,
+                            current_model,
+                            channel,
+                            attempt,
+                            FailureReason::Timeout,
+                            start,
+                            request_id,
+                        )
+                        .await;
+                        return AttemptOutcome::Retry;
+                    }
+                }
+            }
+            _ => req_builder.send().await,
+        }
+    } else {
+        req_builder.send().await
+    };
 
     // Record rate limiter usage — the request was sent regardless of outcome
-    state.limits.rate_limiter.record(channel.id, estimated_tokens);
+    state
+        .limits
+        .rate_limiter
+        .record(channel.id, estimated_tokens);
 
     let resp = match resp_result {
         Ok(r) => r,
@@ -335,7 +377,11 @@ pub(super) async fn try_channel_attempt(
 
     // Success — record session affinity if applicable
     if let Some(ref sid) = session_id {
-        state.router.session_affinity.set_channel(sid, channel.id).await;
+        state
+            .router
+            .session_affinity
+            .set_channel(sid, channel.id)
+            .await;
     }
 
     // Extract upstream response headers for passthrough before consuming body
@@ -348,7 +394,8 @@ pub(super) async fn try_channel_attempt(
             resp.headers(),
         ) {
             state
-                .billing.quota_store
+                .billing
+                .quota_store
                 .update_rate_limits(
                     channel.id,
                     qh.remaining_requests,

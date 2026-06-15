@@ -186,11 +186,10 @@ pub async fn reload_config(
         }
         Err(e) => {
             tracing::error!("Config reload failed: {}", e);
-            Err(ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to reload config",
+            Err(
+                ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to reload config")
+                    .into_response(),
             )
-            .into_response())
         }
     }
 }

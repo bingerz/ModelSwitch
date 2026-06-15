@@ -14,7 +14,7 @@ impl Clone for ActiveRequests {
                 self.counts
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .clone()
+                    .clone(),
             ),
         }
     }

@@ -77,7 +77,9 @@ pub async fn list_virtual_keys(
     State(state): State<Arc<AppState>>,
 ) -> Json<ApiResponse<Vec<VirtualKeyResponse>>> {
     let keys = state.billing.virtual_key_store.list().await;
-    Json(ApiResponse::ok(keys.iter().map(VirtualKeyResponse::from).collect()))
+    Json(ApiResponse::ok(
+        keys.iter().map(VirtualKeyResponse::from).collect(),
+    ))
 }
 
 /// POST /api/virtual-keys -- create a new virtual key.

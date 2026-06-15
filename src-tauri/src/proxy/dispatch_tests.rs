@@ -146,6 +146,7 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
         gateway: GatewayParams {
             request_timeout_secs: Some(30),
             stream_keepalive_secs: None,
+            stream_ttft_timeout_secs: Some(30),
             max_retries: config.gateway.max_retries,
             model_fallbacks: HashMap::new(),
             routing_strategy: "weighted_random".to_string(),

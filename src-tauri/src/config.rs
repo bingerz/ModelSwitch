@@ -118,6 +118,12 @@ pub struct GatewayConfig {
     /// Enable MCP Gateway Mode — expose /mcp endpoint for MCP clients (default true).
     #[serde(default = "default_mcp_gateway_enabled")]
     pub mcp_gateway_enabled: bool,
+    /// Time-to-first-token (TTFT) timeout in seconds for streaming requests.
+    /// If the first byte of a streaming response doesn't arrive within this
+    /// duration, the request is aborted and retried on the next channel.
+    /// None or 0 = no TTFT timeout (use only the overall request timeout).
+    #[serde(default = "default_stream_ttft_timeout_secs")]
+    pub stream_ttft_timeout_secs: Option<u64>,
 }
 
 /// Privacy guardrail configuration for the sanitizer middleware.
@@ -296,6 +302,9 @@ fn default_mcp_auto_inject() -> bool {
 fn default_mcp_gateway_enabled() -> bool {
     true
 }
+fn default_stream_ttft_timeout_secs() -> Option<u64> {
+    Some(30)
+}
 fn default_enabled() -> bool {
     true
 }
@@ -327,6 +336,7 @@ impl Default for GatewayConfig {
             mcp_max_iterations: default_mcp_max_iterations(),
             mcp_auto_inject: default_mcp_auto_inject(),
             mcp_gateway_enabled: default_mcp_gateway_enabled(),
+            stream_ttft_timeout_secs: default_stream_ttft_timeout_secs(),
             sanitizer: SanitizerConfig {
                 enabled: default_sanitizer_enabled(),
                 redact_secrets: default_sanitizer_redact(),

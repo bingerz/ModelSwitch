@@ -130,8 +130,7 @@ pub fn run() {
                         .iter()
                         .filter(|c| c.status == ChannelStatus::Healthy && c.enabled)
                         .count();
-                    let tooltip =
-                        format!("ModelSwitch -- {}/{} channels healthy", healthy, total);
+                    let tooltip = format!("ModelSwitch -- {}/{} channels healthy", healthy, total);
                     let _ = tray.set_tooltip(Some(&tooltip));
                 }
             });

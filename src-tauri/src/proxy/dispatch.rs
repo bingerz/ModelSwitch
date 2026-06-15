@@ -14,7 +14,7 @@ use super::attempt::{try_channel_attempt, AttemptOutcome};
 use super::request_meta::{
     extract_request_meta, extract_virtual_key_id, is_affinity_valid, RequestMeta,
 };
-use super::{make_log, FailureReason, ProxyConfig};
+use super::{estimate_tokens, make_log, FailureReason, ProxyConfig};
 
 /// Log the all-channels-exhausted outcome, wake coalesced waiters, and return 429.
 async fn log_all_exhausted(
@@ -126,6 +126,22 @@ pub(crate) async fn dispatch(
     } = meta;
     let vk_id = extract_virtual_key_id(original_headers);
 
+    // Pre-charge estimated cost for virtual key budget enforcement.
+    // This prevents concurrent requests from all passing the budget check
+    // before any spend is recorded. The reservation is reconciled on failure
+    // (all channels exhausted) or absorbed into actual spend on success.
+    let mut reserved_cents: u64 = 0;
+    if let Some(vk) = vk_id {
+        let est_tokens = estimate_tokens(body, is_stream);
+        // Rough estimate: ~$0.01 per 1000 tokens as a conservative default
+        let estimated_cost_cents = (est_tokens as f64 / 1000.0 * 0.01 * 100.0) as u64 + 1;
+        reserved_cents = state
+            .billing
+            .virtual_key_store
+            .reserve_spend(vk, estimated_cost_cents)
+            .await;
+    }
+
     let max_retries = state.gateway.max_retries;
     let channels = state.channel_mgr.channels();
     let start = std::time::Instant::now();
@@ -212,6 +228,17 @@ pub(crate) async fn dispatch(
                 AttemptOutcome::Respond(response) => return response,
                 AttemptOutcome::Retry => continue,
             }
+        }
+    }
+
+    // All channels exhausted — refund the pre-charged amount since no API call succeeded.
+    if reserved_cents > 0 {
+        if let Some(vk) = vk_id {
+            state
+                .billing
+                .virtual_key_store
+                .reconcile_spend(vk, reserved_cents, 0)
+                .await;
         }
     }
 

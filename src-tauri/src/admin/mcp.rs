@@ -148,7 +148,11 @@ pub async fn create_mcp_server(
         ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to save config")
     })?;
 
-    state.mcp.mcp_manager.reload_configs(&config.mcp_servers).await;
+    state
+        .mcp
+        .mcp_manager
+        .reload_configs(&config.mcp_servers)
+        .await;
 
     Ok(Json(ApiResponse::ok(McpServerResponse {
         id: new_config.id,
@@ -196,7 +200,11 @@ pub async fn update_mcp_server(
         ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to save config")
     })?;
 
-    state.mcp.mcp_manager.reload_configs(&config.mcp_servers).await;
+    state
+        .mcp
+        .mcp_manager
+        .reload_configs(&config.mcp_servers)
+        .await;
 
     let status = state
         .mcp
@@ -243,7 +251,11 @@ pub async fn delete_mcp_server(
     })?;
 
     // reload_configs will stop the server if running
-    state.mcp.mcp_manager.reload_configs(&config.mcp_servers).await;
+    state
+        .mcp
+        .mcp_manager
+        .reload_configs(&config.mcp_servers)
+        .await;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

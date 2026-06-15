@@ -145,6 +145,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         gateway: GatewayParams {
             request_timeout_secs: config.gateway.request_timeout_secs,
             stream_keepalive_secs: config.gateway.stream_keepalive_secs,
+            stream_ttft_timeout_secs: config.gateway.stream_ttft_timeout_secs,
             max_retries,
             model_fallbacks,
             routing_strategy,

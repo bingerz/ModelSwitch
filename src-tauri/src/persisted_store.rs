@@ -1,8 +1,8 @@
+use serde::{de::DeserializeOwned, Serialize};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::path::PathBuf;
 use tokio::sync::RwLock;
-use serde::{Serialize, de::DeserializeOwned};
 
 /// Generic key-value store with JSON persistence.
 /// Wraps a `RwLock<HashMap<K, V>>` with save/load helpers.

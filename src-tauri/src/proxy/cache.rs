@@ -170,7 +170,10 @@ mod tests {
         let (key, material) = RequestCache::compute_key("gpt-4", &body);
         assert!(cache.get(key, &material).is_none());
         cache.insert(key, material.clone(), "cached response".to_string());
-        assert_eq!(cache.get(key, &material), Some("cached response".to_string()));
+        assert_eq!(
+            cache.get(key, &material),
+            Some("cached response".to_string())
+        );
     }
 
     #[test]
@@ -225,7 +228,11 @@ mod tests {
     fn detects_hash_collision() {
         let cache = RequestCache::default();
         // Insert with one key_material
-        cache.insert(42u128, "request_A_material".to_string(), "response_A".to_string());
+        cache.insert(
+            42u128,
+            "request_A_material".to_string(),
+            "response_A".to_string(),
+        );
         // Lookup with same hash but different material -> should miss
         let result = cache.get(42u128, "request_B_material");
         assert!(

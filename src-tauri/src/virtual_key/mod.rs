@@ -210,6 +210,74 @@ impl VirtualKeyStore {
         Some(vk.clone())
     }
 
+    /// Reserve estimated spend before a request is dispatched.
+    /// This pre-charges the daily/monthly/total counters to prevent
+    /// concurrent requests from exceeding the budget.
+    /// Returns the reservation amount in cents (0 if no key, disabled, or no budget).
+    pub async fn reserve_spend(&self, key_id: Uuid, estimated_cost_cents: u64) -> u64 {
+        let mut keys = self.store.write().await;
+        let Some(vk) = keys.get_mut(&key_id) else {
+            return 0;
+        };
+        if !vk.enabled {
+            return 0;
+        }
+        // Only reserve if there's a budget limit — unlimited keys don't need pre-deduction
+        let has_budget = vk.daily_budget_cents.is_some() || vk.monthly_budget_cents.is_some();
+        if !has_budget {
+            return 0;
+        }
+
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let this_month = Local::now().format("%Y-%m").to_string();
+
+        // Reset stale periods before reserving
+        if vk.spend.today.date != today {
+            vk.spend.today = DailySpend {
+                date: today,
+                cents: 0,
+            };
+        }
+        if vk.spend.this_month.month != this_month {
+            vk.spend.this_month = MonthlySpend {
+                month: this_month,
+                cents: 0,
+            };
+        }
+
+        vk.spend.today.cents += estimated_cost_cents;
+        vk.spend.this_month.cents += estimated_cost_cents;
+        vk.spend.total_cents += estimated_cost_cents;
+
+        estimated_cost_cents
+    }
+
+    /// Reconcile a previous reservation with the actual cost.
+    /// If actual < reserved, refund the difference. If actual > reserved, charge more.
+    pub async fn reconcile_spend(&self, key_id: Uuid, reserved_cents: u64, actual_cents: u64) {
+        if reserved_cents == actual_cents {
+            return;
+        }
+        let mut keys = self.store.write().await;
+        let Some(vk) = keys.get_mut(&key_id) else {
+            return;
+        };
+        let delta = actual_cents as i64 - reserved_cents as i64;
+        if delta < 0 {
+            // Refund
+            let refund = (-delta) as u64;
+            vk.spend.today.cents = vk.spend.today.cents.saturating_sub(refund);
+            vk.spend.this_month.cents = vk.spend.this_month.cents.saturating_sub(refund);
+            vk.spend.total_cents = vk.spend.total_cents.saturating_sub(refund);
+        } else {
+            // Charge more
+            let extra = delta as u64;
+            vk.spend.today.cents += extra;
+            vk.spend.this_month.cents += extra;
+            vk.spend.total_cents += extra;
+        }
+    }
+
     /// Accumulate spend for a virtual key. Called after an upstream response
     /// completes. Stale spend periods roll over before the new spend is added.
     pub async fn accumulate_spend(&self, vk_id: Uuid, estimated_cost_cents: u64) {
@@ -471,6 +539,155 @@ mod tests {
             a,
             "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
         );
+    }
+
+    #[tokio::test]
+    async fn reserve_spend_charges_budgeted_key() {
+        let store = VirtualKeyStore::new();
+        let (vk, _) = store
+            .create("test".to_string(), Some(100), Some(1000))
+            .await;
+        let reserved = store.reserve_spend(vk.id, 10).await;
+        assert_eq!(reserved, 10);
+        let fetched = store.get(vk.id).await.unwrap();
+        assert_eq!(fetched.spend.today.cents, 10);
+        assert_eq!(fetched.spend.this_month.cents, 10);
+        assert_eq!(fetched.spend.total_cents, 10);
+    }
+
+    #[tokio::test]
+    async fn reserve_spend_skips_unlimited_key() {
+        let store = VirtualKeyStore::new();
+        let (vk, _) = store.create("test".to_string(), None, None).await;
+        let reserved = store.reserve_spend(vk.id, 10).await;
+        assert_eq!(reserved, 0);
+        let fetched = store.get(vk.id).await.unwrap();
+        assert_eq!(fetched.spend.total_cents, 0);
+    }
+
+    #[tokio::test]
+    async fn reserve_spend_skips_disabled_key() {
+        let store = VirtualKeyStore::new();
+        let (vk, _) = store
+            .create("test".to_string(), Some(100), Some(1000))
+            .await;
+        store
+            .update(vk.id, None, None, None, Some(false))
+            .await;
+        let reserved = store.reserve_spend(vk.id, 10).await;
+        assert_eq!(reserved, 0);
+    }
+
+    #[tokio::test]
+    async fn reserve_spend_returns_zero_for_missing_key() {
+        let store = VirtualKeyStore::new();
+        let reserved = store.reserve_spend(Uuid::new_v4(), 10).await;
+        assert_eq!(reserved, 0);
+    }
+
+    #[tokio::test]
+    async fn reserve_spend_resets_stale_periods() {
+        let store = VirtualKeyStore::new();
+        let (mut vk, _) = store
+            .create("test".to_string(), Some(100), Some(1000))
+            .await;
+        vk.spend.today = DailySpend {
+            date: "1999-01-01".to_string(),
+            cents: 999,
+        };
+        vk.spend.this_month = MonthlySpend {
+            month: "1999-01".to_string(),
+            cents: 999,
+        };
+        vk.spend.total_cents = 999;
+        let vk_id = vk.id;
+        store.store.write().await.insert(vk.id, vk);
+
+        store.reserve_spend(vk_id, 10).await;
+        let fetched = store.get(vk_id).await.unwrap();
+        assert_eq!(fetched.spend.today.cents, 10, "daily should reset before reserve");
+        assert_eq!(
+            fetched.spend.this_month.cents, 10,
+            "monthly should reset before reserve"
+        );
+        assert_eq!(fetched.spend.total_cents, 999 + 10);
+    }
+
+    #[tokio::test]
+    async fn reconcile_spend_refunds_when_actual_less() {
+        let store = VirtualKeyStore::new();
+        let (vk, _) = store
+            .create("test".to_string(), Some(100), Some(1000))
+            .await;
+        store.reserve_spend(vk.id, 50).await;
+        store.reconcile_spend(vk.id, 50, 20).await;
+        let fetched = store.get(vk.id).await.unwrap();
+        assert_eq!(fetched.spend.today.cents, 20);
+        assert_eq!(fetched.spend.this_month.cents, 20);
+        assert_eq!(fetched.spend.total_cents, 20);
+    }
+
+    #[tokio::test]
+    async fn reconcile_spend_charges_more_when_actual_greater() {
+        let store = VirtualKeyStore::new();
+        let (vk, _) = store
+            .create("test".to_string(), Some(100), Some(1000))
+            .await;
+        store.reserve_spend(vk.id, 20).await;
+        store.reconcile_spend(vk.id, 20, 50).await;
+        let fetched = store.get(vk.id).await.unwrap();
+        assert_eq!(fetched.spend.today.cents, 50);
+        assert_eq!(fetched.spend.this_month.cents, 50);
+        assert_eq!(fetched.spend.total_cents, 50);
+    }
+
+    #[tokio::test]
+    async fn reconcile_spend_noop_when_equal() {
+        let store = VirtualKeyStore::new();
+        let (vk, _) = store
+            .create("test".to_string(), Some(100), Some(1000))
+            .await;
+        store.reserve_spend(vk.id, 30).await;
+        store.reconcile_spend(vk.id, 30, 30).await;
+        let fetched = store.get(vk.id).await.unwrap();
+        assert_eq!(fetched.spend.total_cents, 30);
+    }
+
+    #[tokio::test]
+    async fn reconcile_spend_refunds_full_on_failure() {
+        let store = VirtualKeyStore::new();
+        let (vk, _) = store
+            .create("test".to_string(), Some(100), Some(1000))
+            .await;
+        store.reserve_spend(vk.id, 40).await;
+        store.reconcile_spend(vk.id, 40, 0).await;
+        let fetched = store.get(vk.id).await.unwrap();
+        assert_eq!(fetched.spend.today.cents, 0);
+        assert_eq!(fetched.spend.this_month.cents, 0);
+        assert_eq!(fetched.spend.total_cents, 0);
+    }
+
+    #[tokio::test]
+    async fn reserve_and_reconcile_concurrent_simulation() {
+        // Simulate two concurrent requests reserving against the same budget
+        let store = VirtualKeyStore::new();
+        let (vk, _) = store
+            .create("test".to_string(), Some(100), Some(1000))
+            .await;
+        // First request reserves 30
+        store.reserve_spend(vk.id, 30).await;
+        // Second request reserves 40 (should see the 30 already charged)
+        store.reserve_spend(vk.id, 40).await;
+        let fetched = store.get(vk.id).await.unwrap();
+        assert_eq!(fetched.spend.total_cents, 70);
+        // First request completes with actual 25 — refund 5
+        store.reconcile_spend(vk.id, 30, 25).await;
+        let fetched = store.get(vk.id).await.unwrap();
+        assert_eq!(fetched.spend.total_cents, 65);
+        // Second request completes with actual 35 — refund 5
+        store.reconcile_spend(vk.id, 40, 35).await;
+        let fetched = store.get(vk.id).await.unwrap();
+        assert_eq!(fetched.spend.total_cents, 60);
     }
 
     #[tokio::test]
