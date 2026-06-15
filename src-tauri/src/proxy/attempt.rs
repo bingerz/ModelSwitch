@@ -151,6 +151,29 @@ pub(super) async fn try_channel_attempt(
             proxy_config.auth_style.clone()
         };
 
+    // Inject stream_options.include_usage for OpenAI-compatible streaming requests
+    // to ensure upstream returns token usage in the final SSE chunk
+    if is_stream && !matches!(effective_auth, AuthStyle::GeminiUrl | AuthStyle::Anthropic) {
+        if let Some(obj) = upstream_body.as_object_mut() {
+            let needs_injection = obj
+                .get("stream_options")
+                .and_then(|v| v.as_object())
+                .map(|so| !so.contains_key("include_usage"))
+                .unwrap_or(true);
+            if needs_injection {
+                if let Some(existing) =
+                    obj.get_mut("stream_options").and_then(|v| v.as_object_mut())
+                {
+                    existing.insert("include_usage".to_string(), serde_json::Value::Bool(true));
+                } else {
+                    let mut so = serde_json::Map::new();
+                    so.insert("include_usage".to_string(), serde_json::Value::Bool(true));
+                    obj.insert("stream_options".to_string(), serde_json::Value::Object(so));
+                }
+            }
+        }
+    }
+
     let api_key = match state.channel_mgr.get_credential(channel.id).await {
         Some(key) => key,
         None => {
