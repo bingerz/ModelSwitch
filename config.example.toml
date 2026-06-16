@@ -1,48 +1,199 @@
+# ──────────────────────────────────────────────────────────────────────
 # ModelSwitch Configuration
-# Place at ~/.config/modelswitch/config.toml (or use --config /path/to/config.toml)
+#
+# Place at ~/.config/modelswitch/config.toml
+# Or pass --config /path/to/config.toml
+#
+# All fields have sensible defaults. Only uncomment what you need.
+# See src-tauri/src/config.rs for the full schema and default values.
+# ──────────────────────────────────────────────────────────────────────
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Gateway Settings
+# ══════════════════════════════════════════════════════════════════════
 
 [gateway]
-host = "127.0.0.1"
-port = 8080
-routing_strategy = "weighted_random"   # weighted_random | priority | round_robin
-max_retries = 3
-circuit_breaker_minutes = 5
-health_check_enabled = true
-health_check_interval_secs = 60
-drain_timeout_secs = 30
+host = "127.0.0.1"                           # Bind address (default: 127.0.0.1)
+port = 8080                                   # Listen port (default: 8080)
 
-# Credential store: "keyring" (default on desktop) or "file" (for Docker/headless)
-# credential_store = "file"
+# ── Routing ──────────────────────────────────────────────────────────
+# Strategy: "weighted_random" (default), "latency", "least_busy", "usage", "lowest_cost"
+routing_strategy = "weighted_random"
+max_retries = 3                               # Max dispatch retries across channels (default: 3)
 
-# Admin API bearer token. Set to protect /api/* endpoints.
-# Also settable via MODELSWITCH_ADMIN_TOKEN env var.
+# ── Retry Backoff ────────────────────────────────────────────────────
+retry_base_ms = 100                           # Base delay for exponential backoff in ms (default: 100)
+retry_max_ms = 5000                           # Max delay cap for exponential backoff in ms (default: 5000)
+
+# ── Timeouts ─────────────────────────────────────────────────────────
+# Overall per-request deadline in seconds. None = 120s default.
+# request_timeout_secs = 120
+
+# Time-to-first-token timeout for streaming requests (seconds).
+# If the first chunk of a streaming response doesn't arrive within this
+# duration, the request is aborted and retried on the next channel.
+# Default: 30. Set to 0 to disable TTFT timeout.
+# stream_ttft_timeout_secs = 30
+
+# SSE keepalive interval in seconds. Sends periodic comments to prevent
+# idle timeout on long-running streams. None = disabled.
+# stream_keepalive_secs = 15
+
+# HTTP client timeout in seconds for upstream requests (default: 300).
+# http_timeout_secs = 300
+
+# ── HTTP Connection Pool ─────────────────────────────────────────────
+# Number of HTTP client instances. Each opens a separate TCP connection
+# per HTTP/2 host. Increase to spread load across more connections.
+# http_pool_size = 4
+
+# ── Circuit Breaker ──────────────────────────────────────────────────
+circuit_breaker_minutes = 30                   # Cooldown after channel failure (default: 30)
+health_check_enabled = true                   # Probe failed channels periodically (default: true)
+health_check_interval_secs = 60               # Seconds between health checks (default: 60)
+drain_timeout_secs = 30                       # Max wait for in-flight requests during shutdown (default: 30)
+
+# ── Session Affinity ─────────────────────────────────────────────────
+# TTL in seconds for sticky session routing. Default: 1800 (30 min).
+# affinity_ttl_secs = 1800
+
+# ── Cache ────────────────────────────────────────────────────────────
+# Cache mode: "on" (read+write), "off", "readonly", or "writeonly" (default: "on")
+# cache_mode = "on"
+# cache_ttl_secs = 300                        # TTL for cached responses in seconds (default: 300)
+# max_cache_entries = 1000                    # Max cached responses in memory (default: 1000)
+
+# ── Dispatch Log ─────────────────────────────────────────────────────
+# Max dispatch log entries to keep in memory (default: 1000).
+# log_max_entries = 1000
+
+# ── Quota Polling ────────────────────────────────────────────────────
+# How often to poll upstream billing/quota APIs in seconds (default: 60).
+# quota_poll_interval_secs = 60
+
+# ── Admin API ────────────────────────────────────────────────────────
+# Bearer token for /api/* endpoints. Env MODELSWITCH_ADMIN_TOKEN takes precedence.
 # admin_token = "your-secret-token"
 
-# Model fallback chains: when a model fails, try alternatives in order
+# ── Credential Store ─────────────────────────────────────────────────
+# "keyring" (default on desktop) or "file" (for Docker/headless).
+# credential_store = "file"
+
+# ── MCP Gateway ──────────────────────────────────────────────────────
+# Expose /mcp endpoint for MCP clients (default: true).
+# mcp_gateway_enabled = true
+
+# Auto-inject MCP tools into chat completion requests (default: true).
+# mcp_auto_inject = true
+
+# Max MCP tool-call loop iterations per request (default: 5).
+# mcp_max_iterations = 5
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Model Fallback Chains
+# ══════════════════════════════════════════════════════════════════════
+# When a model fails, try alternatives in order.
+
 [gateway.model_fallbacks]
 "gpt-4o" = ["gpt-4o-mini", "gpt-3.5-turbo"]
 "claude-sonnet-4-20250514" = ["claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"]
 
-# ── Channel Definitions ──────────────────────────────────────
 
-# Option A: Inline API key directly in config (simplest, no keychain needed)
+# ══════════════════════════════════════════════════════════════════════
+# Provider Budgets
+# ══════════════════════════════════════════════════════════════════════
+# Per-provider daily/monthly spend caps (in USD cents).
+# Requests exceeding the budget are rejected.
+
+# [gateway.provider_budgets.openai]
+# daily_budget_cents = 1000                   # $10/day cap
+# monthly_budget_cents = 25000                # $250/month cap
+
+# [gateway.provider_budgets.anthropic]
+# daily_budget_cents = 500                    # $5/day cap
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Privacy Sanitizer
+# ══════════════════════════════════════════════════════════════════════
+# Redacts secrets from request bodies before forwarding to upstream.
+
+# [gateway.sanitizer]
+# enabled = true                              # Master switch (default: true)
+# redact_secrets = true                       # Actually redact vs scan-only (default: true)
+# scan_response = false                       # Scan SSE response streams too (default: false)
+
+# # Additional user-defined redaction patterns (built-in catalog always applies)
+# [[gateway.sanitizer.custom_patterns]]
+# name = "internal-api-key"
+# pattern = 'api_key_[a-zA-Z0-9]{32}'
+# replacement = "[REDACTED]"                  # Default replacement text
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Channel Definitions
+# ══════════════════════════════════════════════════════════════════════
+# Each [[channels]] block defines one upstream API endpoint.
+# Channels within the same priority are selected by the routing strategy.
+# Lower priority number = higher preference.
+
+# ── OpenAI (inline API key) ──────────────────────────────────────────
+
 [[channels]]
 id = "openai-primary"
 name = "OpenAI"
 provider = "openai"
-priority = 1
-weight = 100
+priority = 1                                  # Lower = higher preference (default: 1)
+weight = 100                                 # Weight for weighted_random routing (default: 100)
 credential_type = "api_key"
 credential_ref = "openai_main"
-api_key = "sk-your-openai-key-here"     # Inline — bypasses keyring lookup
+api_key = "sk-your-openai-key-here"          # Inline key — bypasses keyring lookup
 base_url = "https://api.openai.com"
 enabled = true
+
+# Per-channel rate limits
+# rpm_limit = 500                             # Max requests per minute
+# tpm_limit = 200000                          # Max tokens per minute
+
+# Cost tracking (USD per million tokens)
+# input_cost_per_mtok = 2.5                   # $2.50 per million input tokens
+# output_cost_per_mtok = 10.0                 # $10.00 per million output tokens
+
+# Alternative: flat per-token rate (takes precedence over per-mtok pricing)
+# cost_per_token = 0.00001                    # $0.00001 per token
+
+# Circuit breaker cooldown override for this channel (minutes)
+# cooldown_minutes = 10
+
+# Max concurrent in-flight requests (None = unlimited)
+# max_concurrent = 50
+
+# Account group tag for multi-account pool management
+# account_group = "team-pro"
 
 [channels.model_mapping]
 "gpt-4" = "gpt-4o"
 "gpt-3.5" = "gpt-4o-mini"
 
-# Option B: Use credential store (keyring/file) — api_key omitted, looked up by credential_ref
+# ── OpenAI (secondary, credential store) ─────────────────────────────
+# api_key omitted — looked up from keyring/file via credential_ref
+
+[[channels]]
+id = "openai-fallback"
+name = "OpenAI Fallback"
+provider = "openai"
+priority = 2
+weight = 50
+credential_type = "api_key"
+credential_ref = "openai_backup"
+base_url = "https://api.openai.com"
+enabled = true
+rpm_limit = 200
+
+# ── Anthropic (credential store) ─────────────────────────────────────
+
 [[channels]]
 id = "anthropic-primary"
 name = "Anthropic"
@@ -53,9 +204,13 @@ credential_type = "api_key"
 credential_ref = "anthropic_main"
 base_url = "https://api.anthropic.com"
 enabled = true
+input_cost_per_mtok = 3.0
+output_cost_per_mtok = 15.0
 
 [channels.model_mapping]
 "claude-3" = "claude-sonnet-4-20250514"
+
+# ── DeepSeek (inline API key) ────────────────────────────────────────
 
 [[channels]]
 id = "deepseek-primary"
@@ -65,12 +220,70 @@ priority = 2
 weight = 50
 credential_type = "api_key"
 credential_ref = "deepseek_main"
-api_key = "sk-your-deepseek-key-here"   # Inline API key
+api_key = "sk-your-deepseek-key-here"        # Inline API key
 base_url = "https://api.deepseek.com"
 enabled = true
-input_cost_per_mtok = 0.14
-output_cost_per_mtok = 0.28
+input_cost_per_mtok = 0.14                   # $0.14 per million input tokens
+output_cost_per_mtok = 0.28                  # $0.28 per million output tokens
+rpm_limit = 100
+tpm_limit = 50000
 
 [channels.model_mapping]
 "gpt-4" = "deepseek-chat"
 "gpt-4o" = "deepseek-chat"
+
+# ── OpenRouter example ───────────────────────────────────────────────
+# Uses flat per-token pricing instead of per-mtok.
+
+# [[channels]]
+# id = "openrouter-primary"
+# name = "OpenRouter"
+# provider = "openrouter"
+# priority = 3
+# weight = 100
+# credential_type = "api_key"
+# credential_ref = "openrouter_main"
+# api_key = "sk-or-your-openrouter-key"
+# base_url = "https://openrouter.ai/api/v1"
+# enabled = true
+# cost_per_token = 0.000003                   # $0.000003 per token (flat rate)
+# max_concurrent = 20
+# account_group = "free-tier"
+
+# [channels.model_mapping]
+# "gpt-4" = "openai/gpt-4o"
+
+
+# ══════════════════════════════════════════════════════════════════════
+# MCP Servers (Model Context Protocol)
+# ══════════════════════════════════════════════════════════════════════
+# Subprocess-based tool providers. Each server runs as a child process
+# and exposes tools that can be auto-injected into LLM requests.
+
+[[mcp_servers]]
+id = "filesystem"
+name = "Filesystem"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+enabled = true
+expose_tools = true                          # Expose tools to LLM clients (default: true)
+
+# Optional: environment variables for the subprocess
+# [mcp_servers.env]
+# SOME_VAR = "value"
+
+# Optional: working directory for the subprocess
+# cwd = "/tmp"
+
+# ── Example: a second MCP server ─────────────────────────────────────
+
+# [[mcp_servers]]
+# id = "brave-search"
+# name = "Brave Search"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-brave-search"]
+# enabled = true
+# expose_tools = true
+#
+# [mcp_servers.env]
+# BRAVE_API_KEY = "your-brave-api-key"

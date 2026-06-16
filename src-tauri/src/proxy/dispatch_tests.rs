@@ -50,6 +50,16 @@ fn chat_request_body(model: &str, content: &str) -> Value {
     })
 }
 
+/// Build a streaming OpenAI chat completion JSON body (with `stream: true`).
+fn streaming_request_body(model: &str, content: &str) -> Value {
+    json!({
+        "model": model,
+        "messages": [{"role": "user", "content": content}],
+        "stream": true,
+        "max_tokens": 50
+    })
+}
+
 /// Build a mock upstream chat completion response body.
 fn chat_completion_response(content: &str) -> String {
     json!({
@@ -97,6 +107,13 @@ fn channel_config(id: &str, name: &str, base_url: &str, priority: u8) -> Channel
         max_concurrent: None,
         api_keys: vec![],
     }
+}
+
+/// Build a disabled `ChannelConfig` pointing at the given base URL.
+fn channel_config_disabled(id: &str, name: &str, base_url: &str, priority: u8) -> ChannelConfig {
+    let mut cfg = channel_config(id, name, base_url, priority);
+    cfg.enabled = false;
+    cfg
 }
 
 /// Build a minimal `AppConfig` with channels pointing at the given base URLs.
@@ -404,5 +421,275 @@ async fn dispatch_cache_hit() {
         received.len(),
         1,
         "Second identical request should be served from cache, not upstream"
+    );
+}
+
+/// Dispatch retries on 5xx — the first channel returns 500 (internal server
+/// error), the second channel returns 200. Verify the request eventually
+/// succeeds after retrying.
+#[tokio::test]
+async fn dispatch_retry_on_5xx() {
+    let mock_fail = MockServer::start().await;
+    let mock_success = MockServer::start().await;
+
+    // First channel: always returns 500
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({
+            "error": {"message": "Internal server error", "type": "server_error"}
+        })))
+        .mount(&mock_fail)
+        .await;
+
+    // Second channel: returns 200
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(chat_completion_response("Recovered from 5xx!")),
+        )
+        .mount(&mock_success)
+        .await;
+
+    let state = build_test_state(vec![
+        channel_config(
+            "00000000-0000-0000-0000-000000000001",
+            "fail-channel",
+            &mock_fail.uri(),
+            1,
+        ),
+        channel_config(
+            "00000000-0000-0000-0000-000000000002",
+            "success-channel",
+            &mock_success.uri(),
+            2,
+        ),
+    ]);
+
+    let headers = HeaderMap::new();
+    let body = chat_request_body("gpt-4", "Test 5xx retry");
+    let provider = openai_provider();
+
+    let response = dispatch(&state, &headers, &body, &provider).await;
+
+    assert_eq!(
+        response_status(&response),
+        200,
+        "dispatch should succeed after retrying on the second channel"
+    );
+    let json = response_json(response).await;
+    assert_eq!(
+        json["choices"][0]["message"]["content"],
+        "Recovered from 5xx!"
+    );
+
+    // The failing server should have been hit at least once
+    let fail_requests = mock_fail.received_requests().await.unwrap();
+    assert!(
+        !fail_requests.is_empty(),
+        "The failing channel should have received at least one request"
+    );
+
+    // The success server should have been hit exactly once
+    let success_requests = mock_success.received_requests().await.unwrap();
+    assert_eq!(
+        success_requests.len(),
+        1,
+        "The success channel should have received exactly one request"
+    );
+}
+
+/// Dispatch retries on connection error — the first channel points to a port
+/// with no server (connection refused), the second channel returns 200.
+/// Verify the request eventually succeeds.
+#[tokio::test]
+async fn dispatch_connection_error() {
+    let mock_success = MockServer::start().await;
+
+    // Second channel: returns 200
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(chat_completion_response("Connection recovered!")),
+        )
+        .mount(&mock_success)
+        .await;
+
+    let state = build_test_state(vec![
+        channel_config(
+            "00000000-0000-0000-0000-000000000001",
+            "dead-channel",
+            "http://127.0.0.1:1",
+            1,
+        ),
+        channel_config(
+            "00000000-0000-0000-0000-000000000002",
+            "success-channel",
+            &mock_success.uri(),
+            2,
+        ),
+    ]);
+
+    let headers = HeaderMap::new();
+    let body = chat_request_body("gpt-4", "Test connection error retry");
+    let provider = openai_provider();
+
+    let response = dispatch(&state, &headers, &body, &provider).await;
+
+    assert_eq!(
+        response_status(&response),
+        200,
+        "dispatch should succeed after retrying past the connection error"
+    );
+    let json = response_json(response).await;
+    assert_eq!(
+        json["choices"][0]["message"]["content"],
+        "Connection recovered!"
+    );
+
+    // The success server should have been hit exactly once
+    let success_requests = mock_success.received_requests().await.unwrap();
+    assert_eq!(
+        success_requests.len(),
+        1,
+        "The success channel should have received exactly one request"
+    );
+}
+
+/// Cache miss on different bodies — send two requests with different bodies
+/// to the same channel. Both should hit the upstream (no caching).
+#[tokio::test]
+async fn dispatch_cache_miss_different_body() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("Response")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let state = build_test_state(vec![channel_config(
+        "00000000-0000-0000-0000-000000000001",
+        "primary",
+        &mock_server.uri(),
+        1,
+    )]);
+
+    let headers = HeaderMap::new();
+    let provider = openai_provider();
+
+    // First request with "first message"
+    let body1 = chat_request_body("gpt-4", "first message");
+    let response1 = dispatch(&state, &headers, &body1, &provider).await;
+    assert_eq!(response_status(&response1), 200);
+
+    // Second request with "second message" — different body, should NOT be cached
+    let body2 = chat_request_body("gpt-4", "second message");
+    let response2 = dispatch(&state, &headers, &body2, &provider).await;
+    assert_eq!(response_status(&response2), 200);
+
+    // The mock server should have received BOTH requests
+    let received = mock_server.received_requests().await.unwrap();
+    assert_eq!(
+        received.len(),
+        2,
+        "Both requests with different bodies should hit the upstream, not cache"
+    );
+}
+
+/// Streaming success — mock the upstream to return a streaming SSE response.
+/// Verify dispatch returns 200 with Content-Type containing "text/event-stream".
+#[tokio::test]
+async fn dispatch_streaming_success() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: [DONE]\n\n",
+                ),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let state = build_test_state(vec![channel_config(
+        "00000000-0000-0000-0000-000000000001",
+        "streaming-channel",
+        &mock_server.uri(),
+        1,
+    )]);
+
+    let headers = HeaderMap::new();
+    let body = streaming_request_body("gpt-4", "Stream test");
+    let provider = openai_provider();
+
+    let response = dispatch(&state, &headers, &body, &provider).await;
+
+    assert_eq!(
+        response_status(&response),
+        200,
+        "streaming dispatch should return 200"
+    );
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        content_type.contains("text/event-stream"),
+        "Content-Type should contain 'text/event-stream', got: {content_type}"
+    );
+}
+
+/// No available channel — all channels are disabled. Verify dispatch returns
+/// 429 (all channels exhausted).
+#[tokio::test]
+async fn dispatch_no_available_channel() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("Should not reach")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let state = build_test_state(vec![channel_config_disabled(
+        "00000000-0000-0000-0000-000000000001",
+        "disabled-channel",
+        &mock_server.uri(),
+        1,
+    )]);
+
+    let headers = HeaderMap::new();
+    let body = chat_request_body("gpt-4", "No channel available");
+    let provider = openai_provider();
+
+    let response = dispatch(&state, &headers, &body, &provider).await;
+
+    assert_eq!(
+        response_status(&response),
+        429,
+        "dispatch should return 429 when all channels are disabled"
+    );
+    let json = response_json(response).await;
+    assert_eq!(
+        json["error"]["code"], "all_channels_rate_limited",
+        "error code should be all_channels_rate_limited"
+    );
+
+    // The mock server should not have received any requests
+    let received = mock_server.received_requests().await.unwrap();
+    assert!(
+        received.is_empty(),
+        "No requests should reach the upstream when all channels are disabled"
     );
 }
