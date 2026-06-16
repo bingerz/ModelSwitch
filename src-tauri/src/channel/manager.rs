@@ -215,3 +215,241 @@ impl ChannelManager {
         *channels = new_channels;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::channel::{Channel, ChannelStatus, Credential, CredentialType, Provider};
+    use crate::credential::file_store::FileCredentialStore;
+    use chrono::{Duration, Utc};
+
+    // -- Test helpers ---------------------------------------------------------
+
+    fn make_test_manager() -> ChannelManager {
+        let config = AppConfig {
+            gateway: GatewayConfig {
+                circuit_breaker_minutes: 5,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let credential_store: SharedCredentialStore = Arc::new(FileCredentialStore::new());
+        ChannelManager::new(&config, credential_store)
+    }
+
+    fn make_test_channel(id: Uuid, name: &str) -> Channel {
+        Channel {
+            id,
+            name: name.to_string(),
+            provider: Provider::OpenAI,
+            priority: 1,
+            weight: 1,
+            cost_per_token: None,
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
+            credential: Credential {
+                cred_type: CredentialType::ApiKey,
+                key_ref: "test".to_string(),
+                api_key: Some("sk-test".to_string()),
+                expires_at: None,
+            },
+            enabled: true,
+            status: ChannelStatus::Healthy,
+            circuit_open_until: None,
+            base_url: "https://api.openai.com/v1".to_string(),
+            model_mapping: HashMap::new(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            avg_latency_ms: 0,
+            consecutive_failures: 0,
+            cooldown_minutes: None,
+            rpm_limit: None,
+            tpm_limit: None,
+            account_group: None,
+            failure_window_start: None,
+            window_failure_count: 0,
+            max_concurrent: None,
+            api_keys: vec![],
+        }
+    }
+
+    // -- CRUD tests -----------------------------------------------------------
+
+    #[tokio::test]
+    async fn create_adds_channel_to_list() {
+        let manager = make_test_manager();
+        let channel = make_test_channel(Uuid::new_v4(), "test-create");
+        let created = manager.create(channel).await;
+
+        let list = manager.list().await;
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, created.id);
+        assert_eq!(list[0].name, "test-create");
+    }
+
+    #[tokio::test]
+    async fn delete_removes_channel() {
+        let manager = make_test_manager();
+        let id = Uuid::new_v4();
+        let channel = make_test_channel(id, "test-delete");
+        manager.create(channel).await;
+
+        assert!(manager.delete(id).await);
+
+        let list = manager.list().await;
+        assert!(list.is_empty());
+    }
+
+    #[tokio::test]
+    async fn update_modifies_channel() {
+        let manager = make_test_manager();
+        let id = Uuid::new_v4();
+        let channel = make_test_channel(id, "original");
+        manager.create(channel).await;
+
+        let mut updated = manager.get(id).await.unwrap();
+        updated.name = "updated".to_string();
+        updated.priority = 5;
+        manager.update(id, updated).await;
+
+        let fetched = manager.get(id).await.unwrap();
+        assert_eq!(fetched.name, "updated");
+        assert_eq!(fetched.priority, 5);
+    }
+
+    #[tokio::test]
+    async fn list_returns_all_channels() {
+        let manager = make_test_manager();
+        for i in 0..3 {
+            let ch = make_test_channel(Uuid::new_v4(), &format!("ch-{i}"));
+            manager.create(ch).await;
+        }
+
+        let list = manager.list().await;
+        assert_eq!(list.len(), 3);
+    }
+
+    // -- Circuit breaker tests ------------------------------------------------
+
+    #[tokio::test]
+    async fn record_failure_opens_circuit_on_threshold() {
+        let manager = make_test_manager();
+        let id = Uuid::new_v4();
+        let channel = make_test_channel(id, "cb-threshold");
+        manager.create(channel).await;
+
+        // Simulate 5 failures within the 5-minute sliding window via
+        // Channel::record_window_failure. The 5th call should signal that
+        // the circuit breaker threshold has been reached.
+        let mut should_open = false;
+        for _ in 0..5 {
+            let mut ch = manager.get(id).await.unwrap();
+            should_open = ch.record_window_failure();
+            manager.update(id, ch).await;
+        }
+        assert!(should_open);
+
+        // Dispatch would then call mark_circuit_open to trip the breaker.
+        manager.mark_circuit_open(id).await;
+
+        let ch = manager.get(id).await.unwrap();
+        assert_eq!(ch.status, ChannelStatus::CircuitOpen);
+        assert!(ch.circuit_open_until.is_some());
+    }
+
+    #[tokio::test]
+    async fn record_failure_resets_window_after_expiry() {
+        let manager = make_test_manager();
+        let id = Uuid::new_v4();
+
+        // Pre-seed the channel with a stale window (6 minutes ago) that
+        // already accumulated 4 failures.
+        let mut channel = make_test_channel(id, "cb-window");
+        channel.failure_window_start = Some(Utc::now() - Duration::minutes(6));
+        channel.window_failure_count = 4;
+        manager.create(channel).await;
+
+        // A new failure after the window expired should reset the window
+        // and start counting from 1.
+        let mut ch = manager.get(id).await.unwrap();
+        let should_open = ch.record_window_failure();
+        manager.update(id, ch).await;
+
+        assert!(
+            !should_open,
+            "window should have reset, not enough failures to open"
+        );
+
+        let ch = manager.get(id).await.unwrap();
+        assert_eq!(ch.window_failure_count, 1);
+        let window_start = ch.failure_window_start.unwrap();
+        assert!(Utc::now() - window_start < Duration::seconds(5));
+    }
+
+    #[tokio::test]
+    async fn circuit_recovers_after_cooldown() {
+        let manager = make_test_manager();
+        let id = Uuid::new_v4();
+        let channel = make_test_channel(id, "cb-recovery");
+        manager.create(channel).await;
+
+        // Open the circuit.
+        manager.mark_circuit_open(id).await;
+        let ch = manager.get(id).await.unwrap();
+        assert_eq!(ch.status, ChannelStatus::CircuitOpen);
+
+        // Simulate cooldown expiry by rewinding circuit_open_until into the
+        // past, then persist via update().
+        let mut ch = manager.get(id).await.unwrap();
+        ch.circuit_open_until = Some(Utc::now() - Duration::minutes(1));
+        manager.update(id, ch).await;
+
+        // list() calls recover_if_expired() on every channel, transitioning
+        // CircuitOpen -> HalfOpen when the cooldown has elapsed.
+        let list = manager.list().await;
+        let recovered = list.iter().find(|c| c.id == id).unwrap();
+        assert_eq!(recovered.status, ChannelStatus::HalfOpen);
+        assert!(recovered.circuit_open_until.is_none());
+    }
+
+    // -- Credential rotation tests --------------------------------------------
+
+    #[tokio::test]
+    async fn get_credential_rotates_keys() {
+        let manager = make_test_manager();
+        let id = Uuid::new_v4();
+
+        let mut channel = make_test_channel(id, "key-rotation");
+        channel.credential.api_key = Some("key1".to_string());
+        channel.api_keys = vec!["key2".to_string(), "key3".to_string()];
+        manager.create(channel).await;
+
+        // all_keys() = [key1, key2, key3]; round-robin index advances each call.
+        let k1 = manager.get_credential(id).await.unwrap();
+        let k2 = manager.get_credential(id).await.unwrap();
+        let k3 = manager.get_credential(id).await.unwrap();
+        let k4 = manager.get_credential(id).await.unwrap();
+
+        assert_eq!(k1, "key1");
+        assert_eq!(k2, "key2");
+        assert_eq!(k3, "key3");
+        assert_eq!(k4, "key1");
+    }
+
+    #[tokio::test]
+    async fn get_credential_returns_primary_when_no_rotation_keys() {
+        let manager = make_test_manager();
+        let id = Uuid::new_v4();
+
+        // make_test_channel sets credential.api_key = Some("sk-test") and
+        // api_keys = vec![] — no rotation keys configured.
+        let channel = make_test_channel(id, "single-key");
+        manager.create(channel).await;
+
+        let k1 = manager.get_credential(id).await.unwrap();
+        let k2 = manager.get_credential(id).await.unwrap();
+
+        assert_eq!(k1, "sk-test");
+        assert_eq!(k2, "sk-test");
+    }
+}
