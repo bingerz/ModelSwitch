@@ -7,7 +7,7 @@
 
 | 指标 | 初始 | 最新 | 变化 |
 |------|------|------|------|
-| 测试数量 | 157 | 244 | +87 (+55%) |
+| 测试数量 | 157 | 246 | +89 (+57%) |
 | Clippy 警告 | 0 (lib) | 0 (all) | 零警告全覆盖 |
 | 缓存哈希 | u64 DefaultHasher | u128 BLAKE3 | 128-bit 抗碰撞 |
 | 路由策略 | 3 种 | 5 种 | +用量优先, +最低成本 |
@@ -69,6 +69,24 @@
 | 分层定价 (表达式引擎) | ⬜ 长期 |
 | 自适应路由 (Thompson Sampling) | ⬜ 长期 |
 
+## Phase 1-2: 性能与功能优化 (2026-06-16)
+
+### 性能优化 (Phase 1)
+
+| 项目 | 状态 | Commit |
+|------|------|--------|
+| 缓存惰性驱逐 (get() O(n)→O(1) + 60s 后台扫描) | ✅ | 7aaa0bf |
+| 指数退避重试 + 抖动 (100ms→5s, 防惊群) | ✅ | 7aaa0bf |
+| 健康检查并行化 (join_all 替代顺序循环) | ✅ | 7aaa0bf |
+
+### 功能增强 (Phase 2)
+
+| 项目 | 状态 | Commit |
+|------|------|--------|
+| 虚拟密钥模型白名单 (前缀匹配, 403 Forbidden) | ✅ | ca9d409 |
+| 可配置重试退避参数 (retry_base_ms/retry_max_ms) | ✅ | ca9d409 |
+| Channel::from_config() 构建去重 | ✅ | ca9d409 |
+
 ## 架构改进 ✅ 已完成
 
 | 项目 | 状态 | Commit |
@@ -88,7 +106,7 @@
 
 ## 实施总结
 
-### 已实现的改进 (18 项)
+### 已实现的改进 (24 项)
 
 1. HTTP 连接池调优 — connect_timeout/pool_idle/keepalive/nodelay
 2. BLAKE3 缓存哈希 — 128-bit 抗碰撞
@@ -108,6 +126,12 @@
 16. 提供商预算限制 — per-provider daily/monthly caps + admin API
 17. 流式响应缓存 — SSE text 累积 + cache hit replay
 18. Channel 构建去重 — From<ChannelConfig> for Channel
+19. 缓存惰性驱逐 — get() 从 O(n) 降至 O(1)，60s 后台扫描过期条目
+20. 指数退避重试 + 抖动 — 100ms→5s 指数退避 + 随机抖动防惊群
+21. 健康检查并行化 — join_all 替代顺序循环，多通道同时探测
+22. 虚拟密钥模型白名单 — 前缀匹配，不在白名单内返回 403 Forbidden
+23. 可配置重试退避参数 — retry_base_ms / retry_max_ms 按通道自定义
+24. Channel 构建去重优化 — from_config() 构建流程精简
 
 ### 未实现 (长期方向)
 
