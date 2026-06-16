@@ -64,11 +64,12 @@ pub(super) async fn handle_streaming_success(
     original_model: &str,
 ) -> Response {
     let is_gemini = provider.is_gemini_stream();
-    let (stream_resp, telemetry_chunks, raw_sse) = sse_stream_response_with_telemetry(
-        resp.bytes_stream(),
-        is_gemini,
-        upstream_model.to_string(),
-    );
+    let (stream_resp, telemetry_chunks, raw_sse, stream_done) =
+        sse_stream_response_with_telemetry(
+            resp.bytes_stream(),
+            is_gemini,
+            upstream_model.to_string(),
+        );
 
     let est_tokens = estimate_tokens(body, true);
     let estimated_cost = channel
@@ -136,39 +137,23 @@ pub(super) async fn handle_streaming_success(
         let bg_original_model = original_model.to_string();
         let bg_body = body.clone();
         let bg_raw_sse = Arc::clone(&raw_sse);
+        let bg_stream_done = Arc::clone(&stream_done);
         crate::spawn_bg(async move {
-            // Wait for chunks to accumulate (stream finishing).
+            // Wait for the upstream stream to be fully consumed by the
+            // stream-forwarding task.  `Notify` stores a permit if
+            // `notify_one` fires before we register, so the ordering
+            // between this task and the stream task does not matter.
             //
-            // With disconnect protection in sse_stream_response_with_telemetry,
-            // the upstream stream is always fully drained by the background task
-            // (even if the client disconnects mid-stream), so telemetry will
-            // always complete and budget reconciliation will not be lost.
+            // A 60 s safety-net timeout guards against any unexpected
+            // failure to signal (e.g. the stream task panicking).
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(60),
+                bg_stream_done.notified(),
+            )
+            .await;
             let chunks = {
-                let mut prev_len = 0usize;
-                let mut empty_rounds = 0u32;
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                    let cur_len = {
-                        let guard = telemetry_chunks.lock().unwrap_or_else(|e| e.into_inner());
-                        guard.len()
-                    };
-                    if cur_len > 0 && cur_len == prev_len {
-                        break telemetry_chunks
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .clone();
-                    }
-                    prev_len = cur_len;
-                    if cur_len == 0 {
-                        empty_rounds += 1;
-                        if empty_rounds > 150 {
-                            break telemetry_chunks
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .clone();
-                        }
-                    }
-                }
+                let guard = telemetry_chunks.lock().unwrap_or_else(|e| e.into_inner());
+                guard.clone()
             };
             // Cache the accumulated SSE text for streaming cache hits.
             // Must happen before in_flight.complete for coalesced waiters.

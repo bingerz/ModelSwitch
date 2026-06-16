@@ -5,6 +5,7 @@ use futures::stream::Stream;
 use reqwest::StatusCode;
 use std::sync::Arc;
 use std::sync::Mutex;
+use tokio::sync::Notify;
 use tokio_stream::StreamExt;
 
 /// Create an SSE streaming response that accumulates chunks for telemetry
@@ -15,12 +16,22 @@ use tokio_stream::StreamExt;
 /// Uses an mpsc channel so that a background task owns the upstream stream.
 /// If the client disconnects mid-stream, the task continues draining the
 /// upstream to ensure telemetry (and therefore budget reconciliation) completes.
+///
+/// Returns the response, a shared chunk list for post-stream cost tracking,
+/// a shared raw SSE text buffer for caching, and a `Notify` that is signaled
+/// once the upstream stream has been fully consumed (allowing the caller to
+/// react immediately without polling).
 #[allow(clippy::type_complexity)]
 pub fn sse_stream_response_with_telemetry(
     upstream_stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
     translate_gemini: bool,
     model: String,
-) -> (Response, Arc<Mutex<Vec<String>>>, Arc<Mutex<String>>) {
+) -> (
+    Response,
+    Arc<Mutex<Vec<String>>>,
+    Arc<Mutex<String>>,
+    Arc<Notify>,
+) {
     use tokio::sync::mpsc;
 
     let chunks: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
@@ -29,106 +40,119 @@ pub fn sse_stream_response_with_telemetry(
     let raw_sse: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let raw_sse_clone = Arc::clone(&raw_sse);
 
+    let stream_done: Arc<Notify> = Arc::new(Notify::new());
+
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(32);
 
-    tokio::spawn(async move {
-        let mut upstream = Box::pin(upstream_stream);
+    {
+        let stream_done = Arc::clone(&stream_done);
+        tokio::spawn(async move {
+            let mut upstream = Box::pin(upstream_stream);
 
-        while let Some(result) = upstream.next().await {
-            let bytes = match result {
-                Ok(b) => b,
-                Err(e) => {
-                    // Forward error to client if still connected
-                    let _ = tx.send(Err(std::io::Error::other(e))).await;
-                    break;
-                }
-            };
-
-            let text = String::from_utf8_lossy(&bytes);
-
-            // Accumulate data lines for telemetry (ALWAYS, even if client gone)
-            {
-                let mut guard = chunks_clone.lock().unwrap_or_else(|e| e.into_inner());
-                for line in text.split('\n') {
-                    let trimmed = line.trim();
-                    if trimmed.starts_with("data: ") {
-                        let data = trimmed.strip_prefix("data: ").unwrap_or("");
-                        if !data.is_empty() && data != "[DONE]" {
-                            guard.push(data.to_string());
-                        }
+            while let Some(result) = upstream.next().await {
+                let bytes = match result {
+                    Ok(b) => b,
+                    Err(e) => {
+                        // Forward error to client if still connected
+                        let _ = tx.send(Err(std::io::Error::other(e))).await;
+                        break;
                     }
-                }
-            }
+                };
 
-            // Translate if needed
-            let output_bytes = if translate_gemini {
-                use crate::proxy::translate::gemini_stream_to_openai;
-                let mut output = String::new();
-                for line in text.split('\n') {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() || trimmed.starts_with(':') {
-                        output.push_str(line);
-                        output.push('\n');
-                        continue;
-                    }
-                    let json_str = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
-                    if json_str == "[DONE]" {
-                        output.push_str("data: [DONE]\n\n");
-                        continue;
-                    }
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
-                        if let Some(translated) = gemini_stream_to_openai(&v, &model) {
-                            output.push_str(&translated);
-                        } else {
-                            output.push_str(line);
-                            output.push_str("\n\n");
-                        }
-                    } else {
-                        output.push_str(line);
-                        output.push('\n');
-                    }
-                }
-                Bytes::from(output)
-            } else {
-                bytes
-            };
+                let text = String::from_utf8_lossy(&bytes);
 
-            // Accumulate raw SSE text for caching (ALWAYS, even if client gone)
-            {
-                let mut raw = raw_sse_clone.lock().unwrap_or_else(|e| e.into_inner());
-                let chunk_text = String::from_utf8_lossy(&output_bytes);
-                raw.push_str(&chunk_text);
-            }
-
-            // Forward to client — if disconnected, continue draining upstream
-            // to ensure telemetry completes. Ignore SendError.
-            if tx.send(Ok(output_bytes)).await.is_err() {
-                // Client disconnected — keep draining upstream for telemetry
-                // but don't attempt to forward.
-                while let Some(result) = upstream.next().await {
-                    if let Ok(bytes) = result {
-                        let text = String::from_utf8_lossy(&bytes);
-                        let mut guard = chunks_clone.lock().unwrap_or_else(|e| e.into_inner());
-                        for line in text.split('\n') {
-                            let trimmed = line.trim();
-                            if trimmed.starts_with("data: ") {
-                                let data = trimmed.strip_prefix("data: ").unwrap_or("");
-                                if !data.is_empty() && data != "[DONE]" {
-                                    guard.push(data.to_string());
-                                }
+                // Accumulate data lines for telemetry (ALWAYS, even if client gone)
+                {
+                    let mut guard = chunks_clone.lock().unwrap_or_else(|e| e.into_inner());
+                    for line in text.split('\n') {
+                        let trimmed = line.trim();
+                        if trimmed.starts_with("data: ") {
+                            let data = trimmed.strip_prefix("data: ").unwrap_or("");
+                            if !data.is_empty() && data != "[DONE]" {
+                                guard.push(data.to_string());
                             }
                         }
-                        // Accumulate raw SSE text for caching (drain path)
-                        {
-                            let mut raw = raw_sse_clone.lock().unwrap_or_else(|e| e.into_inner());
-                            raw.push_str(&text);
-                        }
                     }
                 }
-                break;
+
+                // Translate if needed
+                let output_bytes = if translate_gemini {
+                    use crate::proxy::translate::gemini_stream_to_openai;
+                    let mut output = String::new();
+                    for line in text.split('\n') {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() || trimmed.starts_with(':') {
+                            output.push_str(line);
+                            output.push('\n');
+                            continue;
+                        }
+                        let json_str = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
+                        if json_str == "[DONE]" {
+                            output.push_str("data: [DONE]\n\n");
+                            continue;
+                        }
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
+                            if let Some(translated) = gemini_stream_to_openai(&v, &model) {
+                                output.push_str(&translated);
+                            } else {
+                                output.push_str(line);
+                                output.push_str("\n\n");
+                            }
+                        } else {
+                            output.push_str(line);
+                            output.push('\n');
+                        }
+                    }
+                    Bytes::from(output)
+                } else {
+                    bytes
+                };
+
+                // Accumulate raw SSE text for caching (ALWAYS, even if client gone)
+                {
+                    let mut raw = raw_sse_clone.lock().unwrap_or_else(|e| e.into_inner());
+                    let chunk_text = String::from_utf8_lossy(&output_bytes);
+                    raw.push_str(&chunk_text);
+                }
+
+                // Forward to client — if disconnected, continue draining upstream
+                // to ensure telemetry completes. Ignore SendError.
+                if tx.send(Ok(output_bytes)).await.is_err() {
+                    // Client disconnected — keep draining upstream for telemetry
+                    // but don't attempt to forward.
+                    while let Some(result) = upstream.next().await {
+                        if let Ok(bytes) = result {
+                            let text = String::from_utf8_lossy(&bytes);
+                            let mut guard =
+                                chunks_clone.lock().unwrap_or_else(|e| e.into_inner());
+                            for line in text.split('\n') {
+                                let trimmed = line.trim();
+                                if trimmed.starts_with("data: ") {
+                                    let data = trimmed.strip_prefix("data: ").unwrap_or("");
+                                    if !data.is_empty() && data != "[DONE]" {
+                                        guard.push(data.to_string());
+                                    }
+                                }
+                            }
+                            // Accumulate raw SSE text for caching (drain path)
+                            {
+                                let mut raw =
+                                    raw_sse_clone.lock().unwrap_or_else(|e| e.into_inner());
+                                raw.push_str(&text);
+                            }
+                        }
+                    }
+                    break;
+                }
             }
-        }
-    });
+
+            // Signal that the upstream stream has been fully consumed so the
+            // telemetry/budget reconciliation task can proceed immediately
+            // without polling. `notify_one` stores a permit if no waiter is
+            // registered yet, so ordering is not significant.
+            stream_done.notify_one();
+        });
+    }
 
     let body = Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx));
 
@@ -141,7 +165,7 @@ pub fn sse_stream_response_with_telemetry(
         .body(body)
         .unwrap();
 
-    (response, chunks, raw_sse)
+    (response, chunks, raw_sse, stream_done)
 }
 
 /// Create a non-streaming JSON response.
@@ -330,7 +354,7 @@ mod tests {
         ];
         let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
 
-        let (_response, _telemetry, raw_sse) =
+        let (_response, _telemetry, raw_sse, stream_done) =
             sse_stream_response_with_telemetry(upstream, false, "gpt-4".to_string());
 
         // Consume the response body so the background task completes
@@ -338,8 +362,8 @@ mod tests {
         let body_bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
         assert!(!body_bytes.is_empty());
 
-        // Allow background task to finish writing
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // Wait for the stream task to finish writing all chunks
+        stream_done.notified().await;
 
         let raw = raw_sse.lock().unwrap_or_else(|e| e.into_inner());
         assert!(raw.contains("Hello"), "raw_sse should contain 'Hello': {:?}", raw);
