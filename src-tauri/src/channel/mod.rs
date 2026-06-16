@@ -295,4 +295,10 @@ impl Channel {
     }
 }
 
+impl From<&ChannelConfig> for Channel {
+    fn from(c: &ChannelConfig) -> Self {
+        Channel::from_config(c)
+    }
+}
+
 pub type SharedChannels = Arc<RwLock<Vec<Channel>>>;

@@ -162,6 +162,25 @@ pub(crate) async fn dispatch(
     } = meta;
     let vk_id = extract_virtual_key_id(original_headers);
 
+    // Check virtual key model whitelist
+    if let Some(vk) = vk_id {
+        if let Some(virtual_key) = state.billing.virtual_key_store.get(vk).await {
+            if !virtual_key.is_model_allowed(&original_model) {
+                let error_body = serde_json::json!({
+                    "error": {
+                        "message": format!("Model '{}' is not allowed for this virtual key", original_model),
+                        "type": "model_not_allowed",
+                        "code": "virtual_key_model_not_allowed"
+                    }
+                });
+                return json_response(
+                    reqwest::StatusCode::FORBIDDEN,
+                    error_body.to_string(),
+                );
+            }
+        }
+    }
+
     // Pre-charge estimated cost for virtual key budget enforcement.
     // This prevents concurrent requests from all passing the budget check
     // before any spend is recorded. The reservation is reconciled on failure
@@ -299,8 +318,8 @@ pub(crate) async fn dispatch(
                 AttemptOutcome::Respond(response) => return response,
                 AttemptOutcome::Retry => {
                     // Exponential backoff with jitter to avoid thundering herd
-                    let base_ms = 100u64;
-                    let max_ms = 5000u64;
+                    let base_ms = state.gateway.retry_base_ms;
+                    let max_ms = state.gateway.retry_max_ms;
                     let exp_delay = std::cmp::min(
                         base_ms.saturating_mul(1u64 << attempt.min(6)),
                         max_ms,

@@ -135,6 +135,12 @@ pub struct GatewayConfig {
     /// Per-provider budget limits. Key = provider name (e.g., "openai", "anthropic").
     #[serde(default)]
     pub provider_budgets: HashMap<String, crate::provider_budget::ProviderBudgetConfig>,
+    /// Base delay in milliseconds for exponential retry backoff (default 100).
+    #[serde(default = "default_retry_base_ms")]
+    pub retry_base_ms: u64,
+    /// Maximum delay in milliseconds for retry backoff (default 5000).
+    #[serde(default = "default_retry_max_ms")]
+    pub retry_max_ms: u64,
 }
 
 /// Privacy guardrail configuration for the sanitizer middleware.
@@ -325,6 +331,12 @@ fn default_stream_ttft_timeout_secs() -> Option<u64> {
 fn default_http_pool_size() -> usize {
     4
 }
+fn default_retry_base_ms() -> u64 {
+    100
+}
+fn default_retry_max_ms() -> u64 {
+    5000
+}
 fn default_enabled() -> bool {
     true
 }
@@ -366,6 +378,8 @@ impl Default for GatewayConfig {
                 custom_patterns: vec![],
             },
             provider_budgets: HashMap::new(),
+            retry_base_ms: default_retry_base_ms(),
+            retry_max_ms: default_retry_max_ms(),
         }
     }
 }

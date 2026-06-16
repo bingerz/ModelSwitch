@@ -19,6 +19,8 @@ pub struct CreateVirtualKeyRequest {
     pub daily_budget_cents: Option<u64>,
     #[serde(default)]
     pub monthly_budget_cents: Option<u64>,
+    #[serde(default)]
+    pub allowed_models: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -31,6 +33,8 @@ pub struct UpdateVirtualKeyRequest {
     pub monthly_budget_cents: Option<Option<u64>>,
     #[serde(default)]
     pub enabled: Option<bool>,
+    #[serde(default)]
+    pub allowed_models: Option<Option<Vec<String>>>,
 }
 
 /// Response shape for the list endpoint -- never exposes `key_hash`.
@@ -44,6 +48,7 @@ pub struct VirtualKeyResponse {
     pub enabled: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub spend: crate::virtual_key::VirtualKeySpend,
+    pub allowed_models: Option<Vec<String>>,
 }
 
 impl From<&crate::virtual_key::VirtualKey> for VirtualKeyResponse {
@@ -57,6 +62,7 @@ impl From<&crate::virtual_key::VirtualKey> for VirtualKeyResponse {
             enabled: k.enabled,
             created_at: k.created_at,
             spend: k.spend.clone(),
+            allowed_models: k.allowed_models.clone(),
         }
     }
 }
@@ -105,7 +111,12 @@ pub async fn create_virtual_key(
     let (vk, plaintext) = state
         .billing
         .virtual_key_store
-        .create(req.name, req.daily_budget_cents, req.monthly_budget_cents)
+        .create(
+            req.name,
+            req.daily_budget_cents,
+            req.monthly_budget_cents,
+            req.allowed_models,
+        )
         .await;
     persist_virtual_keys(&state).await;
     let body = serde_json::json!({
@@ -118,6 +129,7 @@ pub async fn create_virtual_key(
         "enabled": vk.enabled,
         "created_at": vk.created_at,
         "spend": vk.spend,
+        "allowed_models": vk.allowed_models,
     });
     Ok(Json(ApiResponse::ok(body)))
 }
@@ -137,6 +149,7 @@ pub async fn update_virtual_key(
             req.daily_budget_cents,
             req.monthly_budget_cents,
             req.enabled,
+            req.allowed_models,
         )
         .await
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Virtual key not found"))?;

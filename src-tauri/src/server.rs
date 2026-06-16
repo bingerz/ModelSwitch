@@ -172,6 +172,8 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             max_retries,
             model_fallbacks,
             routing_strategy,
+            retry_base_ms: config.gateway.retry_base_ms,
+            retry_max_ms: config.gateway.retry_max_ms,
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),

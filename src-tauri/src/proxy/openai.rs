@@ -27,6 +27,8 @@ pub struct GatewayParams {
     pub max_retries: u32,
     pub model_fallbacks: HashMap<String, Vec<String>>,
     pub routing_strategy: String,
+    pub retry_base_ms: u64,
+    pub retry_max_ms: u64,
 }
 
 /// Router state (session affinity, active request tracking, latency tracking).

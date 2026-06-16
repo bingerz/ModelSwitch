@@ -36,6 +36,10 @@ pub struct VirtualKey {
     /// Spend tracking (mutable, updated by accumulate_spend).
     #[serde(default)]
     pub spend: VirtualKeySpend,
+    /// Allowed models. None = all models allowed. Some(vec) = only these models.
+    /// Supports prefix matching: "gpt-4" matches "gpt-4", "gpt-4o", "gpt-4-turbo", etc.
+    #[serde(default)]
+    pub allowed_models: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -95,6 +99,21 @@ impl VirtualKey {
             }
         }
         false
+    }
+
+    /// Check if a model is allowed for this key.
+    /// If allowed_models is None, all models are permitted.
+    /// If allowed_models is Some, the model must match one of the entries.
+    /// Prefix matching: "gpt-4" in the whitelist matches "gpt-4o", "gpt-4-turbo", etc.
+    pub fn is_model_allowed(&self, model: &str) -> bool {
+        match &self.allowed_models {
+            None => true,
+            Some(allowed) => {
+                allowed.iter().any(|allowed_model| {
+                    model == allowed_model || model.starts_with(allowed_model)
+                })
+            }
+        }
     }
 }
 
@@ -160,6 +179,7 @@ impl VirtualKeyStore {
         name: String,
         daily_budget_cents: Option<u64>,
         monthly_budget_cents: Option<u64>,
+        allowed_models: Option<Vec<String>>,
     ) -> (VirtualKey, String) {
         let plaintext = format!("ms-vk-{}", Uuid::new_v4().simple());
         let hash = sha256_hex(&plaintext);
@@ -175,6 +195,7 @@ impl VirtualKeyStore {
             enabled: true,
             created_at: Utc::now(),
             spend: VirtualKeySpend::default(),
+            allowed_models,
         };
         let vk_clone = vk.clone();
         self.store.write().await.insert(vk.id, vk);
@@ -203,6 +224,7 @@ impl VirtualKeyStore {
         daily_budget_cents: Option<Option<u64>>,
         monthly_budget_cents: Option<Option<u64>>,
         enabled: Option<bool>,
+        allowed_models: Option<Option<Vec<String>>>,
     ) -> Option<VirtualKey> {
         let mut keys = self.store.write().await;
         let vk = keys.get_mut(&id)?;
@@ -217,6 +239,9 @@ impl VirtualKeyStore {
         }
         if let Some(e) = enabled {
             vk.enabled = e;
+        }
+        if let Some(am) = allowed_models {
+            vk.allowed_models = am;
         }
         Some(vk.clone())
     }
@@ -394,7 +419,7 @@ mod tests {
     async fn create_generates_key_with_ms_vk_prefix() {
         let store = VirtualKeyStore::new();
         let (vk, plaintext) = store
-            .create("test".to_string(), Some(100), Some(1000))
+            .create("test".to_string(), Some(100), Some(1000), None)
             .await;
         assert!(plaintext.starts_with("ms-vk-"), "prefix was: {plaintext}");
         assert!(plaintext.len() > "ms-vk-".len() + 8);
@@ -409,7 +434,7 @@ mod tests {
     #[tokio::test]
     async fn validate_rejects_wrong_key() {
         let store = VirtualKeyStore::new();
-        let _ = store.create("test".to_string(), None, None).await;
+        let _ = store.create("test".to_string(), None, None, None).await;
         let result = store.validate("ms-vk-wrongkey").await;
         assert!(result.is_none());
     }
@@ -417,7 +442,7 @@ mod tests {
     #[tokio::test]
     async fn validate_returns_key_when_correct() {
         let store = VirtualKeyStore::new();
-        let (created, plaintext) = store.create("test".to_string(), None, None).await;
+        let (created, plaintext) = store.create("test".to_string(), None, None, None).await;
         let validated = store.validate(&plaintext).await;
         assert!(validated.is_some());
         assert_eq!(validated.unwrap().id, created.id);
@@ -426,9 +451,9 @@ mod tests {
     #[tokio::test]
     async fn validate_returns_none_when_disabled() {
         let store = VirtualKeyStore::new();
-        let (created, plaintext) = store.create("test".to_string(), None, None).await;
+        let (created, plaintext) = store.create("test".to_string(), None, None, None).await;
         store
-            .update(created.id, None, None, None, Some(false))
+            .update(created.id, None, None, None, Some(false), None)
             .await;
         let validated = store.validate(&plaintext).await;
         assert!(validated.is_none());
@@ -437,7 +462,7 @@ mod tests {
     #[tokio::test]
     async fn accumulate_spend_updates_daily_and_monthly() {
         let store = VirtualKeyStore::new();
-        let (vk, _plaintext) = store.create("test".to_string(), None, None).await;
+        let (vk, _plaintext) = store.create("test".to_string(), None, None, None).await;
         store.accumulate_spend(vk.id, 50).await;
         store.accumulate_spend(vk.id, 25).await;
         let fetched = store.get(vk.id).await.unwrap();
@@ -449,7 +474,7 @@ mod tests {
     #[tokio::test]
     async fn accumulate_spend_resets_stale_periods() {
         let store = VirtualKeyStore::new();
-        let (mut vk, _plaintext) = store.create("test".to_string(), None, None).await;
+        let (mut vk, _plaintext) = store.create("test".to_string(), None, None, None).await;
         // Manually backdate the spend to a stale day/month
         vk.spend.today = DailySpend {
             date: "1999-01-01".to_string(),
@@ -499,6 +524,7 @@ mod tests {
                 },
                 total_cents: 100,
             },
+            allowed_models: None,
         };
         assert!(vk.is_budget_exceeded());
     }
@@ -527,6 +553,7 @@ mod tests {
                 },
                 total_cents: 500,
             },
+            allowed_models: None,
         };
         assert!(vk.is_budget_exceeded());
     }
@@ -555,6 +582,7 @@ mod tests {
                 },
                 total_cents: 1_000_000,
             },
+            allowed_models: None,
         };
         assert!(!vk.is_budget_exceeded());
     }
@@ -579,7 +607,7 @@ mod tests {
     async fn reserve_spend_charges_budgeted_key() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000))
+            .create("test".to_string(), Some(100), Some(1000), None)
             .await;
         let result = store.reserve_spend(vk.id, 10).await;
         assert!(matches!(result, ReserveResult::Reserved(n) if n == 10));
@@ -592,7 +620,7 @@ mod tests {
     #[tokio::test]
     async fn reserve_spend_skips_unlimited_key() {
         let store = VirtualKeyStore::new();
-        let (vk, _) = store.create("test".to_string(), None, None).await;
+        let (vk, _) = store.create("test".to_string(), None, None, None).await;
         let result = store.reserve_spend(vk.id, 10).await;
         assert!(matches!(result, ReserveResult::NoBudget));
         let fetched = store.get(vk.id).await.unwrap();
@@ -603,9 +631,9 @@ mod tests {
     async fn reserve_spend_skips_disabled_key() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000))
+            .create("test".to_string(), Some(100), Some(1000), None)
             .await;
-        store.update(vk.id, None, None, None, Some(false)).await;
+        store.update(vk.id, None, None, None, Some(false), None).await;
         let result = store.reserve_spend(vk.id, 10).await;
         assert!(matches!(result, ReserveResult::NoBudget));
     }
@@ -621,7 +649,7 @@ mod tests {
     async fn reserve_spend_resets_stale_periods() {
         let store = VirtualKeyStore::new();
         let (mut vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000))
+            .create("test".to_string(), Some(100), Some(1000), None)
             .await;
         vk.spend.today = DailySpend {
             date: "1999-01-01".to_string(),
@@ -652,7 +680,7 @@ mod tests {
     async fn reserve_spend_rejects_when_daily_budget_exceeded() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000))
+            .create("test".to_string(), Some(100), Some(1000), None)
             .await;
         // Accumulate 90 cents of spend
         store.accumulate_spend(vk.id, 90).await;
@@ -674,7 +702,7 @@ mod tests {
         let store = VirtualKeyStore::new();
         // Daily budget is large so only monthly triggers
         let (vk, _) = store
-            .create("test".to_string(), Some(10_000), Some(500))
+            .create("test".to_string(), Some(10_000), Some(500), None)
             .await;
         // Accumulate 490 cents of spend
         store.accumulate_spend(vk.id, 490).await;
@@ -695,7 +723,7 @@ mod tests {
     async fn reserve_spend_allows_exact_limit_boundary() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000))
+            .create("test".to_string(), Some(100), Some(1000), None)
             .await;
         // Accumulate 90 cents, then reserve exactly 10 → 90 + 10 = 100, not exceeding
         store.accumulate_spend(vk.id, 90).await;
@@ -709,7 +737,7 @@ mod tests {
     async fn reconcile_spend_refunds_when_actual_less() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000))
+            .create("test".to_string(), Some(100), Some(1000), None)
             .await;
         store.reserve_spend(vk.id, 50).await;
         store.reconcile_spend(vk.id, 50, 20).await;
@@ -723,7 +751,7 @@ mod tests {
     async fn reconcile_spend_charges_more_when_actual_greater() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000))
+            .create("test".to_string(), Some(100), Some(1000), None)
             .await;
         store.reserve_spend(vk.id, 20).await;
         store.reconcile_spend(vk.id, 20, 50).await;
@@ -737,7 +765,7 @@ mod tests {
     async fn reconcile_spend_noop_when_equal() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000))
+            .create("test".to_string(), Some(100), Some(1000), None)
             .await;
         store.reserve_spend(vk.id, 30).await;
         store.reconcile_spend(vk.id, 30, 30).await;
@@ -749,7 +777,7 @@ mod tests {
     async fn reconcile_spend_refunds_full_on_failure() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000))
+            .create("test".to_string(), Some(100), Some(1000), None)
             .await;
         store.reserve_spend(vk.id, 40).await;
         store.reconcile_spend(vk.id, 40, 0).await;
@@ -764,7 +792,7 @@ mod tests {
         // Simulate two concurrent requests reserving against the same budget
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000))
+            .create("test".to_string(), Some(100), Some(1000), None)
             .await;
         // First request reserves 30
         store.reserve_spend(vk.id, 30).await;
@@ -786,14 +814,14 @@ mod tests {
     async fn has_keys_reflects_state() {
         let store = VirtualKeyStore::new();
         assert!(!store.has_keys().await);
-        let _ = store.create("a".to_string(), None, None).await;
+        let _ = store.create("a".to_string(), None, None, None).await;
         assert!(store.has_keys().await);
     }
 
     #[tokio::test]
     async fn delete_removes_key() {
         let store = VirtualKeyStore::new();
-        let (vk, _) = store.create("a".to_string(), None, None).await;
+        let (vk, _) = store.create("a".to_string(), None, None, None).await;
         assert!(store.delete(vk.id).await);
         assert!(store.get(vk.id).await.is_none());
         assert!(!store.delete(vk.id).await);
@@ -810,7 +838,7 @@ mod tests {
 
         let store = VirtualKeyStore::with_store_path(path.clone());
         let (vk, plaintext) = store
-            .create("persisted".to_string(), Some(10), Some(100))
+            .create("persisted".to_string(), Some(10), Some(100), None)
             .await;
         store.accumulate_spend(vk.id, 5).await;
         store.persist().await.unwrap();
@@ -828,5 +856,46 @@ mod tests {
         assert!(v.is_some());
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn is_model_allowed_permits_all_when_none() {
+        let vk = VirtualKey {
+            id: Uuid::new_v4(),
+            key_hash: "deadbeef".to_string(),
+            key_prefix: "ms-vk-abcdef".to_string(),
+            name: "t".to_string(),
+            daily_budget_cents: None,
+            monthly_budget_cents: None,
+            enabled: true,
+            created_at: Utc::now(),
+            spend: VirtualKeySpend::default(),
+            allowed_models: None,
+        };
+        assert!(vk.is_model_allowed("gpt-4"));
+        assert!(vk.is_model_allowed("claude-3"));
+    }
+
+    #[test]
+    fn is_model_allowed_restricts_to_whitelist() {
+        let vk = VirtualKey {
+            id: Uuid::new_v4(),
+            key_hash: "deadbeef".to_string(),
+            key_prefix: "ms-vk-abcdef".to_string(),
+            name: "t".to_string(),
+            daily_budget_cents: None,
+            monthly_budget_cents: None,
+            enabled: true,
+            created_at: Utc::now(),
+            spend: VirtualKeySpend::default(),
+            allowed_models: Some(vec!["gpt-4".to_string(), "claude-3".to_string()]),
+        };
+        assert!(vk.is_model_allowed("gpt-4"));
+        assert!(vk.is_model_allowed("gpt-4o"));
+        assert!(vk.is_model_allowed("gpt-4-turbo"));
+        assert!(vk.is_model_allowed("claude-3"));
+        assert!(vk.is_model_allowed("claude-3-opus"));
+        assert!(!vk.is_model_allowed("gemini-pro"));
+        assert!(!vk.is_model_allowed("llama-2"));
     }
 }
