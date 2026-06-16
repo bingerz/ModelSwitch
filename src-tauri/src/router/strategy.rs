@@ -106,6 +106,38 @@ impl RoutingStrategy for LeastBusyStrategy {
     }
 }
 
+/// Lowest-cost selection: prefer channels with the cheapest blended cost.
+/// Computes a cost score from input_cost_per_mtok and output_cost_per_mtok,
+/// falling back to cost_per_token. Channels with no cost data are deprioritized.
+pub struct LowestCostStrategy;
+
+impl RoutingStrategy for LowestCostStrategy {
+    fn select(&self, candidates: &[Channel]) -> Option<Channel> {
+        if candidates.is_empty() {
+            return None;
+        }
+
+        fn channel_cost_score(c: &Channel) -> f64 {
+            if c.input_cost_per_mtok.is_some() || c.output_cost_per_mtok.is_some() {
+                c.input_cost_per_mtok.unwrap_or(0.0) + c.output_cost_per_mtok.unwrap_or(0.0)
+            } else {
+                c.cost_per_token.unwrap_or(f64::MAX)
+            }
+        }
+
+        let mut scored: Vec<(&Channel, f64)> = candidates
+            .iter()
+            .map(|c| (c, channel_cost_score(c)))
+            .collect();
+
+        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let top_k = scored.len().min(2);
+        let idx = rand::rng().random_range(0..top_k);
+        Some(scored[idx].0.clone())
+    }
+}
+
 /// Usage-based selection: prefer channels with the lowest TPM utilization ratio.
 /// Channels without a TPM limit are treated as fully available (ratio 0).
 /// Picks randomly from the top 2 least-utilized to avoid thundering herd.
@@ -341,5 +373,100 @@ mod tests {
         let strategy = UsageBasedStrategy::new(limiter);
         let candidates: Vec<Channel> = vec![];
         assert!(strategy.select(&candidates).is_none());
+    }
+
+    #[test]
+    fn lowest_cost_prefers_cheaper_channel() {
+        let cheap = Channel {
+            input_cost_per_mtok: Some(1.0),
+            output_cost_per_mtok: Some(3.0),
+            ..make_channel("cheap", 1, 100, 0)
+        };
+        let mid = Channel {
+            input_cost_per_mtok: Some(3.0),
+            output_cost_per_mtok: Some(7.0),
+            ..make_channel("mid", 1, 100, 0)
+        };
+        let expensive = Channel {
+            input_cost_per_mtok: Some(5.0),
+            output_cost_per_mtok: Some(15.0),
+            ..make_channel("expensive", 1, 100, 0)
+        };
+
+        let candidates = vec![expensive.clone(), mid.clone(), cheap.clone()];
+        let strategy = LowestCostStrategy;
+
+        // top_k = 2, so the most expensive channel should never be picked
+        for _ in 0..50 {
+            let selected = strategy.select(&candidates).unwrap();
+            assert!(
+                selected.id == cheap.id || selected.id == mid.id,
+                "should never pick the most expensive channel"
+            );
+        }
+    }
+
+    #[test]
+    fn lowest_cost_treats_no_cost_as_expensive() {
+        let cheap = Channel {
+            input_cost_per_mtok: Some(2.0),
+            output_cost_per_mtok: Some(4.0),
+            ..make_channel("cheap", 1, 100, 0)
+        };
+        let mid = Channel {
+            input_cost_per_mtok: Some(5.0),
+            output_cost_per_mtok: Some(5.0),
+            ..make_channel("mid", 1, 100, 0)
+        };
+        let no_cost = make_channel("unknown", 1, 100, 0); // all cost fields None
+
+        let candidates = vec![no_cost.clone(), cheap.clone(), mid.clone()];
+        let strategy = LowestCostStrategy;
+
+        // no-cost channel scores f64::MAX — should never be picked
+        for _ in 0..50 {
+            let selected = strategy.select(&candidates).unwrap();
+            assert!(
+                selected.id != no_cost.id,
+                "channel without cost data should never be picked over priced channels"
+            );
+        }
+    }
+
+    #[test]
+    fn lowest_cost_returns_none_for_empty() {
+        let strategy = LowestCostStrategy;
+        let candidates: Vec<Channel> = vec![];
+        assert!(strategy.select(&candidates).is_none());
+    }
+
+    #[test]
+    fn lowest_cost_falls_back_to_cost_per_token() {
+        let with_cpt = Channel {
+            cost_per_token: Some(0.5),
+            ..make_channel("cpt", 1, 100, 0)
+        };
+        let mid_mtok = Channel {
+            input_cost_per_mtok: Some(2.0),
+            output_cost_per_mtok: Some(4.0),
+            ..make_channel("mid_mtok", 1, 100, 0)
+        };
+        let expensive = Channel {
+            input_cost_per_mtok: Some(10.0),
+            output_cost_per_mtok: Some(20.0),
+            ..make_channel("expensive", 1, 100, 0)
+        };
+
+        let candidates = vec![expensive.clone(), with_cpt.clone(), mid_mtok.clone()];
+        let strategy = LowestCostStrategy;
+
+        // top_k = 2 — with_cpt (0.5) and mid_mtok (6.0) are eligible; expensive (30.0) is not
+        for _ in 0..50 {
+            let selected = strategy.select(&candidates).unwrap();
+            assert!(
+                selected.id == with_cpt.id || selected.id == mid_mtok.id,
+                "should never pick the high-mtok channel over cost_per_token fallback"
+            );
+        }
     }
 }

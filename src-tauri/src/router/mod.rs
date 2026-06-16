@@ -11,8 +11,8 @@ use active_requests::ActiveRequests;
 use latency_tracker::LatencyTracker;
 use std::sync::Arc;
 use strategy::{
-    LatencyBasedStrategy, LeastBusyStrategy, RoutingStrategy, UsageBasedStrategy,
-    WeightedRandomStrategy,
+    LatencyBasedStrategy, LeastBusyStrategy, LowestCostStrategy, RoutingStrategy,
+    UsageBasedStrategy, WeightedRandomStrategy,
 };
 
 /// Context references needed by the routing layer.
@@ -80,6 +80,7 @@ pub async fn select_channel(
             ctx.active_requests.clone(),
         ))),
         "usage" => Box::new(UsageBasedStrategy::new(Arc::clone(ctx.rate_limiter))),
+        "lowest_cost" => Box::new(LowestCostStrategy),
         _ => Box::new(WeightedRandomStrategy),
     };
 
