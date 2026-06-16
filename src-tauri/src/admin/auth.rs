@@ -50,14 +50,14 @@ pub async fn receive_login_cookies(
 }
 
 /// Return the most recent pending cookies from WebView login (one-shot read).
-pub async fn get_pending_cookies() -> Json<Option<serde_json::Value>> {
+pub async fn get_pending_cookies() -> Json<super::ApiResponse<Option<serde_json::Value>>> {
     let dir = dirs::config_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("modelswitch");
     let pending_file = dir.join("pending_cookies.json");
 
     if !pending_file.exists() {
-        return Json(None);
+        return Json(super::ApiResponse::ok(None));
     }
 
     match std::fs::read_to_string(&pending_file) {
@@ -65,10 +65,10 @@ pub async fn get_pending_cookies() -> Json<Option<serde_json::Value>> {
             // Delete after reading (one-shot)
             let _ = std::fs::remove_file(&pending_file);
             match serde_json::from_str::<serde_json::Value>(&content) {
-                Ok(v) => Json(Some(v)),
-                Err(_) => Json(None),
+                Ok(v) => Json(super::ApiResponse::ok(Some(v))),
+                Err(_) => Json(super::ApiResponse::ok(None)),
             }
         }
-        Err(_) => Json(None),
+        Err(_) => Json(super::ApiResponse::ok(None)),
     }
 }

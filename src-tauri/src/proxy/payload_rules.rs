@@ -70,6 +70,14 @@ impl ChannelPayloadRules {
             .get(&channel_id)
             .cloned()
     }
+
+    /// Remove rules for a channel that has been deleted.
+    pub fn remove(&self, channel_id: uuid::Uuid) {
+        self.rules
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&channel_id);
+    }
 }
 
 #[cfg(test)]

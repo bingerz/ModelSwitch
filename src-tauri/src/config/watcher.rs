@@ -99,7 +99,7 @@ pub fn start_config_watcher(
                                         new_channels.push(Channel::from_config(cc));
                                     }
                                 }
-                                // Log any channels being removed (not in new config)
+                                // Remove payload rules and log channels being removed (not in new config)
                                 for ch in existing_by_id.values() {
                                     if !config_ids.contains(&ch.id) {
                                         tracing::info!(
@@ -107,6 +107,7 @@ pub fn start_config_watcher(
                                             id = %ch.id,
                                             "Removing channel deleted from config"
                                         );
+                                        payload_rules.remove(ch.id);
                                     }
                                 }
 
