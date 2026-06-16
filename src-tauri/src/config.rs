@@ -225,6 +225,9 @@ pub struct ChannelConfig {
     /// Maximum concurrent in-flight requests for this channel (None = no limit).
     #[serde(default)]
     pub max_concurrent: Option<u32>,
+    /// Additional API keys for round-robin rotation across a single channel.
+    #[serde(default)]
+    pub api_keys: Vec<String>,
 }
 
 /// Per-channel quota polling configuration.

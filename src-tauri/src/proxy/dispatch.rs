@@ -343,6 +343,7 @@ mod tests {
             failure_window_start: None,
             window_failure_count: 0,
             max_concurrent: None,
+            api_keys: vec![],
         }
     }
 

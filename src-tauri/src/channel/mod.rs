@@ -133,6 +133,11 @@ pub struct Channel {
     /// Maximum concurrent in-flight requests for this channel (None = no limit).
     #[serde(default)]
     pub max_concurrent: Option<u32>,
+    /// Additional API keys for rotation. The primary key lives in
+    /// `credential.api_key`. When `api_keys` is non-empty, requests
+    /// rotate through `[credential.api_key, ...api_keys]` round-robin.
+    #[serde(default)]
+    pub api_keys: Vec<String>,
 }
 
 impl Channel {
@@ -156,6 +161,18 @@ impl Channel {
             .get(requested_model)
             .cloned()
             .unwrap_or_else(|| requested_model.to_string())
+    }
+
+    /// Return all available API keys for this channel, combining the primary key
+    /// (`credential.api_key`) with additional rotation keys (`api_keys`).
+    /// Returns an empty vec when no keys are configured.
+    pub fn all_keys(&self) -> Vec<String> {
+        let mut keys = Vec::with_capacity(1 + self.api_keys.len());
+        if let Some(ref key) = self.credential.api_key {
+            keys.push(key.clone());
+        }
+        keys.extend(self.api_keys.clone());
+        keys
     }
 
     /// Calculate cost from real token counts.
@@ -273,6 +290,7 @@ impl Channel {
             failure_window_start: None,
             window_failure_count: 0,
             max_concurrent: c.max_concurrent,
+            api_keys: c.api_keys.clone(),
         }
     }
 }

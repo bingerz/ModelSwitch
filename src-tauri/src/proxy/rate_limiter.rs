@@ -94,7 +94,7 @@ impl RateLimiterState {
     /// instead of on every check/record.
     fn maybe_full_prune(&mut self) {
         self.call_count = self.call_count.wrapping_add(1);
-        if self.call_count % FULL_PRUNE_INTERVAL == 0 {
+        if self.call_count.is_multiple_of(FULL_PRUNE_INTERVAL) {
             for (windows, _) in self.channels.values_mut() {
                 let now = windows.tpm.now_ms();
                 windows.tpm.prune(now);

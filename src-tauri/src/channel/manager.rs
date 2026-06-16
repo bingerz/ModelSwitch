@@ -1,7 +1,8 @@
 use crate::channel::{Channel, ChannelStatus, CredentialType, SharedChannels};
 use crate::config::{AppConfig, ChannelConfig, GatewayConfig};
 use crate::credential::SharedCredentialStore;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -10,6 +11,8 @@ pub struct ChannelManager {
     circuit_breaker_minutes: u64,
     gateway_config: GatewayConfig,
     credential_store: SharedCredentialStore,
+    /// Per-channel rotation counter for multi-key round-robin selection.
+    key_indices: Mutex<HashMap<Uuid, usize>>,
 }
 
 impl ChannelManager {
@@ -21,6 +24,7 @@ impl ChannelManager {
             circuit_breaker_minutes: config.gateway.circuit_breaker_minutes,
             gateway_config: config.gateway.clone(),
             credential_store,
+            key_indices: Mutex::new(HashMap::new()),
         }
     }
 
@@ -96,6 +100,24 @@ impl ChannelManager {
         let channels = self.channels.read().await;
         let ch = channels.iter().find(|c| c.id == id)?;
 
+        // Multi-key rotation: when additional keys are configured, rotate
+        // through [credential.api_key, ...api_keys] round-robin.
+        if !ch.api_keys.is_empty() {
+            let all_keys = ch.all_keys();
+            if all_keys.is_empty() {
+                // Fall through to credential store lookup below
+            } else {
+                let idx = {
+                    let mut counters = self.key_indices.lock().unwrap();
+                    let entry = counters.entry(id).or_insert(0);
+                    let current = *entry;
+                    *entry = (current + 1) % all_keys.len();
+                    current
+                };
+                return Some(all_keys[idx].clone());
+            }
+        }
+
         // Priority 1: inline api_key from config
         if let Some(ref key) = ch.credential.api_key {
             return Some(key.clone());
@@ -138,6 +160,7 @@ impl ChannelManager {
                 payload_rules: None,
                 quota: None,
                 max_concurrent: c.max_concurrent,
+                api_keys: c.api_keys.clone(),
             })
             .collect();
         drop(channels);

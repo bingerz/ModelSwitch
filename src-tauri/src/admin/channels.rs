@@ -122,6 +122,7 @@ pub async fn create_channel(
         failure_window_start: None,
         window_failure_count: 0,
         max_concurrent: None,
+        api_keys: vec![],
     };
 
     let created = state.channel_mgr.create(channel).await;
