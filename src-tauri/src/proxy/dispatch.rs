@@ -240,6 +240,7 @@ pub(crate) async fn dispatch(
                 attempt,
                 request_id,
                 vk_id,
+                reserved_cents,
             )
             .await
             {

@@ -106,6 +106,7 @@ pub(super) async fn try_channel_attempt(
     attempt: u32,
     request_id: Option<&str>,
     vk_id: Option<Uuid>,
+    reserved_cents: u64,
 ) -> AttemptOutcome {
     let upstream_model = channel.map_model(current_model);
     let mut upstream_body = body.clone();
@@ -428,6 +429,7 @@ pub(super) async fn try_channel_attempt(
             request_id,
             &upstream_headers,
             vk_id,
+            reserved_cents,
         )
         .await;
         AttemptOutcome::Respond(response)
@@ -447,6 +449,7 @@ pub(super) async fn try_channel_attempt(
             request_id,
             &upstream_headers,
             vk_id,
+            reserved_cents,
         )
         .await;
         AttemptOutcome::Respond(response)

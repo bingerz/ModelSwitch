@@ -60,6 +60,7 @@ pub(super) async fn handle_streaming_success(
     request_id: Option<&str>,
     upstream_headers: &[(String, String)],
     vk_id: Option<Uuid>,
+    reserved_cents: u64,
 ) -> Response {
     let is_gemini = matches!(proxy_config.auth_style, AuthStyle::GeminiUrl);
     let (stream_resp, telemetry_chunks) = sse_stream_response_with_telemetry(
@@ -117,6 +118,7 @@ pub(super) async fn handle_streaming_success(
         let bg_output_cost = channel.output_cost_per_mtok;
         let bg_cost_per_token = channel.cost_per_token;
         let bg_vk_id = vk_id;
+        let bg_reserved_cents = reserved_cents;
         crate::spawn_bg(async move {
             // Wait for chunks to accumulate (stream finishing)
             let chunks = {
@@ -193,9 +195,17 @@ pub(super) async fn handle_streaming_success(
                     .await;
 
                 // Attribute spend to the requesting virtual key (if any).
+                // When a reservation was made before dispatch, reconcile against
+                // it so the key is not double-charged (reservation + accumulation).
                 if let Some(vk) = bg_vk_id {
                     let cost_cents = (real_cost.unwrap_or(0.0) * 100.0) as u64;
-                    bg_virtual_key_store.accumulate_spend(vk, cost_cents).await;
+                    if bg_reserved_cents > 0 {
+                        bg_virtual_key_store
+                            .reconcile_spend(vk, bg_reserved_cents, cost_cents)
+                            .await;
+                    } else {
+                        bg_virtual_key_store.accumulate_spend(vk, cost_cents).await;
+                    }
                 }
             }
         });
@@ -235,6 +245,7 @@ pub(super) async fn handle_json_success(
     request_id: Option<&str>,
     upstream_headers: &[(String, String)],
     vk_id: Option<Uuid>,
+    reserved_cents: u64,
 ) -> Response {
     let body_text = resp.text().await.unwrap_or_default();
 
@@ -272,13 +283,23 @@ pub(super) async fn handle_json_success(
         )
         .await;
     // Attribute spend to the requesting virtual key (if any).
+    // When a reservation was made before dispatch, reconcile against
+    // it so the key is not double-charged (reservation + accumulation).
     if let Some(vk) = vk_id {
         let cost_cents = (estimated_cost.unwrap_or(0.0) * 100.0) as u64;
-        state
-            .billing
-            .virtual_key_store
-            .accumulate_spend(vk, cost_cents)
-            .await;
+        if reserved_cents > 0 {
+            state
+                .billing
+                .virtual_key_store
+                .reconcile_spend(vk, reserved_cents, cost_cents)
+                .await;
+        } else {
+            state
+                .billing
+                .virtual_key_store
+                .accumulate_spend(vk, cost_cents)
+                .await;
+        }
     }
     state
         .logger
