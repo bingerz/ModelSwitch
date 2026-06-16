@@ -169,6 +169,9 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
         billing: BillingState {
             quota_store,
             virtual_key_store,
+            provider_budgets: Arc::new(
+                crate::provider_budget::ProviderBudgetStore::new(),
+            ),
         },
         mcp: McpState {
             mcp_manager,

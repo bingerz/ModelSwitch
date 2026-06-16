@@ -241,6 +241,25 @@ pub(crate) async fn dispatch(
                 }
             };
 
+            // Check per-provider budget — skip this channel if the provider's
+            // daily or monthly cap has been reached.
+            let provider_name = channel.provider.as_str().to_string();
+            if !state
+                .billing
+                .provider_budgets
+                .check_budget(&provider_name)
+                .await
+            {
+                tracing::warn!(
+                    provider = %provider_name,
+                    channel = %channel.name,
+                    "Provider budget exceeded, skipping channel"
+                );
+                // Decrement the active-request counter that select_channel bumped.
+                state.router.active_requests.decrement(channel.id);
+                continue;
+            }
+
             tracing::info!(
                 attempt,
                 total_attempts,

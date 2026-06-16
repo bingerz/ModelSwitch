@@ -10,6 +10,7 @@ mod mcp;
 pub mod metrics;
 mod middleware;
 pub mod persisted_store;
+mod provider_budget;
 mod proxy;
 mod quota;
 mod router;

@@ -48,10 +48,11 @@ pub struct LimitsState {
     pub rate_limiter: Arc<RateLimiter>,
 }
 
-/// Billing state (quota + virtual key tracking).
+/// Billing state (quota + virtual key + provider budget tracking).
 pub struct BillingState {
     pub quota_store: SharedQuotaStore,
     pub virtual_key_store: SharedVirtualKeyStore,
+    pub provider_budgets: crate::provider_budget::SharedProviderBudgetStore,
 }
 
 /// MCP integration state.

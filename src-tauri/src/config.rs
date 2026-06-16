@@ -132,6 +132,9 @@ pub struct GatewayConfig {
     /// increasing this spreads concurrent requests across more connections.
     #[serde(default = "default_http_pool_size")]
     pub http_pool_size: usize,
+    /// Per-provider budget limits. Key = provider name (e.g., "openai", "anthropic").
+    #[serde(default)]
+    pub provider_budgets: HashMap<String, crate::provider_budget::ProviderBudgetConfig>,
 }
 
 /// Privacy guardrail configuration for the sanitizer middleware.
@@ -362,6 +365,7 @@ impl Default for GatewayConfig {
                 scan_response: false,
                 custom_patterns: vec![],
             },
+            provider_budgets: HashMap::new(),
         }
     }
 }

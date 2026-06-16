@@ -120,7 +120,9 @@ pub(super) async fn handle_streaming_success(
         let bg_logger = Arc::clone(&state.logger);
         let bg_quota_store = Arc::clone(&state.billing.quota_store);
         let bg_virtual_key_store = Arc::clone(&state.billing.virtual_key_store);
+        let bg_provider_budgets = Arc::clone(&state.billing.provider_budgets);
         let bg_channel_id = channel.id;
+        let bg_provider_name = channel.provider.as_str().to_string();
         let bg_cost_fn =
             channel.input_cost_per_mtok.is_some() || channel.output_cost_per_mtok.is_some();
         let bg_input_cost = channel.input_cost_per_mtok;
@@ -129,7 +131,12 @@ pub(super) async fn handle_streaming_success(
         let bg_vk_id = vk_id;
         let bg_reserved_cents = reserved_cents;
         crate::spawn_bg(async move {
-            // Wait for chunks to accumulate (stream finishing)
+            // Wait for chunks to accumulate (stream finishing).
+            //
+            // With disconnect protection in sse_stream_response_with_telemetry,
+            // the upstream stream is always fully drained by the background task
+            // (even if the client disconnects mid-stream), so telemetry will
+            // always complete and budget reconciliation will not be lost.
             let chunks = {
                 let mut prev_len = 0usize;
                 let mut empty_rounds = 0u32;
@@ -216,6 +223,12 @@ pub(super) async fn handle_streaming_success(
                         bg_virtual_key_store.accumulate_spend(vk, cost_cents).await;
                     }
                 }
+
+                // Accumulate spend into per-provider budget tracker.
+                let cost_cents = (real_cost.unwrap_or(0.0) * 100.0) as u64;
+                bg_provider_budgets
+                    .accumulate_spend(&bg_provider_name, cost_cents)
+                    .await;
             }
         });
     }
@@ -275,76 +288,8 @@ pub(super) async fn handle_json_success(
             let est = estimate_tokens(body, false);
             channel.calculate_cost(Some(est / 2), Some(est / 2))
         });
-    // Accumulate usage into quota store
-    state
-        .billing
-        .quota_store
-        .accumulate_usage(
-            channel.id,
-            input_tokens,
-            output_tokens,
-            token_usage.cache_hit_tokens,
-            token_usage.cache_miss_tokens,
-            estimated_cost,
-        )
-        .await;
-    // Attribute spend to the requesting virtual key (if any).
-    // When a reservation was made before dispatch, reconcile against
-    // it so the key is not double-charged (reservation + accumulation).
-    if let Some(vk) = vk_id {
-        let cost_cents = (estimated_cost.unwrap_or(0.0) * 100.0) as u64;
-        if reserved_cents > 0 {
-            state
-                .billing
-                .virtual_key_store
-                .reconcile_spend(vk, reserved_cents, cost_cents)
-                .await;
-        } else {
-            state
-                .billing
-                .virtual_key_store
-                .accumulate_spend(vk, cost_cents)
-                .await;
-        }
-    }
-    state
-        .logger
-        .log(make_log(
-            current_model,
-            channel.id,
-            &channel.name,
-            channel.priority,
-            attempt,
-            trigger_reason,
-            start.elapsed().as_millis() as u64,
-            true,
-            estimated_cost,
-            input_tokens,
-            output_tokens,
-            token_usage.cache_hit_tokens,
-            token_usage.cache_miss_tokens,
-            request_id,
-        ))
-        .await;
-
-    // Prometheus metrics
-    let provider_label = channel.provider.as_str();
-    crate::metrics::requests_total()
-        .with_label_values(&[provider_label, current_model, "success"])
-        .inc();
-    crate::metrics::request_duration()
-        .with_label_values(&[provider_label, current_model])
-        .observe(start.elapsed().as_secs_f64());
-    let _ = state
-        .channel_mgr
-        .record_latency(channel.id, start.elapsed().as_millis() as u64)
-        .await;
-    state
-        .router
-        .latency_tracker
-        .record(channel.id, start.elapsed().as_millis() as u64);
-
-    // Cache non-streaming responses
+    // Cache non-streaming responses (inline — coalesced waiters depend on
+    // ordering: insert must precede complete()).
     let (cache_key, key_material) = RequestCache::compute_key(original_model, body);
     state
         .cache
@@ -352,7 +297,107 @@ pub(super) async fn handle_json_success(
         .insert(cache_key, key_material, response_body.clone());
     state.cache.in_flight.complete(cache_key);
 
+    // Fast atomic decrement stays inline.
     state.router.active_requests.decrement(channel.id);
+
+    // Background: quota accumulation, virtual-key spend, logging, and metrics
+    // are non-blocking to return the HTTP response as quickly as possible.
+    {
+        let bg_quota_store = Arc::clone(&state.billing.quota_store);
+        let bg_virtual_key_store = Arc::clone(&state.billing.virtual_key_store);
+        let bg_provider_budgets = Arc::clone(&state.billing.provider_budgets);
+        let bg_logger = Arc::clone(&state.logger);
+        let bg_channel_mgr = Arc::clone(&state.channel_mgr);
+        let bg_latency_tracker = Arc::clone(&state.router.latency_tracker);
+        let bg_channel_id = channel.id;
+        let bg_channel_name = channel.name.clone();
+        let bg_provider = channel.provider.clone();
+        let bg_provider_name = channel.provider.as_str().to_string();
+        let bg_channel_priority = channel.priority;
+        let bg_input_tokens = input_tokens;
+        let bg_output_tokens = output_tokens;
+        let bg_cache_hit_tokens = token_usage.cache_hit_tokens;
+        let bg_cache_miss_tokens = token_usage.cache_miss_tokens;
+        let bg_estimated_cost = estimated_cost;
+        let bg_current_model = current_model.to_string();
+        let bg_attempt = attempt;
+        let bg_trigger_reason = trigger_reason.map(|s| s.to_string());
+        let bg_start = start;
+        let bg_request_id = request_id.map(|s| s.to_string());
+        let bg_vk_id = vk_id;
+        let bg_reserved_cents = reserved_cents;
+
+        crate::spawn_bg(async move {
+            // Accumulate usage (tokens + cost) into quota store
+            bg_quota_store
+                .accumulate_usage(
+                    bg_channel_id,
+                    bg_input_tokens,
+                    bg_output_tokens,
+                    bg_cache_hit_tokens,
+                    bg_cache_miss_tokens,
+                    bg_estimated_cost,
+                )
+                .await;
+
+            // Attribute spend to the requesting virtual key (if any).
+            // When a reservation was made before dispatch, reconcile against
+            // it so the key is not double-charged (reservation + accumulation).
+            if let Some(vk) = bg_vk_id {
+                let cost_cents = (bg_estimated_cost.unwrap_or(0.0) * 100.0) as u64;
+                if bg_reserved_cents > 0 {
+                    bg_virtual_key_store
+                        .reconcile_spend(vk, bg_reserved_cents, cost_cents)
+                        .await;
+                } else {
+                    bg_virtual_key_store
+                        .accumulate_spend(vk, cost_cents)
+                        .await;
+                }
+            }
+
+            // Accumulate spend into per-provider budget tracker.
+            let cost_cents = (bg_estimated_cost.unwrap_or(0.0) * 100.0) as u64;
+            bg_provider_budgets
+                .accumulate_spend(&bg_provider_name, cost_cents)
+                .await;
+
+            bg_logger
+                .log(make_log(
+                    &bg_current_model,
+                    bg_channel_id,
+                    &bg_channel_name,
+                    bg_channel_priority,
+                    bg_attempt,
+                    bg_trigger_reason.as_deref(),
+                    bg_start.elapsed().as_millis() as u64,
+                    true,
+                    bg_estimated_cost,
+                    bg_input_tokens,
+                    bg_output_tokens,
+                    bg_cache_hit_tokens,
+                    bg_cache_miss_tokens,
+                    bg_request_id.as_deref(),
+                ))
+                .await;
+
+            // Prometheus metrics
+            let provider_label = bg_provider.as_str();
+            crate::metrics::requests_total()
+                .with_label_values(&[provider_label, &bg_current_model, "success"])
+                .inc();
+            crate::metrics::request_duration()
+                .with_label_values(&[provider_label, &bg_current_model])
+                .observe(bg_start.elapsed().as_secs_f64());
+
+            let _ = bg_channel_mgr
+                .record_latency(bg_channel_id, bg_start.elapsed().as_millis() as u64)
+                .await;
+            bg_latency_tracker
+                .record(bg_channel_id, bg_start.elapsed().as_millis() as u64);
+        });
+    }
+
     inject_passthrough_headers(
         json_response(StatusCode::OK, response_body),
         upstream_headers,

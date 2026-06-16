@@ -25,6 +25,7 @@ use crate::router::affinity::SessionAffinity;
 use crate::shutdown::shutdown_signal;
 use crate::spawn_bg;
 use crate::virtual_key::VirtualKeyStore;
+use crate::provider_budget::ProviderBudgetStore;
 use crate::GatewayHandles;
 
 use axum::routing::{delete, get, post, put};
@@ -99,6 +100,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     let rate_limiter = Arc::new(RateLimiter::new(None));
     let quota_store = Arc::new(QuotaStore::new());
     let virtual_key_store = Arc::new(VirtualKeyStore::new());
+    let provider_budget_store = Arc::new(ProviderBudgetStore::new());
     let quota_registry = Arc::new(QuotaProviderRegistry::new(
         quota::collectors::default_registry(),
     ));
@@ -142,6 +144,21 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         }
     }
 
+    // Populate per-provider budget limits from config
+    let pb_store = Arc::clone(&provider_budget_store);
+    let pb_configs = config.gateway.provider_budgets.clone();
+    spawn_bg(async move {
+        for (provider, budget_config) in &pb_configs {
+            pb_store.set_budget(provider, budget_config.clone()).await;
+        }
+        if !pb_configs.is_empty() {
+            tracing::info!(
+                count = pb_configs.len(),
+                "Loaded provider budget limits from config"
+            );
+        }
+    });
+
     // Build shared state (used by all proxy handlers including Gemini)
     let state = Arc::new(AppState {
         channel_mgr: Arc::clone(&channel_mgr),
@@ -172,6 +189,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         billing: BillingState {
             quota_store: Arc::clone(&quota_store),
             virtual_key_store: Arc::clone(&virtual_key_store),
+            provider_budgets: Arc::clone(&provider_budget_store),
         },
         mcp: McpState {
             mcp_manager: Arc::clone(&mcp_manager),
@@ -234,6 +252,32 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
                 interval.tick().await;
                 if let Err(e) = persist_vk.persist().await {
                     tracing::warn!(error = %e, "Failed to persist virtual keys");
+                }
+            }
+        });
+    }
+
+    // Load persisted provider budget spend (so limits + spend survive restarts)
+    {
+        let boot_pb = Arc::clone(&provider_budget_store);
+        spawn_bg(async move {
+            if let Err(e) = boot_pb.load().await {
+                tracing::warn!(error = %e, "Failed to load provider budgets");
+            } else {
+                tracing::info!("Loaded provider budget spend from disk");
+            }
+        });
+    }
+
+    // Periodic provider budget persistence (every 60s)
+    {
+        let persist_pb = Arc::clone(&provider_budget_store);
+        spawn_bg(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                if let Err(e) = persist_pb.persist().await {
+                    tracing::warn!(error = %e, "Failed to persist provider budgets");
                 }
             }
         });
@@ -387,6 +431,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/virtual-keys", post(admin::create_virtual_key))
         .route("/api/virtual-keys/{id}", put(admin::update_virtual_key))
         .route("/api/virtual-keys/{id}", delete(admin::delete_virtual_key))
+        .route(
+            "/api/provider-budgets",
+            get(admin::list_provider_budgets),
+        )
+        .route(
+            "/api/provider-budgets/{provider}",
+            put(admin::set_provider_budget),
+        )
+        .route(
+            "/api/provider-budgets/{provider}",
+            delete(admin::delete_provider_budget),
+        )
         .with_state(admin_route_state)
         .layer(axum::middleware::from_fn_with_state(
             admin_auth_state,
@@ -448,6 +504,7 @@ pub async fn start_gateway(
 ) {
     let app = build_router(state.clone());
     let quota_for_shutdown = Arc::clone(&state.billing.quota_store);
+    let provider_budgets_for_shutdown = Arc::clone(&state.billing.provider_budgets);
     let mcp_for_shutdown = Arc::clone(&state.mcp.mcp_manager);
     let addr = format!("{}:{}", host, port);
 
@@ -498,6 +555,9 @@ pub async fn start_gateway(
 
     // Persist quota data on shutdown
     quota_for_shutdown.persist_sync();
+
+    // Persist provider budget spend on shutdown
+    provider_budgets_for_shutdown.persist_sync();
 
     // Stop all MCP server subprocesses
     mcp_for_shutdown.stop_all().await;

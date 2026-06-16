@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod channels;
 pub mod mcp;
+pub mod provider_budgets;
 pub mod system;
 pub mod virtual_keys;
 
@@ -41,6 +42,7 @@ fn default_limit() -> usize {
 pub use auth::*;
 pub use channels::*;
 pub use mcp::*;
+pub use provider_budgets::*;
 pub use system::*;
 pub use virtual_keys::*;
 

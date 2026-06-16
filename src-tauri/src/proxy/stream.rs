@@ -8,74 +8,111 @@ use std::sync::Mutex;
 use tokio_stream::StreamExt;
 
 /// Create an SSE streaming response that accumulates chunks for telemetry.
-/// Returns the response and a `StreamTelemetry` handle for post-stream cost tracking.
+/// Returns the response and a shared chunk list for post-stream cost tracking.
+///
+/// Uses an mpsc channel so that a background task owns the upstream stream.
+/// If the client disconnects mid-stream, the task continues draining the
+/// upstream to ensure telemetry (and therefore budget reconciliation) completes.
 pub fn sse_stream_response_with_telemetry(
     upstream_stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
     translate_gemini: bool,
     model: String,
 ) -> (Response, Arc<Mutex<Vec<String>>>) {
+    use tokio::sync::mpsc;
+
     let chunks: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let chunks_clone = Arc::clone(&chunks);
 
-    let mapped = upstream_stream.map(move |result: Result<Bytes, reqwest::Error>| {
-        let bytes = match result {
-            Ok(b) => b,
-            Err(e) => {
-                return Err(std::io::Error::other(e));
-            }
-        };
+    let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(32);
 
-        let text = String::from_utf8_lossy(&bytes);
+    tokio::spawn(async move {
+        let mut upstream = Box::pin(upstream_stream);
 
-        // Accumulate data lines for telemetry
-        {
-            let mut guard = chunks_clone.lock().unwrap_or_else(|e| e.into_inner());
-            for line in text.split('\n') {
-                let trimmed = line.trim();
-                if trimmed.starts_with("data: ") {
-                    let data = trimmed.strip_prefix("data: ").unwrap_or("");
-                    if !data.is_empty() && data != "[DONE]" {
-                        guard.push(data.to_string());
+        while let Some(result) = upstream.next().await {
+            let bytes = match result {
+                Ok(b) => b,
+                Err(e) => {
+                    // Forward error to client if still connected
+                    let _ = tx.send(Err(std::io::Error::other(e))).await;
+                    break;
+                }
+            };
+
+            let text = String::from_utf8_lossy(&bytes);
+
+            // Accumulate data lines for telemetry (ALWAYS, even if client gone)
+            {
+                let mut guard = chunks_clone.lock().unwrap_or_else(|e| e.into_inner());
+                for line in text.split('\n') {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("data: ") {
+                        let data = trimmed.strip_prefix("data: ").unwrap_or("");
+                        if !data.is_empty() && data != "[DONE]" {
+                            guard.push(data.to_string());
+                        }
                     }
                 }
             }
-        }
 
-        // If translating Gemini stream, transform chunks
-        if translate_gemini {
-            use crate::proxy::translate::gemini_stream_to_openai;
-            let mut output = String::new();
-            for line in text.split('\n') {
-                let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with(':') {
-                    output.push_str(line);
-                    output.push('\n');
-                    continue;
-                }
-                let json_str = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
-                if json_str == "[DONE]" {
-                    output.push_str("data: [DONE]\n\n");
-                    continue;
-                }
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
-                    if let Some(translated) = gemini_stream_to_openai(&v, &model) {
-                        output.push_str(&translated);
+            // Translate if needed
+            let output_bytes = if translate_gemini {
+                use crate::proxy::translate::gemini_stream_to_openai;
+                let mut output = String::new();
+                for line in text.split('\n') {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() || trimmed.starts_with(':') {
+                        output.push_str(line);
+                        output.push('\n');
+                        continue;
+                    }
+                    let json_str = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
+                    if json_str == "[DONE]" {
+                        output.push_str("data: [DONE]\n\n");
+                        continue;
+                    }
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
+                        if let Some(translated) = gemini_stream_to_openai(&v, &model) {
+                            output.push_str(&translated);
+                        } else {
+                            output.push_str(line);
+                            output.push_str("\n\n");
+                        }
                     } else {
                         output.push_str(line);
-                        output.push_str("\n\n");
+                        output.push('\n');
                     }
-                } else {
-                    output.push_str(line);
-                    output.push('\n');
                 }
+                Bytes::from(output)
+            } else {
+                bytes
+            };
+
+            // Forward to client — if disconnected, continue draining upstream
+            // to ensure telemetry completes. Ignore SendError.
+            if tx.send(Ok(output_bytes)).await.is_err() {
+                // Client disconnected — keep draining upstream for telemetry
+                // but don't attempt to forward.
+                while let Some(result) = upstream.next().await {
+                    if let Ok(bytes) = result {
+                        let text = String::from_utf8_lossy(&bytes);
+                        let mut guard = chunks_clone.lock().unwrap_or_else(|e| e.into_inner());
+                        for line in text.split('\n') {
+                            let trimmed = line.trim();
+                            if trimmed.starts_with("data: ") {
+                                let data = trimmed.strip_prefix("data: ").unwrap_or("");
+                                if !data.is_empty() && data != "[DONE]" {
+                                    guard.push(data.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                break;
             }
-            Ok(Bytes::from(output))
-        } else {
-            Ok(bytes)
         }
     });
 
-    let body = Body::from_stream(mapped);
+    let body = Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx));
 
     let response = Response::builder()
         .status(StatusCode::OK)
