@@ -183,4 +183,12 @@ impl ChannelManager {
             ch.updated_at = chrono::Utc::now();
         }
     }
+
+    /// Atomically replace the entire channel list with a new set of channels.
+    /// This acquires the write lock exactly once and swaps the whole vector,
+    /// so dispatch never sees a partially-updated list.
+    pub async fn replace_all(&self, new_channels: Vec<Channel>) {
+        let mut channels = self.channels.write().await;
+        *channels = new_channels;
+    }
 }

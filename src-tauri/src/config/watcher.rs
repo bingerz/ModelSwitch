@@ -57,20 +57,30 @@ pub fn start_config_watcher(
                         match AppConfig::load_from(config_path.clone()) {
                             Ok(new_config) => {
                                 tracing::info!("Reloading config");
-                                // Update channels: replace all channels from new config
-                                // Collect config channel IDs for deletion detection
+                                // Update channels atomically: build the complete new
+                                // channel list outside any locks, then swap it in with
+                                // a single write-lock acquisition. This prevents dispatch
+                                // from seeing a partially-updated channel list.
                                 let config_ids: std::collections::HashSet<uuid::Uuid> = new_config
                                     .channels
                                     .iter()
                                     .filter_map(|cc| uuid::Uuid::parse_str(&cc.id).ok())
                                     .collect();
 
+                                // Snapshot current channels once (single read lock)
+                                let current_channels = channel_mgr.list().await;
+                                let existing_by_id: std::collections::HashMap<uuid::Uuid, Channel> =
+                                    current_channels.into_iter().map(|c| (c.id, c)).collect();
+
+                                // Build the full new channel list, preserving runtime
+                                // state for channels that already exist.
+                                let mut new_channels: Vec<Channel> = Vec::new();
                                 for cc in &new_config.channels {
                                     let id = uuid::Uuid::parse_str(&cc.id)
                                         .unwrap_or_else(|_| uuid::Uuid::new_v4());
-                                    if let Some(existing) = channel_mgr.get(id).await {
+                                    if let Some(existing) = existing_by_id.get(&id) {
                                         // Update mutable fields only, preserve runtime state
-                                        let mut updated = existing;
+                                        let mut updated = existing.clone();
                                         updated.weight = cc.weight;
                                         updated.priority = cc.priority;
                                         updated.enabled = cc.enabled;
@@ -83,22 +93,25 @@ pub fn start_config_watcher(
                                         updated.name = cc.name.clone();
                                         updated.provider =
                                             crate::channel::Provider::from_str(&cc.provider);
-                                        let _ = channel_mgr.update(id, updated).await;
+                                        new_channels.push(updated);
                                     } else {
                                         // New channel — create it
-                                        let new_channel = Channel::from_config(cc);
-                                        let _ = channel_mgr.create(new_channel).await;
+                                        new_channels.push(Channel::from_config(cc));
+                                    }
+                                }
+                                // Log any channels being removed (not in new config)
+                                for ch in existing_by_id.values() {
+                                    if !config_ids.contains(&ch.id) {
+                                        tracing::info!(
+                                            channel = %ch.name,
+                                            id = %ch.id,
+                                            "Removing channel deleted from config"
+                                        );
                                     }
                                 }
 
-                                // Delete channels that were removed from config
-                                let current_channels = channel_mgr.list().await;
-                                for ch in &current_channels {
-                                    if !config_ids.contains(&ch.id) {
-                                        tracing::info!(channel = %ch.name, id = %ch.id, "Removing channel deleted from config");
-                                        let _ = channel_mgr.delete(ch.id).await;
-                                    }
-                                }
+                                // Atomically swap the entire channel list
+                                channel_mgr.replace_all(new_channels).await;
                                 tracing::info!("Config reload complete");
 
                                 // Reload MCP servers: preserve running servers that still exist,

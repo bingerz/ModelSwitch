@@ -171,10 +171,16 @@ impl RequestCache {
     }
 }
 
-/// Compute the canonical string used for cache keying (model + body without stream field).
+/// Compute the canonical string used for cache keying.
+/// Excludes `stream` and `stream_options` fields from the body, since
+/// `attempt.rs` injects `stream_options: {include_usage: true}` into streaming
+/// requests. Without excluding `stream_options`, a streaming and non-streaming
+/// request with otherwise identical bodies would share a cache key but receive
+/// different upstream responses.
 fn canonical_key_material(model: &str, body: &serde_json::Value) -> String {
     let body_str = if let Some(mut map) = body.as_object().cloned() {
         map.remove("stream");
+        map.remove("stream_options");
         serde_json::to_string(&map).unwrap_or_default()
     } else {
         serde_json::to_string(body).unwrap_or_default()
@@ -254,6 +260,44 @@ mod tests {
         assert_eq!(
             RequestCache::cache_key("gpt-4", &body1),
             RequestCache::cache_key("gpt-4", &body2)
+        );
+    }
+
+    #[test]
+    fn cache_key_excludes_stream_options() {
+        // A streaming request with stream_options injected by attempt.rs
+        let body_streaming = json!({
+            "model": "gpt-4",
+            "messages": [],
+            "stream": true,
+            "stream_options": { "include_usage": true }
+        });
+        // A non-streaming request without stream_options
+        let body_non_streaming = json!({
+            "model": "gpt-4",
+            "messages": [],
+            "stream": false
+        });
+        // They must produce the same cache key
+        assert_eq!(
+            RequestCache::cache_key("gpt-4", &body_streaming),
+            RequestCache::cache_key("gpt-4", &body_non_streaming)
+        );
+    }
+
+    #[test]
+    fn cache_key_excludes_stream_options_only() {
+        // Two requests that differ only in stream_options should share a key
+        let body_with_options = json!({
+            "messages": [],
+            "stream_options": { "include_usage": true }
+        });
+        let body_without_options = json!({
+            "messages": []
+        });
+        assert_eq!(
+            RequestCache::cache_key("gpt-4", &body_with_options),
+            RequestCache::cache_key("gpt-4", &body_without_options)
         );
     }
 
