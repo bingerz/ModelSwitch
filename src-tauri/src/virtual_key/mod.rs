@@ -605,9 +605,7 @@ mod tests {
         let (vk, _) = store
             .create("test".to_string(), Some(100), Some(1000))
             .await;
-        store
-            .update(vk.id, None, None, None, Some(false))
-            .await;
+        store.update(vk.id, None, None, None, Some(false)).await;
         let result = store.reserve_spend(vk.id, 10).await;
         assert!(matches!(result, ReserveResult::NoBudget));
     }
@@ -639,7 +637,10 @@ mod tests {
 
         store.reserve_spend(vk_id, 10).await;
         let fetched = store.get(vk_id).await.unwrap();
-        assert_eq!(fetched.spend.today.cents, 10, "daily should reset before reserve");
+        assert_eq!(
+            fetched.spend.today.cents, 10,
+            "daily should reset before reserve"
+        );
         assert_eq!(
             fetched.spend.this_month.cents, 10,
             "monthly should reset before reserve"
