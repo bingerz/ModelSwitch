@@ -20,8 +20,10 @@ static REQUESTS_TOTAL: OnceLock<IntCounterVec> = OnceLock::new();
 static REQUEST_DURATION: OnceLock<HistogramVec> = OnceLock::new();
 static CACHE_HITS_TOTAL: OnceLock<IntCounter> = OnceLock::new();
 static CACHE_MISSES_TOTAL: OnceLock<IntCounter> = OnceLock::new();
+static CACHE_EVICTIONS_TOTAL: OnceLock<IntCounter> = OnceLock::new();
 static ACTIVE_REQUESTS: OnceLock<Gauge> = OnceLock::new();
 static CIRCUIT_BREAKER_OPEN: OnceLock<prometheus::GaugeVec> = OnceLock::new();
+static RETRIES_TOTAL: OnceLock<IntCounterVec> = OnceLock::new();
 
 /// Total requests by provider, model, and status label.
 pub fn requests_total() -> &'static IntCounterVec {
@@ -78,6 +80,16 @@ pub fn cache_misses() -> &'static IntCounter {
     })
 }
 
+/// Cache entries evicted by TTL expiry or capacity overflow.
+pub fn cache_evictions() -> &'static IntCounter {
+    CACHE_EVICTIONS_TOTAL.get_or_init(|| {
+        let m = IntCounter::new("modelswitch_cache_evictions_total", "Cache entries evicted")
+            .expect("valid opts");
+        registry().register(Box::new(m.clone())).ok();
+        m
+    })
+}
+
 /// Gauge for currently in-flight gateway requests.
 pub fn active_requests() -> &'static Gauge {
     ACTIVE_REQUESTS.get_or_init(|| {
@@ -105,6 +117,22 @@ pub fn circuit_breaker_open() -> &'static prometheus::GaugeVec {
     })
 }
 
+/// Total retries by provider and model.
+pub fn retries_total() -> &'static IntCounterVec {
+    RETRIES_TOTAL.get_or_init(|| {
+        let m = IntCounterVec::new(
+            Opts::new(
+                "modelswitch_retries_total",
+                "Total dispatch retries by provider and model",
+            ),
+            &["provider", "model"],
+        )
+        .expect("valid opts");
+        registry().register(Box::new(m.clone())).ok();
+        m
+    })
+}
+
 /// Render all registered metrics as Prometheus text format.
 pub fn render() -> String {
     let mut buf = Vec::new();
@@ -125,17 +153,21 @@ mod tests {
         request_duration();
         cache_hits();
         cache_misses();
+        cache_evictions();
         active_requests();
         // GaugeVec requires at least one labelled observation to appear in gather output
         circuit_breaker_open().with_label_values(&["test-channel"]);
+        retries_total().with_label_values(&["test", "test-model"]);
 
         let output = render();
         assert!(output.contains("modelswitch_requests_total"));
         assert!(output.contains("modelswitch_request_duration_seconds"));
         assert!(output.contains("modelswitch_cache_hits_total"));
         assert!(output.contains("modelswitch_cache_misses_total"));
+        assert!(output.contains("modelswitch_cache_evictions_total"));
         assert!(output.contains("modelswitch_active_requests"));
         assert!(output.contains("modelswitch_circuit_breaker_open"));
+        assert!(output.contains("modelswitch_retries_total"));
     }
 
     #[test]

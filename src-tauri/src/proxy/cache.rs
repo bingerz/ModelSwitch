@@ -132,6 +132,7 @@ impl RequestCache {
         });
         let evicted = before - guard.len();
         if evicted > 0 {
+            crate::metrics::cache_evictions().inc_by(evicted as u64);
             tracing::debug!(evicted, "Periodic cache sweep");
         }
         evicted

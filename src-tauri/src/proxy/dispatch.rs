@@ -317,6 +317,9 @@ pub(crate) async fn dispatch(
             {
                 AttemptOutcome::Respond(response) => return response,
                 AttemptOutcome::Retry => {
+                    crate::metrics::retries_total()
+                        .with_label_values(&[channel.provider.as_str(), current_model.as_str()])
+                        .inc();
                     // Exponential backoff with jitter to avoid thundering herd
                     let base_ms = state.gateway.retry_base_ms;
                     let max_ms = state.gateway.retry_max_ms;
