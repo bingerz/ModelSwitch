@@ -96,6 +96,15 @@ pub(super) async fn handle_streaming_success(
     );
     log_entry.id = log_id;
     state.logger.log(log_entry).await;
+
+    // Prometheus metrics
+    let provider_label = channel.provider.as_str();
+    crate::metrics::requests_total()
+        .with_label_values(&[provider_label, current_model, "success"])
+        .inc();
+    crate::metrics::request_duration()
+        .with_label_values(&[provider_label, current_model])
+        .observe(start.elapsed().as_secs_f64());
     let _ = state
         .channel_mgr
         .record_latency(channel.id, start.elapsed().as_millis() as u64)
@@ -320,6 +329,15 @@ pub(super) async fn handle_json_success(
             request_id,
         ))
         .await;
+
+    // Prometheus metrics
+    let provider_label = channel.provider.as_str();
+    crate::metrics::requests_total()
+        .with_label_values(&[provider_label, current_model, "success"])
+        .inc();
+    crate::metrics::request_duration()
+        .with_label_values(&[provider_label, current_model])
+        .observe(start.elapsed().as_secs_f64());
     let _ = state
         .channel_mgr
         .record_latency(channel.id, start.elapsed().as_millis() as u64)

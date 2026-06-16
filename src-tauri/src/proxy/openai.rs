@@ -73,7 +73,7 @@ pub struct AppState {
     pub channel_mgr: Arc<ChannelManager>,
     pub credential_store: SharedCredentialStore,
     pub logger: Arc<DispatchLogger>,
-    pub http_client: reqwest::Client,
+    pub http_pool: crate::http_pool::HttpPool,
     pub gateway: GatewayParams,
     pub router: RouterState,
     pub cache: CacheState,

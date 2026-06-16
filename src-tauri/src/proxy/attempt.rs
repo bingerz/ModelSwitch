@@ -217,7 +217,7 @@ pub(super) async fn try_channel_attempt(
         _ => upstream_url(channel, proxy_config.upstream_path),
     };
 
-    let mut req_builder = state.http_client.post(&url).json(&upstream_body);
+    let mut req_builder = state.http_pool.get().post(&url).json(&upstream_body);
 
     // Forward original request headers (excluding hop-by-hop and auth headers)
     for (name, value) in original_headers.iter() {
@@ -254,11 +254,7 @@ pub(super) async fn try_channel_attempt(
         match state.gateway.stream_ttft_timeout_secs {
             Some(secs) if secs > 0 => {
                 let send_future = req_builder.send();
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(secs),
-                    send_future,
-                )
-                .await
+                match tokio::time::timeout(std::time::Duration::from_secs(secs), send_future).await
                 {
                     Ok(result) => result,
                     Err(_elapsed) => {
@@ -267,7 +263,10 @@ pub(super) async fn try_channel_attempt(
                             ttft_timeout_secs = secs,
                             "TTFT timeout exceeded — aborting channel"
                         );
-                        state.limits.rate_limiter.record(channel.id, estimated_tokens);
+                        state
+                            .limits
+                            .rate_limiter
+                            .record(channel.id, estimated_tokens);
                         state.router.active_requests.decrement(channel.id);
                         log_attempt_failure(
                             &state.logger,

@@ -17,6 +17,23 @@ use super::request_meta::{
 };
 use super::{estimate_tokens, make_log, FailureReason, ProxyConfig};
 
+/// RAII guard that increments `active_requests` on creation and decrements on drop.
+/// Ensures the gauge is always balanced regardless of which return path dispatch takes.
+struct ActiveRequestGuard;
+
+impl ActiveRequestGuard {
+    fn new() -> Self {
+        crate::metrics::active_requests().inc();
+        Self
+    }
+}
+
+impl Drop for ActiveRequestGuard {
+    fn drop(&mut self) {
+        crate::metrics::active_requests().dec();
+    }
+}
+
 /// Log the all-channels-exhausted outcome, wake coalesced waiters, and return 429.
 async fn log_all_exhausted(
     state: &Arc<crate::proxy::openai::AppState>,
@@ -50,6 +67,9 @@ async fn log_all_exhausted(
             request_id,
         ))
         .await;
+    crate::metrics::requests_total()
+        .with_label_values(&["none", original_model, "error"])
+        .inc();
     all_channels_exhausted_response()
 }
 
@@ -64,6 +84,7 @@ async fn check_request_cache(
     let (cache_key, key_material) = RequestCache::compute_key(original_model, body);
     if let Some(cached) = state.cache.request_cache.get(cache_key, &key_material) {
         tracing::info!("Cache hit for request");
+        crate::metrics::cache_hits().inc();
         return Some(json_response(reqwest::StatusCode::OK, cached));
     }
     if !state.cache.in_flight.register(cache_key) {
@@ -71,11 +92,13 @@ async fn check_request_cache(
         state.cache.in_flight.wait(cache_key).await;
         if let Some(cached) = state.cache.request_cache.get(cache_key, &key_material) {
             tracing::info!("Coalesced request served from cache");
+            crate::metrics::cache_hits().inc();
             return Some(json_response(reqwest::StatusCode::OK, cached));
         }
         // Cache miss after wait — proceed normally as second attempt
         let _ = state.cache.in_flight.register(cache_key);
     }
+    crate::metrics::cache_misses().inc();
     None
 }
 
@@ -116,6 +139,8 @@ pub(crate) async fn dispatch(
     body: &Value,
     proxy_config: &ProxyConfig,
 ) -> Response {
+    let _guard = ActiveRequestGuard::new();
+
     let meta =
         extract_request_meta(body, original_headers, state, proxy_config.default_model).await;
     let RequestMeta {

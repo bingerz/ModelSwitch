@@ -60,18 +60,21 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     let model_fallbacks = config.gateway.model_fallbacks.clone();
     let routing_strategy = config.gateway.routing_strategy.clone();
 
-    // Build shared HTTP client (connection pooling)
-    let http_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(
-            config.gateway.http_timeout_secs,
-        ))
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .pool_idle_timeout(std::time::Duration::from_secs(90))
-        .pool_max_idle_per_host(20)
-        .tcp_keepalive(std::time::Duration::from_secs(60))
-        .tcp_nodelay(true)
-        .build()
-        .expect("Failed to build HTTP client");
+    // Build HTTP connection pool — multiple reqwest::Client instances to work around
+    // HTTP/2 single-connection-per-host limits under high concurrency.
+    let pool_size = config.gateway.http_pool_size.max(1);
+    let http_pool = crate::http_pool::HttpPool::new(pool_size, || {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(config.gateway.http_timeout_secs))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .read_timeout(std::time::Duration::from_secs(300))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .pool_max_idle_per_host(20)
+            .tcp_keepalive(std::time::Duration::from_secs(60))
+            .tcp_nodelay(true)
+    })
+    .expect("Failed to build HTTP client pool");
+    tracing::info!(pool_size, "HTTP connection pool created");
 
     // Initialize channel manager and logger
     let credential_store = create_credential_store();
@@ -144,7 +147,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         channel_mgr: Arc::clone(&channel_mgr),
         credential_store,
         logger: Arc::clone(&logger),
-        http_client: http_client.clone(),
+        http_pool: http_pool.clone(),
         gateway: GatewayParams {
             request_timeout_secs: config.gateway.request_timeout_secs,
             stream_keepalive_secs: config.gateway.stream_keepalive_secs,
@@ -239,7 +242,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     // Start background health checker
     if config.gateway.health_check_enabled {
         let hc_mgr = Arc::clone(&channel_mgr);
-        let hc_client = http_client.clone();
+        let hc_client = http_pool.first().clone();
         let hc_interval = config.gateway.health_check_interval_secs;
         health::start_health_checker(hc_mgr, hc_interval, hc_client);
     }
@@ -248,7 +251,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     {
         let qp_mgr = Arc::clone(&channel_mgr);
         let qp_store = Arc::clone(&quota_store);
-        let qp_client = http_client.clone();
+        let qp_client = http_pool.first().clone();
         let qp_interval = config.gateway.quota_poll_interval_secs;
         let qp_registry = Arc::clone(&quota_registry);
         // Build per-channel quota config map
@@ -390,7 +393,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             middleware::auth::admin_auth_middleware,
         ));
 
-    let base_router = Router::new().merge(proxy_router).merge(admin_router);
+    let base_router = Router::new()
+        .merge(proxy_router)
+        .merge(admin_router)
+        .route("/metrics", get(metrics_handler));
 
     // Conditionally mount MCP Gateway Mode endpoint.
     let router = if state.mcp.mcp_gateway_enabled {
@@ -417,6 +423,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024))
+}
+
+/// Handler for the `/metrics` Prometheus scrape endpoint.
+async fn metrics_handler() -> axum::response::Response {
+    let body = crate::metrics::render();
+    axum::response::Response::builder()
+        .header("Content-Type", "text/plain; version=0.0.4")
+        .body(axum::body::Body::from(body))
+        .expect("valid response")
 }
 
 /// Start the Axum gateway server with graceful shutdown.

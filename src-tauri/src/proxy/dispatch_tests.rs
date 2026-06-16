@@ -124,10 +124,10 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
 
     let logger = Arc::new(DispatchLogger::new(1000));
 
-    let http_client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .expect("Failed to build HTTP client");
+    let http_pool = crate::http_pool::HttpPool::new(1, || {
+        reqwest::Client::builder().timeout(Duration::from_secs(30))
+    })
+    .expect("Failed to build HTTP client pool");
 
     let active_requests = Arc::new(ActiveRequests::new());
     let request_cache = Arc::new(RequestCache::new(
@@ -146,7 +146,7 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
         channel_mgr,
         credential_store,
         logger,
-        http_client,
+        http_pool,
         gateway: GatewayParams {
             request_timeout_secs: Some(30),
             stream_keepalive_secs: None,

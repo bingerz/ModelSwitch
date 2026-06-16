@@ -127,6 +127,11 @@ pub struct GatewayConfig {
     /// None or 0 = no TTFT timeout (use only the overall request timeout).
     #[serde(default = "default_stream_ttft_timeout_secs")]
     pub stream_ttft_timeout_secs: Option<u64>,
+    /// Number of HTTP client instances in the connection pool (default 4).
+    /// Each client opens a separate TCP connection per HTTP/2 host, so
+    /// increasing this spreads concurrent requests across more connections.
+    #[serde(default = "default_http_pool_size")]
+    pub http_pool_size: usize,
 }
 
 /// Privacy guardrail configuration for the sanitizer middleware.
@@ -311,6 +316,9 @@ fn default_mcp_gateway_enabled() -> bool {
 fn default_stream_ttft_timeout_secs() -> Option<u64> {
     Some(30)
 }
+fn default_http_pool_size() -> usize {
+    4
+}
 fn default_enabled() -> bool {
     true
 }
@@ -344,6 +352,7 @@ impl Default for GatewayConfig {
             mcp_auto_inject: default_mcp_auto_inject(),
             mcp_gateway_enabled: default_mcp_gateway_enabled(),
             stream_ttft_timeout_secs: default_stream_ttft_timeout_secs(),
+            http_pool_size: default_http_pool_size(),
             sanitizer: SanitizerConfig {
                 enabled: default_sanitizer_enabled(),
                 redact_secrets: default_sanitizer_redact(),
