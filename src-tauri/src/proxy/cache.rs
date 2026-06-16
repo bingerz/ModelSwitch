@@ -88,15 +88,41 @@ impl RequestCache {
     /// Try to get a cached response. Returns None if expired, not found, or hash collision detected.
     /// The `key_material` is compared against the stored material to eliminate false positives
     /// from `u128` hash collisions.
+    ///
+    /// Performs a lazy TTL check on the requested key only — bulk eviction of
+    /// expired entries is handled by `sweep_expired()`.
     pub fn get(&self, key: u128, key_material: &str) -> Option<String> {
         if !self.mode.can_read() {
             return None;
         }
         let mut guard = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        // Lazy TTL check — only check the requested key, not all entries.
+        let entry = guard.get(&key)?;
+        if entry.cached_at.elapsed() >= self.ttl {
+            // Expired — remove just this entry.
+            let mut order = self.order.lock().unwrap_or_else(|e| e.into_inner());
+            order.retain(|k| *k != key);
+            drop(order);
+            guard.remove(&key);
+            return None;
+        }
+        if entry.key_material == key_material {
+            Some(entry.response_body.clone())
+        } else {
+            tracing::warn!("Cache hash collision detected for key {}", key);
+            None
+        }
+    }
+
+    /// Bulk-evict all expired entries. Returns the number of entries removed.
+    ///
+    /// Intended to be called periodically by a background task rather than on
+    /// every cache read.
+    pub fn sweep_expired(&self) -> usize {
+        let mut guard = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         let mut order = self.order.lock().unwrap_or_else(|e| e.into_inner());
-        // Clean expired entries on every read
-        let ttl = self.ttl;
         let before = guard.len();
+        let ttl = self.ttl;
         guard.retain(|k, entry| {
             let valid = entry.cached_at.elapsed() < ttl;
             if !valid {
@@ -104,17 +130,11 @@ impl RequestCache {
             }
             valid
         });
-        if guard.len() < before {
-            tracing::debug!(evicted = before - guard.len(), "Cache TTL eviction");
+        let evicted = before - guard.len();
+        if evicted > 0 {
+            tracing::debug!(evicted, "Periodic cache sweep");
         }
-        guard.get(&key).and_then(|e| {
-            if e.key_material == key_material {
-                Some(e.response_body.clone())
-            } else {
-                tracing::warn!("Cache hash collision detected for key {}", key);
-                None
-            }
-        })
+        evicted
     }
 
     /// Insert a response into the cache.

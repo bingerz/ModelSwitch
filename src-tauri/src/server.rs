@@ -328,6 +328,18 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         });
     }
 
+    // Periodic cache sweep — bulk-evict expired entries every 60s so that
+    // `get()` only needs a lazy per-key TTL check.
+    {
+        let sweep_cache = Arc::clone(&request_cache);
+        spawn_bg(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                sweep_cache.sweep_expired();
+            }
+        });
+    }
+
     // Start hot config reload watcher
     let watcher_path = watcher_config_path.or_else(|| AppConfig::config_path().ok());
     if let Some(path) = watcher_path {

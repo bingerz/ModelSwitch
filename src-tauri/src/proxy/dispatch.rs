@@ -1,5 +1,6 @@
 use axum::http::HeaderMap;
 use axum::response::Response;
+use rand::Rng;
 use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -296,7 +297,21 @@ pub(crate) async fn dispatch(
             .await
             {
                 AttemptOutcome::Respond(response) => return response,
-                AttemptOutcome::Retry => continue,
+                AttemptOutcome::Retry => {
+                    // Exponential backoff with jitter to avoid thundering herd
+                    let base_ms = 100u64;
+                    let max_ms = 5000u64;
+                    let exp_delay = std::cmp::min(
+                        base_ms.saturating_mul(1u64 << attempt.min(6)),
+                        max_ms,
+                    );
+                    let jitter = rand::rng().random_range(0..50);
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        exp_delay + jitter,
+                    ))
+                    .await;
+                    continue;
+                }
             }
         }
     }
