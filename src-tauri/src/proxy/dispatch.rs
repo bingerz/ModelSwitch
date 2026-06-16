@@ -6,7 +6,9 @@ use uuid::Uuid;
 
 use crate::channel::Channel;
 use crate::proxy::cache::RequestCache;
-use crate::proxy::stream::{all_channels_exhausted_response, json_response};
+use crate::proxy::stream::{
+    all_channels_exhausted_response, json_response, sse_stream_response_with_cached,
+};
 use crate::router;
 use crate::router::RoutingContext;
 use crate::virtual_key::ReserveResult;
@@ -40,15 +42,14 @@ async fn log_all_exhausted(
     state: &Arc<crate::proxy::openai::AppState>,
     original_model: &str,
     body: &Value,
-    is_stream: bool,
     total_attempts: u32,
     start: std::time::Instant,
     request_id: Option<&str>,
 ) -> Response {
-    if !is_stream {
-        let cache_key = RequestCache::cache_key(original_model, body);
-        state.cache.in_flight.complete(cache_key);
-    }
+    // Complete in-flight entry (no-op if not registered) so coalesced waiters
+    // can proceed and re-check the cache.
+    let cache_key = RequestCache::cache_key(original_model, body);
+    state.cache.in_flight.complete(cache_key);
     state
         .logger
         .log(make_log(
@@ -77,15 +78,20 @@ async fn log_all_exhausted(
 /// Check the request cache and coalesce in-flight requests.
 /// Returns `Some(response)` on cache hit (caller should return immediately),
 /// or `None` to continue dispatch.
+/// For streaming requests, the cached SSE text is returned as an event-stream response.
 async fn check_request_cache(
     state: &Arc<crate::proxy::openai::AppState>,
     original_model: &str,
     body: &Value,
+    is_stream: bool,
 ) -> Option<Response> {
     let (cache_key, key_material) = RequestCache::compute_key(original_model, body);
     if let Some(cached) = state.cache.request_cache.get(cache_key, &key_material) {
         tracing::info!("Cache hit for request");
         crate::metrics::cache_hits().inc();
+        if is_stream {
+            return Some(sse_stream_response_with_cached(&cached));
+        }
         return Some(json_response(reqwest::StatusCode::OK, cached));
     }
     if !state.cache.in_flight.register(cache_key) {
@@ -94,6 +100,9 @@ async fn check_request_cache(
         if let Some(cached) = state.cache.request_cache.get(cache_key, &key_material) {
             tracing::info!("Coalesced request served from cache");
             crate::metrics::cache_hits().inc();
+            if is_stream {
+                return Some(sse_stream_response_with_cached(&cached));
+            }
             return Some(json_response(reqwest::StatusCode::OK, cached));
         }
         // Cache miss after wait — proceed normally as second attempt
@@ -189,11 +198,9 @@ pub(crate) async fn dispatch(
     let channels = state.channel_mgr.channels();
     let start = std::time::Instant::now();
 
-    // Check request cache (only for non-streaming requests)
-    if !is_stream {
-        if let Some(cached) = check_request_cache(state, &original_model, body).await {
-            return cached;
-        }
+    // Check request cache
+    if let Some(cached) = check_request_cache(state, &original_model, body, is_stream).await {
+        return cached;
     }
 
     // Resolve fallback chain: [original_model, fallback1, fallback2, ...]
@@ -309,7 +316,6 @@ pub(crate) async fn dispatch(
         state,
         &original_model,
         body,
-        is_stream,
         total_attempts,
         start,
         request_id,

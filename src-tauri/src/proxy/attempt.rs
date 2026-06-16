@@ -357,6 +357,7 @@ pub(super) async fn try_channel_attempt(
             &upstream_headers,
             vk_id,
             reserved_cents,
+            original_model,
         )
         .await;
         AttemptOutcome::Respond(response)

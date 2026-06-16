@@ -7,21 +7,27 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use tokio_stream::StreamExt;
 
-/// Create an SSE streaming response that accumulates chunks for telemetry.
-/// Returns the response and a shared chunk list for post-stream cost tracking.
+/// Create an SSE streaming response that accumulates chunks for telemetry
+/// and raw SSE text for cache.
+/// Returns the response, a shared chunk list for post-stream cost tracking,
+/// and a shared raw SSE text buffer for caching.
 ///
 /// Uses an mpsc channel so that a background task owns the upstream stream.
 /// If the client disconnects mid-stream, the task continues draining the
 /// upstream to ensure telemetry (and therefore budget reconciliation) completes.
+#[allow(clippy::type_complexity)]
 pub fn sse_stream_response_with_telemetry(
     upstream_stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
     translate_gemini: bool,
     model: String,
-) -> (Response, Arc<Mutex<Vec<String>>>) {
+) -> (Response, Arc<Mutex<Vec<String>>>, Arc<Mutex<String>>) {
     use tokio::sync::mpsc;
 
     let chunks: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let chunks_clone = Arc::clone(&chunks);
+
+    let raw_sse: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let raw_sse_clone = Arc::clone(&raw_sse);
 
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(32);
 
@@ -87,6 +93,13 @@ pub fn sse_stream_response_with_telemetry(
                 bytes
             };
 
+            // Accumulate raw SSE text for caching (ALWAYS, even if client gone)
+            {
+                let mut raw = raw_sse_clone.lock().unwrap_or_else(|e| e.into_inner());
+                let chunk_text = String::from_utf8_lossy(&output_bytes);
+                raw.push_str(&chunk_text);
+            }
+
             // Forward to client — if disconnected, continue draining upstream
             // to ensure telemetry completes. Ignore SendError.
             if tx.send(Ok(output_bytes)).await.is_err() {
@@ -104,6 +117,11 @@ pub fn sse_stream_response_with_telemetry(
                                     guard.push(data.to_string());
                                 }
                             }
+                        }
+                        // Accumulate raw SSE text for caching (drain path)
+                        {
+                            let mut raw = raw_sse_clone.lock().unwrap_or_else(|e| e.into_inner());
+                            raw.push_str(&text);
                         }
                     }
                 }
@@ -123,7 +141,7 @@ pub fn sse_stream_response_with_telemetry(
         .body(body)
         .unwrap();
 
-    (response, chunks)
+    (response, chunks, raw_sse)
 }
 
 /// Create a non-streaming JSON response.
@@ -158,6 +176,21 @@ pub fn all_channels_exhausted_response() -> Response {
         }
     });
     json_response(StatusCode::TOO_MANY_REQUESTS, body.to_string())
+}
+
+/// Create an SSE response from cached SSE text.
+/// The cached text is the full SSE event stream including `data:` prefixes,
+/// newlines, etc. The client receives it as a single body but the SSE format
+/// is preserved, so the client parses it correctly.
+pub fn sse_stream_response_with_cached(cached_body: &str) -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("Connection", "keep-alive")
+        .header("X-Accel-Buffering", "no")
+        .body(Body::from(cached_body.to_string()))
+        .unwrap()
 }
 
 /// Wrap a byte stream with keepalive SSE comments.
@@ -283,5 +316,35 @@ mod tests {
         assert_eq!(detect_sse_error("[DONE]"), None);
         assert_eq!(detect_sse_error(""), None);
         assert_eq!(detect_sse_error("data: "), None);
+    }
+
+    #[tokio::test]
+    async fn raw_sse_accumulates_all_chunks() {
+        use bytes::Bytes;
+        use futures::stream;
+
+        let chunks = vec![
+            Bytes::from("data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n"),
+            Bytes::from("data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n"),
+            Bytes::from("data: [DONE]\n\n"),
+        ];
+        let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
+
+        let (_response, _telemetry, raw_sse) =
+            sse_stream_response_with_telemetry(upstream, false, "gpt-4".to_string());
+
+        // Consume the response body so the background task completes
+        let body = _response.into_body();
+        let body_bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+        assert!(!body_bytes.is_empty());
+
+        // Allow background task to finish writing
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let raw = raw_sse.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(raw.contains("Hello"), "raw_sse should contain 'Hello': {:?}", raw);
+        assert!(raw.contains("world"), "raw_sse should contain 'world': {:?}", raw);
+        assert!(raw.contains("[DONE]"), "raw_sse should contain '[DONE]': {:?}", raw);
+        assert!(raw.contains("data: "), "raw_sse should contain 'data: ': {:?}", raw);
     }
 }

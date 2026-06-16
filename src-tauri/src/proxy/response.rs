@@ -44,7 +44,7 @@ pub(super) fn inject_passthrough_headers(
 
 /// Handle a successful streaming (SSE) response from upstream.
 /// Logs the attempt, spawns a background task to extract real token usage,
-/// and applies keepalive if configured.
+/// caches the SSE response for streaming cache hits, and applies keepalive if configured.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_streaming_success(
     state: &Arc<crate::proxy::openai::AppState>,
@@ -61,9 +61,10 @@ pub(super) async fn handle_streaming_success(
     upstream_headers: &[(String, String)],
     vk_id: Option<Uuid>,
     reserved_cents: u64,
+    original_model: &str,
 ) -> Response {
     let is_gemini = provider.is_gemini_stream();
-    let (stream_resp, telemetry_chunks) = sse_stream_response_with_telemetry(
+    let (stream_resp, telemetry_chunks, raw_sse) = sse_stream_response_with_telemetry(
         resp.bytes_stream(),
         is_gemini,
         upstream_model.to_string(),
@@ -130,6 +131,11 @@ pub(super) async fn handle_streaming_success(
         let bg_cost_per_token = channel.cost_per_token;
         let bg_vk_id = vk_id;
         let bg_reserved_cents = reserved_cents;
+        let bg_request_cache = Arc::clone(&state.cache.request_cache);
+        let bg_in_flight = Arc::clone(&state.cache.in_flight);
+        let bg_original_model = original_model.to_string();
+        let bg_body = body.clone();
+        let bg_raw_sse = Arc::clone(&raw_sse);
         crate::spawn_bg(async move {
             // Wait for chunks to accumulate (stream finishing).
             //
@@ -164,6 +170,20 @@ pub(super) async fn handle_streaming_success(
                     }
                 }
             };
+            // Cache the accumulated SSE text for streaming cache hits.
+            // Must happen before in_flight.complete for coalesced waiters.
+            {
+                let cached_sse = {
+                    let guard = bg_raw_sse.lock().unwrap_or_else(|e| e.into_inner());
+                    guard.clone()
+                };
+                if !cached_sse.is_empty() {
+                    let (cache_key, key_material) =
+                        RequestCache::compute_key(&bg_original_model, &bg_body);
+                    bg_request_cache.insert(cache_key, key_material, cached_sse);
+                    bg_in_flight.complete(cache_key);
+                }
+            }
             if chunks.is_empty() {
                 return;
             }
