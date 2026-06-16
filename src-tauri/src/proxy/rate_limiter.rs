@@ -4,6 +4,7 @@ use std::time::Instant;
 use uuid::Uuid;
 
 const WINDOW_MS: u64 = 60_000; // 1 minute
+const FULL_PRUNE_INTERVAL: u32 = 100;
 
 /// Sliding window for a single metric (tokens or requests).
 struct SlidingWindow {
@@ -31,13 +32,19 @@ impl SlidingWindow {
         self.entries.push((now, count));
     }
 
-    fn current_total(&mut self) -> u64 {
+    /// Sum counts within the window without modifying entries.
+    /// Filtering during summation avoids the O(n) retain() on every check.
+    fn current_total(&self) -> u64 {
         let now = self.now_ms();
-        self.prune(now);
-        self.entries.iter().map(|(_, c)| c).sum()
+        let cutoff = now.saturating_sub(self.window_ms);
+        self.entries
+            .iter()
+            .filter(|(ts, _)| *ts >= cutoff)
+            .map(|(_, c)| c)
+            .sum()
     }
 
-    fn check_and_add(&mut self, count: u64, limit: u64) -> bool {
+    fn check_and_add(&self, count: u64, limit: u64) -> bool {
         self.current_total() + count <= limit
     }
 
@@ -78,6 +85,26 @@ impl ChannelWindows {
 struct RateLimiterState {
     channels: HashMap<Uuid, (ChannelWindows, ChannelLimits)>,
     global_tpm_window: SlidingWindow,
+    call_count: u32,
+}
+
+impl RateLimiterState {
+    /// Periodically prune all windows to reclaim memory from dead channels.
+    /// Amortized: O(channels * window_entries) every FULL_PRUNE_INTERVAL calls
+    /// instead of on every check/record.
+    fn maybe_full_prune(&mut self) {
+        self.call_count = self.call_count.wrapping_add(1);
+        if self.call_count % FULL_PRUNE_INTERVAL == 0 {
+            for (windows, _) in self.channels.values_mut() {
+                let now = windows.tpm.now_ms();
+                windows.tpm.prune(now);
+                let now = windows.rpm.now_ms();
+                windows.rpm.prune(now);
+            }
+            let now = self.global_tpm_window.now_ms();
+            self.global_tpm_window.prune(now);
+        }
+    }
 }
 
 /// Per-channel rate limiting for tokens per minute (TPM) and requests per minute (RPM).
@@ -93,6 +120,7 @@ impl RateLimiter {
             state: Mutex::new(RateLimiterState {
                 channels: HashMap::new(),
                 global_tpm_window: SlidingWindow::new(WINDOW_MS),
+                call_count: 0,
             }),
             global_tpm_limit,
         }
@@ -120,6 +148,7 @@ impl RateLimiter {
     /// Returns (allowed, reason).
     pub fn check(&self, channel_id: Uuid, estimated_tokens: u64) -> (bool, &'static str) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.maybe_full_prune();
 
         // Check global TPM
         if let Some(global_limit) = self.global_tpm_limit {
@@ -155,6 +184,7 @@ impl RateLimiter {
     /// Record that a request was dispatched to a channel.
     pub fn record(&self, channel_id: Uuid, tokens: u64) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.maybe_full_prune();
 
         let entry = state
             .channels
@@ -170,9 +200,10 @@ impl RateLimiter {
 
     /// Get the current TPM usage for a channel (0 if no data).
     pub fn current_tpm(&self, channel_id: Uuid) -> u64 {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let entry = state.channels.get_mut(&channel_id);
-        entry
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state
+            .channels
+            .get(&channel_id)
             .map(|(windows, _)| windows.tpm.current_total())
             .unwrap_or(0)
     }
