@@ -8,47 +8,9 @@ use uuid::Uuid;
 use crate::channel::Channel;
 use crate::proxy::stream::json_response;
 
+use super::provider::ProviderAdaptor;
 use super::response::{extract_passthrough_headers, handle_json_success, handle_streaming_success};
-use super::{
-    estimate_tokens, make_log, upstream_url, AuthStyle, FailureReason, ProxyConfig, SKIP_HEADERS,
-};
-
-/// Validate and sanitize a model name for safe URL interpolation.
-///
-/// Model names must be flat identifiers (e.g. `gpt-4`, `claude-3-opus-20240229`,
-/// `gemini-1.5-pro`). This function:
-/// - Removes any character outside `[a-zA-Z0-9._:-]`
-/// - Strips leading/trailing dots and collapses consecutive dots to prevent
-///   path-traversal sequences (`..`)
-/// - Rejects empty results (returns "unknown" as fallback)
-fn sanitize_model_for_url(model: &str) -> String {
-    // Allow only alphanumeric, hyphens, dots, underscores, colons
-    let mut sanitized: String = model
-        .chars()
-        .filter(|c| c.is_alphanumeric() || matches!(c, '-' | '.' | '_' | ':'))
-        .collect();
-
-    // Collapse consecutive dots and strip leading/trailing dots
-    while sanitized.contains("..") {
-        sanitized = sanitized.replace("..", ".");
-    }
-    sanitized = sanitized.trim_matches('.').to_string();
-
-    // Fallback for empty or all-unsafe input
-    if sanitized.is_empty() {
-        tracing::warn!(original = %model, "Model name was entirely unsafe, using fallback");
-        return "unknown".to_string();
-    }
-
-    if sanitized != model {
-        tracing::warn!(
-            original = %model,
-            sanitized = %sanitized,
-            "Model name contained unsafe characters, sanitized for URL"
-        );
-    }
-    sanitized
-}
+use super::{estimate_tokens, make_log, FailureReason, SKIP_HEADERS};
 
 /// Outcome of a single channel dispatch attempt.
 pub(super) enum AttemptOutcome {
@@ -96,7 +58,7 @@ pub(super) async fn try_channel_attempt(
     state: &Arc<crate::proxy::openai::AppState>,
     original_headers: &HeaderMap,
     body: &Value,
-    proxy_config: &ProxyConfig,
+    provider: &dyn ProviderAdaptor,
     channel: &Channel,
     current_model: &str,
     original_model: &str,
@@ -145,17 +107,12 @@ pub(super) async fn try_channel_attempt(
         return AttemptOutcome::Retry;
     }
 
-    // Determine effective auth style: cookie overrides if credential type is web_session
-    let effective_auth =
-        if channel.credential.cred_type == crate::channel::CredentialType::WebSession {
-            AuthStyle::Cookie
-        } else {
-            proxy_config.auth_style.clone()
-        };
+    // Determine whether to use cookie-based auth (web session) or native provider auth
+    let is_web_session = channel.credential.cred_type == crate::channel::CredentialType::WebSession;
 
-    // Inject stream_options.include_usage for OpenAI-compatible streaming requests
+    // Inject stream_options.include_usage for providers that support it (OpenAI-compatible)
     // to ensure upstream returns token usage in the final SSE chunk
-    if is_stream && !matches!(effective_auth, AuthStyle::GeminiUrl | AuthStyle::Anthropic) {
+    if is_stream && provider.inject_stream_usage() {
         if let Some(obj) = upstream_body.as_object_mut() {
             let needs_injection = obj
                 .get("stream_options")
@@ -196,26 +153,11 @@ pub(super) async fn try_channel_attempt(
         }
     };
 
-    // Build URL: Gemini embeds model in URL; others use base_url + path
-    let url = match &effective_auth {
-        AuthStyle::GeminiUrl => {
-            let base = channel.base_url.trim_end_matches('/');
-            if is_stream {
-                format!(
-                    "{}/v1beta/models/{}:streamGenerateContent?alt=sse",
-                    base,
-                    sanitize_model_for_url(&upstream_model)
-                )
-            } else {
-                format!(
-                    "{}/v1beta/models/{}:generateContent",
-                    base,
-                    sanitize_model_for_url(&upstream_model)
-                )
-            }
-        }
-        _ => upstream_url(channel, proxy_config.upstream_path),
-    };
+    // Transform request body for provider-specific format (e.g., Gemini)
+    let upstream_body = provider.transform_request(&upstream_body);
+
+    // Build URL via provider (Gemini embeds model in URL; others use base_url + path)
+    let url = provider.build_url(&channel.base_url, &upstream_model, is_stream);
 
     let mut req_builder = state.http_pool.get().post(&url).json(&upstream_body);
 
@@ -227,21 +169,7 @@ pub(super) async fn try_channel_attempt(
     }
 
     // Set provider-specific auth headers
-    req_builder = match &effective_auth {
-        AuthStyle::OpenAI => req_builder
-            .header("Authorization", format!("Bearer {}", api_key))
-            .header("Content-Type", "application/json"),
-        AuthStyle::Anthropic => req_builder
-            .header("x-api-key", &api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("Content-Type", "application/json"),
-        AuthStyle::Cookie => req_builder
-            .header("Cookie", &api_key)
-            .header("Content-Type", "application/json"),
-        AuthStyle::GeminiUrl => req_builder
-            .header("x-goog-api-key", &api_key)
-            .header("Content-Type", "application/json"),
-    };
+    req_builder = provider.apply_auth(req_builder, &api_key, is_web_session);
 
     if is_stream {
         req_builder = req_builder.header("Accept", "text/event-stream");
@@ -419,7 +347,7 @@ pub(super) async fn try_channel_attempt(
             channel,
             resp,
             body,
-            proxy_config,
+            provider,
             current_model,
             &upstream_model,
             attempt,
@@ -439,7 +367,7 @@ pub(super) async fn try_channel_attempt(
             resp,
             body,
             original_model,
-            proxy_config,
+            provider,
             current_model,
             &upstream_model,
             attempt,

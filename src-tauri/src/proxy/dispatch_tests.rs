@@ -27,7 +27,8 @@ use crate::proxy::openai::{
 };
 use crate::proxy::payload_rules::ChannelPayloadRules;
 use crate::proxy::rate_limiter::RateLimiter;
-use crate::proxy::{dispatch, AuthStyle, ProxyConfig};
+use crate::proxy::provider::OpenAIAdaptor;
+use crate::proxy::dispatch;
 use crate::quota::QuotaStore;
 use crate::router::active_requests::ActiveRequests;
 use crate::router::affinity::SessionAffinity;
@@ -35,13 +36,9 @@ use crate::virtual_key::VirtualKeyStore;
 
 // ── Test helpers ───────────────────────────────────────────────────────────
 
-/// Build a standard OpenAI chat completion proxy config.
-fn openai_proxy_config() -> ProxyConfig {
-    ProxyConfig {
-        default_model: "gpt-4",
-        upstream_path: "v1/chat/completions",
-        auth_style: AuthStyle::OpenAI,
-    }
+/// Build a standard OpenAI chat completion provider adaptor.
+fn openai_provider() -> OpenAIAdaptor {
+    OpenAIAdaptor
 }
 
 /// Build a valid OpenAI chat completion JSON body for a non-streaming request.
@@ -226,9 +223,9 @@ async fn dispatch_success() {
 
     let headers = HeaderMap::new();
     let body = chat_request_body("gpt-4", "Say hello");
-    let proxy_config = openai_proxy_config();
+    let provider = openai_provider();
 
-    let response = dispatch(&state, &headers, &body, &proxy_config).await;
+    let response = dispatch(&state, &headers, &body, &provider).await;
 
     assert_eq!(response_status(&response), 200);
     let json = response_json(response).await;
@@ -279,9 +276,9 @@ async fn dispatch_retry_on_429() {
 
     let headers = HeaderMap::new();
     let body = chat_request_body("gpt-4", "Test retry");
-    let proxy_config = openai_proxy_config();
+    let provider = openai_provider();
 
-    let response = dispatch(&state, &headers, &body, &proxy_config).await;
+    let response = dispatch(&state, &headers, &body, &provider).await;
 
     assert_eq!(
         response_status(&response),
@@ -344,9 +341,9 @@ async fn dispatch_all_channels_exhausted() {
 
     let headers = HeaderMap::new();
     let body = chat_request_body("gpt-4", "This should fail");
-    let proxy_config = openai_proxy_config();
+    let provider = openai_provider();
 
-    let response = dispatch(&state, &headers, &body, &proxy_config).await;
+    let response = dispatch(&state, &headers, &body, &provider).await;
 
     // The all-exhausted response is a 429
     assert_eq!(
@@ -382,16 +379,16 @@ async fn dispatch_cache_hit() {
 
     let headers = HeaderMap::new();
     let body = chat_request_body("gpt-4", "Cache test");
-    let proxy_config = openai_proxy_config();
+    let provider = openai_provider();
 
     // First request — should hit the upstream
-    let response1 = dispatch(&state, &headers, &body, &proxy_config).await;
+    let response1 = dispatch(&state, &headers, &body, &provider).await;
     assert_eq!(response_status(&response1), 200);
     let json1 = response_json(response1).await;
     assert_eq!(json1["choices"][0]["message"]["content"], "Cached!");
 
     // Second identical request — should be served from cache
-    let response2 = dispatch(&state, &headers, &body, &proxy_config).await;
+    let response2 = dispatch(&state, &headers, &body, &provider).await;
     assert_eq!(response_status(&response2), 200);
     let json2 = response_json(response2).await;
     assert_eq!(json2["choices"][0]["message"]["content"], "Cached!");

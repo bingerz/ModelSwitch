@@ -7,7 +7,7 @@ use crate::proxy::mcp_tools;
 use crate::proxy::payload_rules::ChannelPayloadRules;
 use crate::proxy::rate_limiter::RateLimiter;
 use crate::proxy::stream::json_response;
-use crate::proxy::{dispatch, AuthStyle, ProxyConfig};
+use crate::proxy::{dispatch, provider::OpenAIAdaptor};
 use crate::quota::SharedQuotaStore;
 use crate::router::active_requests::ActiveRequests;
 use crate::router::affinity::SessionAffinity;
@@ -112,22 +112,18 @@ pub async fn handle_chat_completions(
         return resp;
     }
 
-    let proxy_config = ProxyConfig {
-        default_model: "gpt-4",
-        upstream_path: "v1/chat/completions",
-        auth_style: AuthStyle::OpenAI,
-    };
+    let provider = OpenAIAdaptor;
 
     // If MCP auto-inject is disabled (or no servers running), short-circuit.
     if !state.mcp.mcp_auto_inject {
-        return dispatch(&state, &headers, &body, &proxy_config).await;
+        return dispatch(&state, &headers, &body, &provider).await;
     }
 
     let (mut current_body, injected) =
         mcp_tools::inject_mcp_tools(&body, &state.mcp.mcp_manager).await;
     if injected.is_empty() {
         // Nothing to intercept — normal dispatch path.
-        return dispatch(&state, &headers, &body, &proxy_config).await;
+        return dispatch(&state, &headers, &body, &provider).await;
     }
 
     // Force non-streaming for internal loop iterations.
@@ -142,7 +138,7 @@ pub async fn handle_chat_completions(
     let max_iter = state.mcp.mcp_max_iterations.max(1);
 
     for iteration in 0..max_iter {
-        let response = dispatch(&state, &headers, &current_body, &proxy_config).await;
+        let response = dispatch(&state, &headers, &current_body, &provider).await;
 
         let (status, response_body) = match extract_response_json(response).await {
             Ok(parts) => parts,
@@ -201,7 +197,7 @@ pub async fn handle_chat_completions(
             obj.insert("stream".to_string(), json!(true));
         }
     }
-    dispatch(&state, &headers, &current_body, &proxy_config).await
+    dispatch(&state, &headers, &current_body, &provider).await
 }
 
 /// Buffer an axum `Response` body and parse it as JSON.

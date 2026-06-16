@@ -1,6 +1,6 @@
 use crate::proxy::openai::AppState;
-use crate::proxy::translate::openai_to_gemini;
-use crate::proxy::{dispatch, AuthStyle, ProxyConfig};
+use crate::proxy::provider::GeminiAdaptor;
+use crate::proxy::dispatch;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
@@ -8,10 +8,11 @@ use serde_json::Value;
 use std::sync::Arc;
 
 /// Handle Gemini-compatible /v1beta/models/{model}:generateContent requests.
-/// Translates OpenAI-format incoming requests to Gemini format, forwards via
-/// shared dispatch (which handles channel selection, retry, circuit breaking,
-/// rate limiting, session affinity, caching, and payload rules), then
-/// the response is returned in Gemini format from upstream.
+///
+/// The incoming request is in OpenAI format. The `GeminiAdaptor` trait
+/// implementation handles format translation (`transform_request` /
+/// `transform_response`) inside the dispatch pipeline, so the handler
+/// passes the original body and lets the provider adaptor handle the rest.
 pub async fn handle_gemini(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -20,19 +21,6 @@ pub async fn handle_gemini(
     if let Err(resp) = crate::proxy::validate_chat_request(&body) {
         return resp;
     }
-    // Translate request body to Gemini format
-    let gemini_body = openai_to_gemini(&body);
-
-    // Call shared dispatch with GeminiUrl auth style (key embedded in URL)
-    dispatch(
-        &state,
-        &headers,
-        &gemini_body,
-        &ProxyConfig {
-            default_model: "gemini-pro",
-            upstream_path: "",
-            auth_style: AuthStyle::GeminiUrl,
-        },
-    )
-    .await
+    let provider = GeminiAdaptor;
+    dispatch(&state, &headers, &body, &provider).await
 }

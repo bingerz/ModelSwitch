@@ -10,6 +10,7 @@ pub mod translate;
 
 mod attempt;
 mod dispatch;
+pub(crate) mod provider;
 mod request_meta;
 mod response;
 mod usage;
@@ -27,6 +28,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 /// Build upstream URL for a channel given a path suffix.
+#[allow(dead_code)]
 pub fn upstream_url(channel: &Channel, path: &str) -> String {
     let base = channel.base_url.trim_end_matches('/');
     let path = path.trim_start_matches('/');
@@ -179,21 +181,6 @@ const PASSTHROUGH_RESPONSE_HEADERS: &[&str] = &[
     "x-request-id",
 ];
 
-/// Provider-specific authentication style.
-#[derive(Clone)]
-pub(crate) enum AuthStyle {
-    OpenAI,
-    Anthropic,
-    Cookie,
-    GeminiUrl,
-}
-
-/// Configuration for a proxy dispatch.
-pub(crate) struct ProxyConfig {
-    pub default_model: &'static str,
-    pub upstream_path: &'static str,
-    pub auth_style: AuthStyle,
-}
 
 /// Categorized reason for a channel dispatch failure.
 #[derive(Debug, Clone)]

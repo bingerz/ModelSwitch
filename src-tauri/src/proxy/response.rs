@@ -9,10 +9,10 @@ use uuid::Uuid;
 use crate::channel::Channel;
 use crate::proxy::cache::RequestCache;
 use crate::proxy::stream::{json_response, keepalive_stream, sse_stream_response_with_telemetry};
-use crate::proxy::translate::gemini_to_openai;
 
+use super::provider::ProviderAdaptor;
 use super::usage::{extract_usage, extract_usage_from_stream};
-use super::{estimate_tokens, make_log, AuthStyle, ProxyConfig, PASSTHROUGH_RESPONSE_HEADERS};
+use super::{estimate_tokens, make_log, PASSTHROUGH_RESPONSE_HEADERS};
 
 /// Extract passthrough headers from an upstream response.
 pub(super) fn extract_passthrough_headers(resp: &reqwest::Response) -> Vec<(String, String)> {
@@ -51,7 +51,7 @@ pub(super) async fn handle_streaming_success(
     channel: &Channel,
     resp: reqwest::Response,
     body: &Value,
-    proxy_config: &ProxyConfig,
+    provider: &dyn ProviderAdaptor,
     current_model: &str,
     upstream_model: &str,
     attempt: u32,
@@ -62,7 +62,7 @@ pub(super) async fn handle_streaming_success(
     vk_id: Option<Uuid>,
     reserved_cents: u64,
 ) -> Response {
-    let is_gemini = matches!(proxy_config.auth_style, AuthStyle::GeminiUrl);
+    let is_gemini = provider.is_gemini_stream();
     let (stream_resp, telemetry_chunks) = sse_stream_response_with_telemetry(
         resp.bytes_stream(),
         is_gemini,
@@ -245,7 +245,7 @@ pub(super) async fn handle_json_success(
     resp: reqwest::Response,
     body: &Value,
     original_model: &str,
-    proxy_config: &ProxyConfig,
+    provider: &dyn ProviderAdaptor,
     current_model: &str,
     upstream_model: &str,
     attempt: u32,
@@ -258,14 +258,11 @@ pub(super) async fn handle_json_success(
 ) -> Response {
     let body_text = resp.text().await.unwrap_or_default();
 
-    // Translate Gemini response to OpenAI format
-    let response_body = if matches!(proxy_config.auth_style, AuthStyle::GeminiUrl) {
-        if let Ok(v) = serde_json::from_str::<Value>(&body_text) {
-            let translated = gemini_to_openai(&v, upstream_model);
-            serde_json::to_string(&translated).unwrap_or(body_text)
-        } else {
-            body_text
-        }
+    // Translate response body via provider (pass-through for OpenAI/Anthropic,
+    // Gemini-to-OpenAI translation for Gemini).
+    let response_body = if let Ok(v) = serde_json::from_str::<Value>(&body_text) {
+        let translated = provider.transform_response(&v, upstream_model);
+        serde_json::to_string(&translated).unwrap_or(body_text)
     } else {
         body_text
     };

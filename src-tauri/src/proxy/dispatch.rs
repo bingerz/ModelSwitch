@@ -12,10 +12,11 @@ use crate::router::RoutingContext;
 use crate::virtual_key::ReserveResult;
 
 use super::attempt::{try_channel_attempt, AttemptOutcome};
+use super::provider::ProviderAdaptor;
 use super::request_meta::{
     extract_request_meta, extract_virtual_key_id, is_affinity_valid, RequestMeta,
 };
-use super::{estimate_tokens, make_log, FailureReason, ProxyConfig};
+use super::{estimate_tokens, make_log, FailureReason};
 
 /// RAII guard that increments `active_requests` on creation and decrements on drop.
 /// Ensures the gauge is always balanced regardless of which return path dispatch takes.
@@ -137,12 +138,11 @@ pub(crate) async fn dispatch(
     state: &Arc<crate::proxy::openai::AppState>,
     original_headers: &HeaderMap,
     body: &Value,
-    proxy_config: &ProxyConfig,
+    provider: &dyn ProviderAdaptor,
 ) -> Response {
     let _guard = ActiveRequestGuard::new();
 
-    let meta =
-        extract_request_meta(body, original_headers, state, proxy_config.default_model).await;
+    let meta = extract_request_meta(body, original_headers, state, provider.default_model()).await;
     let RequestMeta {
         original_model,
         is_stream,
@@ -255,7 +255,7 @@ pub(crate) async fn dispatch(
                 state,
                 original_headers,
                 body,
-                proxy_config,
+                provider,
                 &channel,
                 current_model,
                 &original_model,

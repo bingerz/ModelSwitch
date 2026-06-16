@@ -1,5 +1,6 @@
 use crate::proxy::openai::AppState;
-use crate::proxy::{dispatch, AuthStyle, ProxyConfig};
+use crate::proxy::provider::AnthropicAdaptor;
+use crate::proxy::dispatch;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
@@ -15,15 +16,6 @@ pub async fn handle_messages(
     if let Err(resp) = crate::proxy::validate_chat_request(&body) {
         return resp;
     }
-    dispatch(
-        &state,
-        &headers,
-        &body,
-        &ProxyConfig {
-            default_model: "claude-3-5-sonnet-20241022",
-            upstream_path: "v1/messages",
-            auth_style: AuthStyle::Anthropic,
-        },
-    )
-    .await
+    let provider = AnthropicAdaptor;
+    dispatch(&state, &headers, &body, &provider).await
 }
