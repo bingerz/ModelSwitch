@@ -152,12 +152,19 @@ impl DispatchLogger {
     }
 
     pub async fn stats(&self) -> DispatchStats {
-        let logs = self.logs.read().await;
-        let total = logs.len();
-        let successes = logs.iter().filter(|l| l.success).count();
+        // Snapshot only the fields we need, then release the lock
+        let (total, snapshot) = {
+            let logs = self.logs.read().await;
+            let total = logs.len();
+            let snapshot: Vec<(bool, u64)> =
+                logs.iter().map(|l| (l.success, l.latency_ms)).collect();
+            (total, snapshot)
+        };
+
+        let successes = snapshot.iter().filter(|(s, _)| *s).count();
         let failures = total - successes;
         let avg_latency = if total > 0 {
-            logs.iter().map(|l| l.latency_ms).sum::<u64>() / total as u64
+            snapshot.iter().map(|(_, lat)| *lat).sum::<u64>() / total as u64
         } else {
             0
         };
@@ -174,17 +181,25 @@ impl DispatchLogger {
     /// Skips placeholder logs from streaming (those with no real token data).
     pub async fn usage_history(&self, hours: u64) -> UsageHistory {
         let cutoff = Utc::now() - chrono::Duration::hours(hours as i64);
-        let logs = self.logs.read().await;
+
+        // Snapshot matching entries under the read lock, then release
+        let matching: Vec<DispatchLog> = {
+            let logs = self.logs.read().await;
+            logs.iter()
+                .filter(|l| {
+                    // Skip streaming placeholder logs — they have no real token data
+                    l.success
+                        && l.timestamp >= cutoff
+                        && (l.input_tokens.is_some() || l.output_tokens.is_some())
+                })
+                .cloned()
+                .collect()
+        };
 
         // Key: (hour, channel_id, model)
         let mut buckets: BTreeMap<(DateTime<Utc>, Uuid, String), UsageBucket> = BTreeMap::new();
 
-        for log in logs.iter().filter(|l| {
-            // Skip streaming placeholder logs — they have no real token data
-            l.success
-                && l.timestamp >= cutoff
-                && (l.input_tokens.is_some() || l.output_tokens.is_some())
-        }) {
+        for log in &matching {
             let hour = log
                 .timestamp
                 .with_minute(0)
@@ -232,8 +247,11 @@ impl DispatchLogger {
     }
 
     pub async fn cost_stats(&self) -> CostStats {
-        let logs = self.logs.read().await;
-        let successful: Vec<&DispatchLog> = logs.iter().filter(|l| l.success).collect();
+        // Snapshot successful entries under the read lock, then release
+        let successful: Vec<DispatchLog> = {
+            let logs = self.logs.read().await;
+            logs.iter().filter(|l| l.success).cloned().collect()
+        };
 
         let total_cost: f64 = successful.iter().filter_map(|l| l.estimated_cost).sum();
 
