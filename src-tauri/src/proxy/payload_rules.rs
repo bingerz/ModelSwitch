@@ -71,6 +71,14 @@ impl ChannelPayloadRules {
             .cloned()
     }
 
+    /// Check if any rules exist for a given channel (without cloning).
+    pub fn has_rules(&self, channel_id: uuid::Uuid) -> bool {
+        self.rules
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(&channel_id)
+    }
+
     /// Remove rules for a channel that has been deleted.
     pub fn remove(&self, channel_id: uuid::Uuid) {
         self.rules

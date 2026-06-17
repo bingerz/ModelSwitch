@@ -7,7 +7,6 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::channel::Channel;
-use crate::proxy::cache::RequestCache;
 use crate::proxy::stream::{json_response, keepalive_stream, sse_stream_response_with_telemetry};
 
 use super::provider::ProviderAdaptor;
@@ -111,14 +110,15 @@ pub(super) async fn handle_streaming_success(
     vk_id: Option<Uuid>,
     reserved_cents: u64,
     original_model: &str,
+    cache_key: u128,
+    cache_key_material: &str,
 ) -> Response {
     let is_gemini = provider.is_gemini_stream();
-    let (stream_resp, telemetry_chunks, raw_sse, stream_done) =
-        sse_stream_response_with_telemetry(
-            resp.bytes_stream(),
-            is_gemini,
-            upstream_model.to_string(),
-        );
+    let (stream_resp, telemetry_chunks, raw_sse, stream_done) = sse_stream_response_with_telemetry(
+        resp.bytes_stream(),
+        is_gemini,
+        upstream_model.to_string(),
+    );
 
     let est_tokens = estimate_tokens(body, true);
     let estimated_cost = channel
@@ -183,11 +183,11 @@ pub(super) async fn handle_streaming_success(
         let bg_reserved_cents = reserved_cents;
         let bg_request_cache = Arc::clone(&state.cache.request_cache);
         let bg_in_flight = Arc::clone(&state.cache.in_flight);
-        let bg_original_model = original_model.to_string();
         let bg_current_model = current_model.to_string();
-        let bg_body = body.clone();
         let bg_raw_sse = Arc::clone(&raw_sse);
         let bg_stream_done = Arc::clone(&stream_done);
+        let bg_cache_key = cache_key;
+        let bg_key_material = cache_key_material.to_string();
         crate::spawn_bg(async move {
             // Wait for the upstream stream to be fully consumed by the
             // stream-forwarding task.  `Notify` stores a permit if
@@ -213,10 +213,8 @@ pub(super) async fn handle_streaming_success(
                     guard.clone()
                 };
                 if !cached_sse.is_empty() {
-                    let (cache_key, key_material) =
-                        RequestCache::compute_key(&bg_original_model, &bg_body);
-                    bg_request_cache.insert(cache_key, key_material, cached_sse);
-                    bg_in_flight.complete(cache_key);
+                    bg_request_cache.insert(bg_cache_key, bg_key_material, cached_sse);
+                    bg_in_flight.complete(bg_cache_key);
                 }
             }
             if chunks.is_empty() {
@@ -350,6 +348,8 @@ pub(super) async fn handle_json_success(
     upstream_headers: &[(String, String)],
     vk_id: Option<Uuid>,
     reserved_cents: u64,
+    cache_key: u128,
+    cache_key_material: &str,
 ) -> Response {
     let body_text = resp.text().await.unwrap_or_default();
 
@@ -372,11 +372,11 @@ pub(super) async fn handle_json_success(
         });
     // Cache non-streaming responses (inline — coalesced waiters depend on
     // ordering: insert must precede complete()).
-    let (cache_key, key_material) = RequestCache::compute_key(original_model, body);
-    state
-        .cache
-        .request_cache
-        .insert(cache_key, key_material, response_body.clone());
+    state.cache.request_cache.insert(
+        cache_key,
+        cache_key_material.to_string(),
+        response_body.clone(),
+    );
     state.cache.in_flight.complete(cache_key);
 
     // Fast atomic decrement stays inline.
@@ -432,9 +432,7 @@ pub(super) async fn handle_json_success(
                         .reconcile_spend(vk, bg_reserved_cents, cost_cents)
                         .await;
                 } else {
-                    bg_virtual_key_store
-                        .accumulate_spend(vk, cost_cents)
-                        .await;
+                    bg_virtual_key_store.accumulate_spend(vk, cost_cents).await;
                 }
             }
 
@@ -487,8 +485,7 @@ pub(super) async fn handle_json_success(
             let _ = bg_channel_mgr
                 .record_latency(bg_channel_id, bg_start.elapsed().as_millis() as u64)
                 .await;
-            bg_latency_tracker
-                .record(bg_channel_id, bg_start.elapsed().as_millis() as u64);
+            bg_latency_tracker.record(bg_channel_id, bg_start.elapsed().as_millis() as u64);
         });
     }
 

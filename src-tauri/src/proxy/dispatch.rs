@@ -43,14 +43,13 @@ impl Drop for ActiveRequestGuard {
 async fn log_all_exhausted(
     state: &Arc<crate::proxy::openai::AppState>,
     original_model: &str,
-    body: &Value,
+    cache_key: u128,
     total_attempts: u32,
     start: std::time::Instant,
     request_id: Option<&str>,
 ) -> Response {
     // Complete in-flight entry (no-op if not registered) so coalesced waiters
     // can proceed and re-check the cache.
-    let cache_key = RequestCache::cache_key(original_model, body);
     state.cache.in_flight.complete(cache_key);
     state
         .logger
@@ -83,12 +82,11 @@ async fn log_all_exhausted(
 /// For streaming requests, the cached SSE text is returned as an event-stream response.
 async fn check_request_cache(
     state: &Arc<crate::proxy::openai::AppState>,
-    original_model: &str,
-    body: &Value,
+    cache_key: u128,
+    key_material: &str,
     is_stream: bool,
 ) -> Option<Response> {
-    let (cache_key, key_material) = RequestCache::compute_key(original_model, body);
-    if let Some(cached) = state.cache.request_cache.get(cache_key, &key_material) {
+    if let Some(cached) = state.cache.request_cache.get(cache_key, key_material) {
         tracing::info!("Cache hit for request");
         crate::metrics::cache_hits().inc();
         if is_stream {
@@ -99,7 +97,7 @@ async fn check_request_cache(
     if !state.cache.in_flight.register(cache_key) {
         // Another request is in flight — wait for it, then check cache
         state.cache.in_flight.wait(cache_key).await;
-        if let Some(cached) = state.cache.request_cache.get(cache_key, &key_material) {
+        if let Some(cached) = state.cache.request_cache.get(cache_key, key_material) {
             tracing::info!("Coalesced request served from cache");
             crate::metrics::cache_hits().inc();
             if is_stream {
@@ -193,10 +191,7 @@ pub(crate) async fn dispatch(
                         "code": "virtual_key_model_not_allowed"
                     }
                 });
-                return json_response(
-                    reqwest::StatusCode::FORBIDDEN,
-                    error_body.to_string(),
-                );
+                return json_response(reqwest::StatusCode::FORBIDDEN, error_body.to_string());
             }
         }
     }
@@ -238,8 +233,14 @@ pub(crate) async fn dispatch(
     let channels = state.channel_mgr.channels();
     let start = std::time::Instant::now();
 
+    // Compute cache key once — reuse throughout the dispatch chain to avoid
+    // recomputing the BLAKE3 hash + canonical serialization 3-4 times.
+    let (cache_key, cache_key_material) = RequestCache::compute_key(&original_model, body);
+
     // Check request cache
-    if let Some(cached) = check_request_cache(state, &original_model, body, is_stream).await {
+    if let Some(cached) =
+        check_request_cache(state, cache_key, &cache_key_material, is_stream).await
+    {
         return cached;
     }
 
@@ -265,7 +266,9 @@ pub(crate) async fn dispatch(
         let model_max_retries = model_retry_counts[model_idx];
         let model_cfg =
             resolve_model_retry_config(current_model, &state.gateway.model_retry_overrides);
-        let model_base_ms = model_cfg.retry_base_ms.unwrap_or(state.gateway.retry_base_ms);
+        let model_base_ms = model_cfg
+            .retry_base_ms
+            .unwrap_or(state.gateway.retry_base_ms);
         let model_max_ms = model_cfg.retry_max_ms.unwrap_or(state.gateway.retry_max_ms);
 
         let mut attempt: u32 = 0;
@@ -349,6 +352,8 @@ pub(crate) async fn dispatch(
                 request_id,
                 vk_id,
                 reserved_cents,
+                cache_key,
+                &cache_key_material,
             )
             .await
             {
@@ -363,10 +368,7 @@ pub(crate) async fn dispatch(
                         model_max_ms,
                     );
                     let jitter = rand::rng().random_range(0..50);
-                    tokio::time::sleep(std::time::Duration::from_millis(
-                        exp_delay + jitter,
-                    ))
-                    .await;
+                    tokio::time::sleep(std::time::Duration::from_millis(exp_delay + jitter)).await;
                     continue;
                 }
             }
@@ -387,7 +389,7 @@ pub(crate) async fn dispatch(
     log_all_exhausted(
         state,
         &original_model,
-        body,
+        cache_key,
         total_attempts,
         start,
         request_id,
@@ -647,9 +649,11 @@ mod tests {
         mm.insert("gpt-4".to_string(), "gpt-4".to_string());
 
         // Only a staging channel exists — requesting production should fail.
-        let channels: SharedChannels = Arc::new(RwLock::new(vec![
-            make_test_channel_with_group(staging_id, mm, Some("staging")),
-        ]));
+        let channels: SharedChannels = Arc::new(RwLock::new(vec![make_test_channel_with_group(
+            staging_id,
+            mm,
+            Some("staging"),
+        )]));
 
         let active_requests = Arc::new(ActiveRequests::new());
         let rate_limiter = Arc::new(RateLimiter::new(None));

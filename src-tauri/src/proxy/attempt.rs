@@ -2,6 +2,7 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 use reqwest::StatusCode;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -69,17 +70,34 @@ pub(super) async fn try_channel_attempt(
     request_id: Option<&str>,
     vk_id: Option<Uuid>,
     reserved_cents: u64,
+    cache_key: u128,
+    cache_key_material: &str,
 ) -> AttemptOutcome {
     let upstream_model = channel.map_model(current_model);
-    let mut upstream_body = body.clone();
-    if let Some(obj) = upstream_body.as_object_mut() {
-        obj.insert("model".to_string(), Value::String(upstream_model.clone()));
-    }
+    let has_payload_rules = state.limits.payload_rules.has_rules(channel.id);
+    let model_needs_change = upstream_model != current_model;
 
-    // Apply per-channel payload rules (defaults, overrides, strip)
-    if let Some(rules) = state.limits.payload_rules.get(channel.id) {
-        upstream_body = rules.apply(upstream_body);
-    }
+    // Determine if any mutation is needed — avoid cloning a potentially large
+    // body when no modifications are required (copy-on-write via Cow).
+    let needs_mutation = model_needs_change || has_payload_rules;
+
+    let mut upstream_body: Cow<'_, Value> = if needs_mutation {
+        let mut cloned = body.clone();
+        if let Some(obj) = cloned.as_object_mut() {
+            if model_needs_change {
+                obj.insert("model".to_string(), Value::String(upstream_model.clone()));
+            }
+        }
+        // Apply per-channel payload rules (defaults, overrides, strip)
+        if has_payload_rules {
+            if let Some(rules) = state.limits.payload_rules.get(channel.id) {
+                cloned = rules.apply(cloned);
+            }
+        }
+        Cow::Owned(cloned)
+    } else {
+        Cow::Borrowed(body)
+    };
 
     // Estimate tokens and check rate limiter before sending
     let estimated_tokens = estimate_tokens(&upstream_body, is_stream);
@@ -113,13 +131,14 @@ pub(super) async fn try_channel_attempt(
     // Inject stream_options.include_usage for providers that support it (OpenAI-compatible)
     // to ensure upstream returns token usage in the final SSE chunk
     if is_stream && provider.inject_stream_usage() {
-        if let Some(obj) = upstream_body.as_object_mut() {
-            let needs_injection = obj
-                .get("stream_options")
-                .and_then(|v| v.as_object())
-                .map(|so| !so.contains_key("include_usage"))
-                .unwrap_or(true);
-            if needs_injection {
+        let needs_injection = upstream_body
+            .get("stream_options")
+            .and_then(|v| v.as_object())
+            .map(|so| !so.contains_key("include_usage"))
+            .unwrap_or(true);
+
+        if needs_injection {
+            if let Some(obj) = upstream_body.to_mut().as_object_mut() {
                 if let Some(existing) = obj
                     .get_mut("stream_options")
                     .and_then(|v| v.as_object_mut())
@@ -364,6 +383,8 @@ pub(super) async fn try_channel_attempt(
             vk_id,
             reserved_cents,
             original_model,
+            cache_key,
+            cache_key_material,
         )
         .await;
         AttemptOutcome::Respond(response)
@@ -384,6 +405,8 @@ pub(super) async fn try_channel_attempt(
             &upstream_headers,
             vk_id,
             reserved_cents,
+            cache_key,
+            cache_key_material,
         )
         .await;
         AttemptOutcome::Respond(response)
