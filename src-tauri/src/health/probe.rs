@@ -75,9 +75,7 @@ pub async fn probe_channel(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::channel::{
-        Channel, ChannelStatus, Credential, CredentialType, Provider,
-    };
+    use crate::channel::{Channel, ChannelStatus, Credential, CredentialType, Provider};
     use chrono::Utc;
     use std::collections::HashMap;
     use uuid::Uuid;
@@ -242,8 +240,7 @@ mod tests {
             .await;
 
         let channel = make_channel(Provider::Anthropic, &server.uri());
-        let result =
-            probe_channel(&http_client(), &channel, Some("sk-anthropic")).await;
+        let result = probe_channel(&http_client(), &channel, Some("sk-anthropic")).await;
         assert!(result, "Anthropic probe should POST to /v1/messages");
     }
 
@@ -257,8 +254,7 @@ mod tests {
             .await;
 
         let channel = make_channel(Provider::Anthropic, &server.uri());
-        let result =
-            probe_channel(&http_client(), &channel, Some("sk-anthropic")).await;
+        let result = probe_channel(&http_client(), &channel, Some("sk-anthropic")).await;
         assert!(result, "Anthropic 429 should be healthy (rate limited)");
     }
 
@@ -273,8 +269,7 @@ mod tests {
             .await;
 
         let channel = make_channel(Provider::Gemini, &server.uri());
-        let result =
-            probe_channel(&http_client(), &channel, Some("gemini-secret")).await;
+        let result = probe_channel(&http_client(), &channel, Some("gemini-secret")).await;
         assert!(result, "Gemini probe should pass key as query parameter");
     }
 
@@ -289,8 +284,7 @@ mod tests {
             .await;
 
         let channel = make_channel(Provider::OpenAI, &server.uri());
-        let result =
-            probe_channel(&http_client(), &channel, Some("my-secret-key")).await;
+        let result = probe_channel(&http_client(), &channel, Some("my-secret-key")).await;
         assert!(result, "OpenAI probe should send Bearer token");
     }
 
@@ -307,17 +301,14 @@ mod tests {
             .await;
 
         let channel = make_channel(Provider::Gemini, &server.uri());
-        let result =
-            probe_channel(&http_client(), &channel, Some("gemini-key")).await;
+        let result = probe_channel(&http_client(), &channel, Some("gemini-key")).await;
         assert!(result);
 
         // Verify no Authorization header was sent
         let requests = server.received_requests().await.unwrap();
         assert_eq!(requests.len(), 1);
         assert!(
-            !requests[0]
-                .headers
-                .contains_key("authorization"),
+            !requests[0].headers.contains_key("authorization"),
             "Gemini probe should not send Authorization header (key is in URL)"
         );
     }
@@ -336,7 +327,10 @@ mod tests {
 
         let channel = make_channel(Provider::DeepSeek, &server.uri());
         let result = probe_channel(&http_client(), &channel, Some("ds-key")).await;
-        assert!(result, "DeepSeek should use GET /v1/models with Bearer token");
+        assert!(
+            result,
+            "DeepSeek should use GET /v1/models with Bearer token"
+        );
     }
 
     #[tokio::test]
@@ -348,11 +342,38 @@ mod tests {
             .mount(&server)
             .await;
 
-        let channel = make_channel(
-            Provider::Custom("my-provider".to_string()),
-            &server.uri(),
-        );
+        let channel = make_channel(Provider::Custom("my-provider".to_string()), &server.uri());
         let result = probe_channel(&http_client(), &channel, Some("key")).await;
         assert!(result, "Custom provider should use GET /v1/models");
+    }
+
+    // -- Ollama provider tests -------------------------------------------------
+
+    #[tokio::test]
+    async fn probe_ollama_uses_get_models_endpoint() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let channel = make_channel(Provider::Ollama, &server.uri());
+        let result = probe_channel(&http_client(), &channel, Some("ollama")).await;
+        assert!(result, "Ollama probe should use GET /v1/models");
+    }
+
+    #[tokio::test]
+    async fn probe_ollama_401_returns_false() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let channel = make_channel(Provider::Ollama, &server.uri());
+        let result = probe_channel(&http_client(), &channel, Some("ollama")).await;
+        assert!(!result, "Ollama 401 should indicate unhealthy");
     }
 }

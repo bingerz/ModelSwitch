@@ -9,6 +9,7 @@ use crate::health;
 use crate::log::DispatchLogger;
 use crate::mcp::McpManager;
 use crate::middleware;
+use crate::provider_budget::ProviderBudgetStore;
 use crate::proxy;
 use crate::proxy::cache::{CacheMode, InFlightRequests, RequestCache};
 use crate::proxy::openai::{
@@ -25,7 +26,6 @@ use crate::router::affinity::SessionAffinity;
 use crate::shutdown::shutdown_signal;
 use crate::spawn_bg;
 use crate::virtual_key::VirtualKeyStore;
-use crate::provider_budget::ProviderBudgetStore;
 use crate::GatewayHandles;
 
 use axum::routing::{delete, get, post, put};
@@ -60,6 +60,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     let host = config.gateway.host.clone();
     let max_retries = config.gateway.max_retries;
     let model_fallbacks = config.gateway.model_fallbacks.clone();
+    let model_aliases = config.gateway.model_aliases.clone();
     let routing_strategy = config.gateway.routing_strategy.clone();
 
     // Build HTTP connection pool — multiple reqwest::Client instances to work around
@@ -67,7 +68,9 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     let pool_size = config.gateway.http_pool_size.max(1);
     let http_pool = crate::http_pool::HttpPool::new(pool_size, || {
         reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(config.gateway.http_timeout_secs))
+            .timeout(std::time::Duration::from_secs(
+                config.gateway.http_timeout_secs,
+            ))
             .connect_timeout(std::time::Duration::from_secs(10))
             .read_timeout(std::time::Duration::from_secs(300))
             .pool_idle_timeout(std::time::Duration::from_secs(90))
@@ -172,6 +175,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             stream_ttft_timeout_secs: config.gateway.stream_ttft_timeout_secs,
             max_retries,
             model_fallbacks,
+            model_aliases,
             routing_strategy,
             retry_base_ms: config.gateway.retry_base_ms,
             retry_max_ms: config.gateway.retry_max_ms,
@@ -448,10 +452,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/virtual-keys", post(admin::create_virtual_key))
         .route("/api/virtual-keys/{id}", put(admin::update_virtual_key))
         .route("/api/virtual-keys/{id}", delete(admin::delete_virtual_key))
-        .route(
-            "/api/provider-budgets",
-            get(admin::list_provider_budgets),
-        )
+        .route("/api/provider-budgets", get(admin::list_provider_budgets))
         .route(
             "/api/provider-budgets/{provider}",
             put(admin::set_provider_budget),

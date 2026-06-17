@@ -117,6 +117,20 @@ drain_timeout_secs = 30                       # Max wait for in-flight requests 
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Model Aliases
+# ══════════════════════════════════════════════════════════════════════
+# Gateway-level name mapping. The alias (key) is replaced by the
+# canonical model (value) before channel selection and fallback resolution.
+# Different from per-channel model_mapping, which maps at the upstream level.
+
+# [gateway.model_aliases]
+# "gpt-4" = "gpt-4o"
+# "gpt-3.5" = "gpt-4o-mini"
+# "smart" = "claude-sonnet-4-20250514"
+# "fast" = "gpt-4o-mini"
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Provider Budgets
 # ══════════════════════════════════════════════════════════════════════
 # Per-provider daily/monthly spend caps (in USD cents).
@@ -269,6 +283,31 @@ tpm_limit = 50000
 
 # [channels.model_mapping]
 # "gpt-4" = "openai/gpt-4o"
+
+
+# ── Ollama (local inference) ─────────────────────────────────────────
+# Ollama exposes an OpenAI-compatible API at http://localhost:11434/v1/.
+# It reuses the OpenAI adaptor — no translation layer needed.
+# Ollama does not require an API key, but the field must be non-empty.
+
+# [[channels]]
+# id = "ollama-primary"
+# name = "Ollama Local"
+# provider = "ollama"
+# priority = 3
+# weight = 100
+# credential_type = "api_key"
+# credential_ref = "ollama_local"
+# api_key = "ollama"                            # Dummy key — Ollama ignores auth
+# base_url = "http://localhost:11434"
+# enabled = true
+# # Local inference is free
+# cost_per_token = 0.0
+
+# [channels.model_mapping]
+# "gpt-4" = "llama3"
+# "gpt-4o" = "llama3"
+# "claude-3" = "mistral"
 
 
 # ══════════════════════════════════════════════════════════════════════

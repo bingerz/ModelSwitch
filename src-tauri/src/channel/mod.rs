@@ -15,6 +15,7 @@ pub enum Provider {
     DeepSeek,
     Gemini,
     OpenRouter,
+    Ollama,
     Custom(String),
 }
 
@@ -39,6 +40,7 @@ impl Provider {
             "deepseek" => Provider::DeepSeek,
             "gemini" => Provider::Gemini,
             "openrouter" => Provider::OpenRouter,
+            "ollama" => Provider::Ollama,
             other => Provider::Custom(other.to_string()),
         }
     }
@@ -50,6 +52,7 @@ impl Provider {
             Provider::DeepSeek => "deepseek",
             Provider::Gemini => "gemini",
             Provider::OpenRouter => "openrouter",
+            Provider::Ollama => "ollama",
             Provider::Custom(s) => s,
         }
     }

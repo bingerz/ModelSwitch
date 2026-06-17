@@ -21,14 +21,14 @@ use crate::credential::{create_credential_store, SharedCredentialStore};
 use crate::log::DispatchLogger;
 use crate::mcp::McpManager;
 use crate::proxy::cache::{CacheMode, InFlightRequests, RequestCache};
+use crate::proxy::dispatch;
 use crate::proxy::openai::{
     AppState, BillingState, CacheState, GatewayParams, LimitsState, McpState, RouterState,
     SecurityState,
 };
 use crate::proxy::payload_rules::ChannelPayloadRules;
-use crate::proxy::rate_limiter::RateLimiter;
 use crate::proxy::provider::OpenAIAdaptor;
-use crate::proxy::dispatch;
+use crate::proxy::rate_limiter::RateLimiter;
 use crate::quota::QuotaStore;
 use crate::router::active_requests::ActiveRequests;
 use crate::router::affinity::SessionAffinity;
@@ -181,6 +181,7 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
             stream_ttft_timeout_secs: Some(30),
             max_retries: config.gateway.max_retries,
             model_fallbacks: HashMap::new(),
+            model_aliases: HashMap::new(),
             routing_strategy: "weighted_random".to_string(),
             retry_base_ms: config.gateway.retry_base_ms,
             retry_max_ms: config.gateway.retry_max_ms,
@@ -202,9 +203,7 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
         billing: BillingState {
             quota_store,
             virtual_key_store,
-            provider_budgets: Arc::new(
-                crate::provider_budget::ProviderBudgetStore::new(),
-            ),
+            provider_budgets: Arc::new(crate::provider_budget::ProviderBudgetStore::new()),
         },
         mcp: McpState {
             mcp_manager,
@@ -671,7 +670,8 @@ async fn dispatch_no_available_channel() {
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_string(chat_completion_response("Should not reach")),
+            ResponseTemplate::new(200)
+                .set_body_string(chat_completion_response("Should not reach")),
         )
         .mount(&mock_server)
         .await;
@@ -763,8 +763,7 @@ async fn dispatch_with_account_group_header_routes_to_matching_channel() {
     assert_eq!(response_status(&response), 200);
     let json = response_json(response).await;
     assert_eq!(
-        json["choices"][0]["message"]["content"],
-        "Production!",
+        json["choices"][0]["message"]["content"], "Production!",
         "should route to the production channel when X-Account-Group: production is set"
     );
 
@@ -865,8 +864,7 @@ async fn dispatch_with_account_group_includes_ungrouped_channels() {
     assert_eq!(response_status(&response), 200);
     let json = response_json(response).await;
     assert_eq!(
-        json["choices"][0]["message"]["content"],
-        "Ungrouped!",
+        json["choices"][0]["message"]["content"], "Ungrouped!",
         "ungrouped channels should be reachable even with an account group header"
     );
 }
@@ -880,7 +878,8 @@ async fn dispatch_with_non_matching_group_excludes_all_channels() {
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(
-            ResponseTemplate::new(200).set_body_string(chat_completion_response("Should not reach")),
+            ResponseTemplate::new(200)
+                .set_body_string(chat_completion_response("Should not reach")),
         )
         .mount(&mock_server)
         .await;

@@ -178,6 +178,23 @@ pub(crate) async fn dispatch(
         affinity_channel,
         account_group,
     } = meta;
+
+    // Resolve gateway-level model alias. The alias (client-facing name) is
+    // replaced by the canonical model before any downstream logic so that:
+    //   1. Cache keys use the canonical model name (consistent across alias
+    //      and canonical requests).
+    //   2. Fallback chains match against the real model name.
+    //   3. Per-model retry overrides match the canonical name.
+    //   4. Virtual-key model whitelists operate on the canonical name.
+    // This is different from per-channel model_mapping, which translates at
+    // the upstream level after channel selection.
+    let original_model = state
+        .gateway
+        .model_aliases
+        .get(&original_model)
+        .cloned()
+        .unwrap_or(original_model);
+
     let vk_id = extract_virtual_key_id(original_headers);
 
     // Check virtual key model whitelist
