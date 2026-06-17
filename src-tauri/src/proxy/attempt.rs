@@ -385,6 +385,7 @@ pub(super) async fn try_channel_attempt(
             original_model,
             cache_key,
             cache_key_material,
+            pool_guard,
         )
         .await;
         AttemptOutcome::Respond(response)
@@ -407,6 +408,7 @@ pub(super) async fn try_channel_attempt(
             reserved_cents,
             cache_key,
             cache_key_material,
+            pool_guard,
         )
         .await;
         AttemptOutcome::Respond(response)

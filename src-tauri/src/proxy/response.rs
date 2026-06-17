@@ -93,6 +93,10 @@ pub(super) fn inject_passthrough_headers(
 /// Handle a successful streaming (SSE) response from upstream.
 /// Logs the attempt, spawns a background task to extract real token usage,
 /// caches the SSE response for streaming cache hits, and applies keepalive if configured.
+///
+/// The `pool_guard` is moved into the background telemetry task so the pool's
+/// active count stays accurate for the entire lifetime of the stream — the
+/// guard is dropped only after `stream_done` fires (stream fully consumed).
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_streaming_success(
     state: &Arc<crate::proxy::openai::AppState>,
@@ -112,6 +116,7 @@ pub(super) async fn handle_streaming_success(
     original_model: &str,
     cache_key: u128,
     cache_key_material: &str,
+    pool_guard: crate::http_pool::PooledClient,
 ) -> Response {
     let is_gemini = provider.is_gemini_stream();
     let (stream_resp, telemetry_chunks, raw_sse, stream_done) = sse_stream_response_with_telemetry(
@@ -188,7 +193,15 @@ pub(super) async fn handle_streaming_success(
         let bg_stream_done = Arc::clone(&stream_done);
         let bg_cache_key = cache_key;
         let bg_key_material = cache_key_material.to_string();
+        let bg_pool_guard = pool_guard;
         crate::spawn_bg(async move {
+            // Hold the pool guard for the entire lifetime of the background task.
+            // This keeps the HTTP pool's active count accurate while the
+            // streaming body continues flowing to the client. The guard is
+            // dropped (decrementing the count) when this task completes —
+            // shortly after the stream is fully consumed.
+            let _pool_guard = bg_pool_guard;
+
             // Wait for the upstream stream to be fully consumed by the
             // stream-forwarding task.  `Notify` stores a permit if
             // `notify_one` fires before we register, so the ordering
@@ -331,6 +344,11 @@ pub(super) async fn handle_streaming_success(
 
 /// Handle a successful non-streaming (JSON) response from upstream.
 /// Extracts usage, accumulates quota, logs, caches the response, and returns it.
+///
+/// The `pool_guard` is held for the entire function body and dropped at
+/// function end — after `resp.text().await` completes and all processing
+/// finishes. This is correct because the non-streaming response body is
+/// fully consumed when `resp.text().await` returns.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_json_success(
     state: &Arc<crate::proxy::openai::AppState>,
@@ -350,7 +368,12 @@ pub(super) async fn handle_json_success(
     reserved_cents: u64,
     cache_key: u128,
     cache_key_material: &str,
+    pool_guard: crate::http_pool::PooledClient,
 ) -> Response {
+    // Hold the pool guard until the function returns — the non-streaming
+    // response body is fully consumed after `resp.text().await` below.
+    let _pool_guard = pool_guard;
+
     let body_text = resp.text().await.unwrap_or_default();
 
     // Translate response body via provider (pass-through for OpenAI/Anthropic,
