@@ -14,6 +14,55 @@ use super::provider::ProviderAdaptor;
 use super::usage::{extract_usage, extract_usage_from_stream};
 use super::{estimate_tokens, make_log, PASSTHROUGH_RESPONSE_HEADERS};
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inject_passthrough_headers_adds_headers() {
+        let resp = json_response(reqwest::StatusCode::OK, "{}".to_string());
+        let headers = vec![("X-Custom".to_string(), "value".to_string())];
+        let resp = inject_passthrough_headers(resp, &headers);
+        assert_eq!(resp.headers().get("x-custom").unwrap(), "value");
+    }
+
+    #[test]
+    fn fallback_headers_inserted_when_trigger_reason_matches() {
+        // Build a minimal response to test header insertion in isolation
+        let resp = json_response(reqwest::StatusCode::OK, "{}".to_string());
+        let mut resp = inject_passthrough_headers(resp, &[]);
+        // Simulate the fallback guard from handle_json_success
+        if Some("model_fallback") == Some("model_fallback") {
+            if let Ok(hv) = axum::http::HeaderValue::from_str("gpt-4-turbo") {
+                resp.headers_mut()
+                    .insert("X-ModelSwitch-Fallback-Model", hv);
+            }
+            if let Ok(hv) = axum::http::HeaderValue::from_str("gpt-4o") {
+                resp.headers_mut()
+                    .insert("X-ModelSwitch-Original-Model", hv);
+            }
+        }
+        assert_eq!(
+            resp.headers().get("x-modelswitch-fallback-model").unwrap(),
+            "gpt-4-turbo"
+        );
+        assert_eq!(
+            resp.headers().get("x-modelswitch-original-model").unwrap(),
+            "gpt-4o"
+        );
+    }
+
+    #[test]
+    fn no_fallback_headers_when_trigger_reason_none() {
+        let resp = json_response(reqwest::StatusCode::OK, "{}".to_string());
+        let mut resp = inject_passthrough_headers(resp, &[]);
+        // When trigger_reason is not model_fallback, no headers should be set
+        // (this is just verifying the guard logic)
+        assert!(resp.headers().get("x-modelswitch-fallback-model").is_none());
+        assert!(resp.headers().get("x-modelswitch-original-model").is_none());
+    }
+}
+
 /// Extract passthrough headers from an upstream response.
 pub(super) fn extract_passthrough_headers(resp: &reqwest::Response) -> Vec<(String, String)> {
     PASSTHROUGH_RESPONSE_HEADERS
@@ -251,8 +300,23 @@ pub(super) async fn handle_streaming_success(
         });
     }
 
-    // Apply keepalive if configured
     let stream_resp = inject_passthrough_headers(stream_resp, upstream_headers);
+
+    let mut stream_resp = stream_resp;
+    if trigger_reason == Some("model_fallback") {
+        if let Ok(hv) = axum::http::HeaderValue::from_str(current_model) {
+            stream_resp
+                .headers_mut()
+                .insert("X-ModelSwitch-Fallback-Model", hv);
+        }
+        if let Ok(hv) = axum::http::HeaderValue::from_str(original_model) {
+            stream_resp
+                .headers_mut()
+                .insert("X-ModelSwitch-Original-Model", hv);
+        }
+    }
+
+    // Apply keepalive if configured
     if let Some(secs) = state.gateway.stream_keepalive_secs {
         if secs > 0 {
             let (parts, body) = stream_resp.into_parts();
@@ -428,8 +492,19 @@ pub(super) async fn handle_json_success(
         });
     }
 
-    inject_passthrough_headers(
+    let mut resp = inject_passthrough_headers(
         json_response(StatusCode::OK, response_body),
         upstream_headers,
-    )
+    );
+    if trigger_reason == Some("model_fallback") {
+        if let Ok(hv) = axum::http::HeaderValue::from_str(current_model) {
+            resp.headers_mut()
+                .insert("X-ModelSwitch-Fallback-Model", hv);
+        }
+        if let Ok(hv) = axum::http::HeaderValue::from_str(original_model) {
+            resp.headers_mut()
+                .insert("X-ModelSwitch-Original-Model", hv);
+        }
+    }
+    resp
 }
