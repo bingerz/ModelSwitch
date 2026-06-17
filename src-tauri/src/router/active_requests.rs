@@ -56,6 +56,12 @@ impl ActiveRequests {
         let guard = self.counts.lock().unwrap_or_else(|e| e.into_inner());
         guard.clone()
     }
+
+    /// Total active requests across all channels.
+    pub fn total(&self) -> u64 {
+        let guard = self.counts.lock().unwrap_or_else(|e| e.into_inner());
+        guard.values().map(|v| *v as u64).sum()
+    }
 }
 
 impl Default for ActiveRequests {

@@ -430,6 +430,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             put(admin::set_payload_rules),
         )
         .route("/api/cache/flush", post(admin::flush_cache))
+        .route("/api/cache/stats", get(admin::cache_stats))
         .route("/api/config/reload", post(admin::reload_config))
         .route("/api/mcp/servers", get(admin::list_mcp_servers))
         .route("/api/mcp/servers", post(admin::create_mcp_server))
@@ -458,6 +459,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/provider-budgets/{provider}",
             delete(admin::delete_provider_budget),
         )
+        .route("/api/gateway/info", get(admin::gateway_info))
         .with_state(admin_route_state)
         .layer(axum::middleware::from_fn_with_state(
             admin_auth_state,
