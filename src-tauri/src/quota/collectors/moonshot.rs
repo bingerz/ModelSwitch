@@ -70,3 +70,45 @@ impl QuotaProvider for MoonshotCollector {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_ctx(provider: &str, base_url: &str) -> PollContext {
+        PollContext {
+            channel_id: uuid::Uuid::new_v4(),
+            channel_name: "test".into(),
+            provider: provider.into(),
+            base_url: base_url.into(),
+            credential: "key".into(),
+            http_client: reqwest::Client::new(),
+            quota_config: None,
+        }
+    }
+
+    #[test]
+    fn id_is_moonshot() {
+        assert_eq!(MoonshotCollector.id(), "moonshot");
+    }
+
+    #[test]
+    fn supports_moonshot_and_kimi_variants() {
+        assert!(MoonshotCollector.supports(&make_ctx("moonshot", "")));
+        assert!(MoonshotCollector.supports(&make_ctx("Moonshot", "")));
+        assert!(MoonshotCollector.supports(&make_ctx("kimi", "")));
+        assert!(MoonshotCollector.supports(&make_ctx("Kimi", "")));
+    }
+
+    #[test]
+    fn supports_by_url() {
+        assert!(MoonshotCollector.supports(&make_ctx("custom", "https://api.moonshot.cn")));
+        assert!(MoonshotCollector.supports(&make_ctx("custom", "https://kimi.example.com")));
+    }
+
+    #[test]
+    fn supports_rejects_unrelated() {
+        assert!(!MoonshotCollector.supports(&make_ctx("deepseek", "")));
+        assert!(!MoonshotCollector.supports(&make_ctx("", "https://api.openai.com")));
+    }
+}

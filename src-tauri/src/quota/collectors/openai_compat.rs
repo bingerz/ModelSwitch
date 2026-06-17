@@ -123,3 +123,34 @@ impl QuotaProvider for OpenAiCompatCollector {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_ctx(provider: &str, base_url: &str) -> PollContext {
+        PollContext {
+            channel_id: uuid::Uuid::new_v4(),
+            channel_name: "test".into(),
+            provider: provider.into(),
+            base_url: base_url.into(),
+            credential: "key".into(),
+            http_client: reqwest::Client::new(),
+            quota_config: None,
+        }
+    }
+
+    #[test]
+    fn id_is_openai_compat() {
+        assert_eq!(OpenAiCompatCollector.id(), "openai_compat");
+    }
+
+    #[test]
+    fn supports_always_true_for_any_provider() {
+        // This is the fallback collector — it must accept everything
+        assert!(OpenAiCompatCollector.supports(&make_ctx("deepseek", "")));
+        assert!(OpenAiCompatCollector.supports(&make_ctx("openrouter", "")));
+        assert!(OpenAiCompatCollector.supports(&make_ctx("anything", "")));
+        assert!(OpenAiCompatCollector.supports(&make_ctx("", "")));
+    }
+}

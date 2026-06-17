@@ -71,3 +71,43 @@ impl QuotaProvider for StepFunCollector {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_ctx(provider: &str, base_url: &str) -> PollContext {
+        PollContext {
+            channel_id: uuid::Uuid::new_v4(),
+            channel_name: "test".into(),
+            provider: provider.into(),
+            base_url: base_url.into(),
+            credential: "key".into(),
+            http_client: reqwest::Client::new(),
+            quota_config: None,
+        }
+    }
+
+    #[test]
+    fn id_is_stepfun() {
+        assert_eq!(StepFunCollector.id(), "stepfun");
+    }
+
+    #[test]
+    fn supports_stepfun_by_name() {
+        assert!(StepFunCollector.supports(&make_ctx("stepfun", "")));
+        assert!(StepFunCollector.supports(&make_ctx("StepFun", "")));
+        assert!(StepFunCollector.supports(&make_ctx("STEPFUN", "")));
+    }
+
+    #[test]
+    fn supports_stepfun_by_url() {
+        assert!(StepFunCollector.supports(&make_ctx("custom", "https://api.stepfun.com")));
+    }
+
+    #[test]
+    fn supports_rejects_unrelated() {
+        assert!(!StepFunCollector.supports(&make_ctx("deepseek", "")));
+        assert!(!StepFunCollector.supports(&make_ctx("", "https://api.openai.com")));
+    }
+}

@@ -101,3 +101,43 @@ impl QuotaProvider for MiniMaxCollector {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_ctx(provider: &str, base_url: &str) -> PollContext {
+        PollContext {
+            channel_id: uuid::Uuid::new_v4(),
+            channel_name: "test".into(),
+            provider: provider.into(),
+            base_url: base_url.into(),
+            credential: "key".into(),
+            http_client: reqwest::Client::new(),
+            quota_config: None,
+        }
+    }
+
+    #[test]
+    fn id_is_minimax() {
+        assert_eq!(MiniMaxCollector.id(), "minimax");
+    }
+
+    #[test]
+    fn supports_minimax_by_name() {
+        assert!(MiniMaxCollector.supports(&make_ctx("minimax", "")));
+        assert!(MiniMaxCollector.supports(&make_ctx("MiniMax", "")));
+        assert!(MiniMaxCollector.supports(&make_ctx("MINIMAX", "")));
+    }
+
+    #[test]
+    fn supports_minimax_by_url() {
+        assert!(MiniMaxCollector.supports(&make_ctx("custom", "https://api.minimaxi.com")));
+    }
+
+    #[test]
+    fn supports_rejects_unrelated() {
+        assert!(!MiniMaxCollector.supports(&make_ctx("deepseek", "")));
+        assert!(!MiniMaxCollector.supports(&make_ctx("", "https://api.openai.com")));
+    }
+}

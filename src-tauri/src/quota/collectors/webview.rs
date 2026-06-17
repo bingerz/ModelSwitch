@@ -169,3 +169,106 @@ impl QuotaInfoExt for QuotaInfo {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn webview_result_deserialize_success() {
+        let json = serde_json::json!({
+            "provider": "anthropic",
+            "success": true,
+            "data": { "five_hour": { "utilization": 42.5 } }
+        });
+        let result: WebViewQuotaResult = serde_json::from_value(json).unwrap();
+        assert_eq!(result.provider, "anthropic");
+        assert!(result.success);
+        assert!(result.data.is_some());
+        assert!(result.error.is_none());
+    }
+
+    #[test]
+    fn webview_result_deserialize_error() {
+        let json = serde_json::json!({
+            "provider": "anthropic",
+            "success": false,
+            "error": "session expired"
+        });
+        let result: WebViewQuotaResult = serde_json::from_value(json).unwrap();
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("session expired"));
+        assert!(result.data.is_none());
+    }
+
+    #[test]
+    fn webview_result_defaults_missing_optional_fields() {
+        let json = serde_json::json!({
+            "provider": "anthropic",
+            "success": true
+        });
+        let result: WebViewQuotaResult = serde_json::from_value(json).unwrap();
+        assert!(result.data.is_none());
+        assert!(result.error.is_none());
+    }
+
+    #[test]
+    fn webview_manager_new_creates_instance() {
+        let _mgr = WebViewManager::new();
+        // If we got here without panicking, construction succeeded
+    }
+
+    #[test]
+    fn with_error_sets_error_field() {
+        let id = uuid::Uuid::new_v4();
+        let info = QuotaInfo::new(id, "test", "anthropic", "webview")
+            .with_error("WebView scrape timed out");
+        assert_eq!(info.error.as_deref(), Some("WebView scrape timed out"));
+        assert_eq!(info.channel_id, id);
+    }
+
+    #[test]
+    fn with_error_overwrites_previous() {
+        let id = uuid::Uuid::new_v4();
+        let info = QuotaInfo::new(id, "test", "anthropic", "webview")
+            .with_error("first error")
+            .with_error("second error");
+        assert_eq!(info.error.as_deref(), Some("second error"));
+    }
+
+    #[test]
+    fn anthropic_usage_to_groups_full() {
+        let usage = webview_scripts::anthropic::AnthropicUsage {
+            five_hour: Some(webview_scripts::anthropic::UsageWindow {
+                utilization: 75.0,
+                resets_at: Some("2026-01-01T00:00:00Z".into()),
+            }),
+            seven_day: Some(webview_scripts::anthropic::UsageWindow {
+                utilization: 30.0,
+                resets_at: None,
+            }),
+            seven_day_sonnet: None,
+            seven_day_opus: None,
+        };
+
+        let groups = usage.to_groups();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].window, "5h");
+        assert_eq!(groups[0].utilization_pct, Some(75.0));
+        assert_eq!(groups[0].resets_at.as_deref(), Some("2026-01-01T00:00:00Z"));
+        assert_eq!(groups[1].window, "7d");
+        assert_eq!(groups[1].utilization_pct, Some(30.0));
+    }
+
+    #[test]
+    fn anthropic_usage_to_groups_empty() {
+        let usage = webview_scripts::anthropic::AnthropicUsage {
+            five_hour: None,
+            seven_day: None,
+            seven_day_sonnet: None,
+            seven_day_opus: None,
+        };
+        let groups = usage.to_groups();
+        assert!(groups.is_empty());
+    }
+}

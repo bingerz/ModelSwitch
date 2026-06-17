@@ -79,3 +79,39 @@ impl QuotaProvider for OpenRouterCollector {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_ctx(provider: &str) -> PollContext {
+        PollContext {
+            channel_id: uuid::Uuid::new_v4(),
+            channel_name: "test".into(),
+            provider: provider.into(),
+            base_url: "https://openrouter.ai".into(),
+            credential: "key".into(),
+            http_client: reqwest::Client::new(),
+            quota_config: None,
+        }
+    }
+
+    #[test]
+    fn id_is_openrouter() {
+        assert_eq!(OpenRouterCollector.id(), "openrouter");
+    }
+
+    #[test]
+    fn supports_openrouter_case_insensitive() {
+        assert!(OpenRouterCollector.supports(&make_ctx("openrouter")));
+        assert!(OpenRouterCollector.supports(&make_ctx("OpenRouter")));
+        assert!(OpenRouterCollector.supports(&make_ctx("OPENROUTER")));
+    }
+
+    #[test]
+    fn supports_rejects_non_openrouter() {
+        assert!(!OpenRouterCollector.supports(&make_ctx("deepseek")));
+        assert!(!OpenRouterCollector.supports(&make_ctx("zhipu")));
+        assert!(!OpenRouterCollector.supports(&make_ctx("")));
+    }
+}

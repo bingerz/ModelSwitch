@@ -137,3 +137,115 @@ fn extract_json_path(value: &serde_json::Value, path: &str) -> Result<Option<f64
 
     Ok(if num.is_some() { num } else { None })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_simple_dot_path() {
+        let body = serde_json::json!({ "data": { "balance": 42.5 } });
+        let result = extract_json_path(&body, "data.balance").unwrap();
+        assert_eq!(result, Some(42.5));
+    }
+
+    #[test]
+    fn extract_with_leading_dollar() {
+        let body = serde_json::json!({ "data": { "balance": 99.9 } });
+        let result = extract_json_path(&body, "$.data.balance").unwrap();
+        assert_eq!(result, Some(99.9));
+    }
+
+    #[test]
+    fn extract_array_index() {
+        let body = serde_json::json!({ "items": [{ "price": 10 }, { "price": 20 }] });
+        let result = extract_json_path(&body, "items.1.price").unwrap();
+        assert_eq!(result, Some(20.0));
+    }
+
+    #[test]
+    fn extract_string_numeric_value() {
+        let body = serde_json::json!({ "balance": "123.45" });
+        let result = extract_json_path(&body, "balance").unwrap();
+        assert_eq!(result, Some(123.45));
+    }
+
+    #[test]
+    fn extract_missing_path_returns_err() {
+        let body = serde_json::json!({ "data": { "balance": 1 } });
+        let result = extract_json_path(&body, "data.nonexistent");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn extract_non_numeric_value_returns_none() {
+        let body = serde_json::json!({ "data": { "name": "hello" } });
+        let result = extract_json_path(&body, "data.name").unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn extract_integer_value() {
+        let body = serde_json::json!({ "total": 100 });
+        let result = extract_json_path(&body, "total").unwrap();
+        assert_eq!(result, Some(100.0));
+    }
+
+    #[test]
+    fn supports_requires_quota_config_with_url_and_path() {
+        let ctx = PollContext {
+            channel_id: uuid::Uuid::new_v4(),
+            channel_name: "test".into(),
+            provider: "custom".into(),
+            base_url: "https://example.com".into(),
+            credential: "key".into(),
+            http_client: reqwest::Client::new(),
+            quota_config: Some(crate::config::QuotaConfig {
+                strategy: None,
+                balance_url: Some("https://example.com/balance".into()),
+                balance_path: Some("data.balance".into()),
+                limit_path: None,
+                usage_path: None,
+                auth_prefix: None,
+                refresh_secs: None,
+            }),
+        };
+        assert!(JsonPathCollector.supports(&ctx));
+    }
+
+    #[test]
+    fn supports_returns_false_without_config() {
+        let ctx = PollContext {
+            channel_id: uuid::Uuid::new_v4(),
+            channel_name: "test".into(),
+            provider: "custom".into(),
+            base_url: "https://example.com".into(),
+            credential: "key".into(),
+            http_client: reqwest::Client::new(),
+            quota_config: None,
+        };
+        assert!(!JsonPathCollector.supports(&ctx));
+    }
+
+    #[test]
+    fn supports_returns_false_with_partial_config() {
+        let ctx = PollContext {
+            channel_id: uuid::Uuid::new_v4(),
+            channel_name: "test".into(),
+            provider: "custom".into(),
+            base_url: "https://example.com".into(),
+            credential: "key".into(),
+            http_client: reqwest::Client::new(),
+            quota_config: Some(crate::config::QuotaConfig {
+                strategy: None,
+                balance_url: Some("https://example.com/balance".into()),
+                balance_path: None,
+                limit_path: None,
+                usage_path: None,
+                auth_prefix: None,
+                refresh_secs: None,
+            }),
+        };
+        assert!(!JsonPathCollector.supports(&ctx));
+    }
+}

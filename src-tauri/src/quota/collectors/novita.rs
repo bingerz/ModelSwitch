@@ -58,3 +58,43 @@ impl QuotaProvider for NovitaCollector {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_ctx(provider: &str, base_url: &str) -> PollContext {
+        PollContext {
+            channel_id: uuid::Uuid::new_v4(),
+            channel_name: "test".into(),
+            provider: provider.into(),
+            base_url: base_url.into(),
+            credential: "key".into(),
+            http_client: reqwest::Client::new(),
+            quota_config: None,
+        }
+    }
+
+    #[test]
+    fn id_is_novita() {
+        assert_eq!(NovitaCollector.id(), "novita");
+    }
+
+    #[test]
+    fn supports_novita_by_name() {
+        assert!(NovitaCollector.supports(&make_ctx("novita", "")));
+        assert!(NovitaCollector.supports(&make_ctx("Novita", "")));
+        assert!(NovitaCollector.supports(&make_ctx("NOVITA", "")));
+    }
+
+    #[test]
+    fn supports_novita_by_url() {
+        assert!(NovitaCollector.supports(&make_ctx("custom", "https://api.novita.ai")));
+    }
+
+    #[test]
+    fn supports_rejects_unrelated() {
+        assert!(!NovitaCollector.supports(&make_ctx("deepseek", "")));
+        assert!(!NovitaCollector.supports(&make_ctx("", "https://api.openai.com")));
+    }
+}

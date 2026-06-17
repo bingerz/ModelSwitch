@@ -110,3 +110,46 @@ impl QuotaProvider for ZhipuCollector {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_ctx(provider: &str, base_url: &str) -> PollContext {
+        PollContext {
+            channel_id: uuid::Uuid::new_v4(),
+            channel_name: "test".into(),
+            provider: provider.into(),
+            base_url: base_url.into(),
+            credential: "key".into(),
+            http_client: reqwest::Client::new(),
+            quota_config: None,
+        }
+    }
+
+    #[test]
+    fn id_is_zhipu() {
+        assert_eq!(ZhipuCollector.id(), "zhipu");
+    }
+
+    #[test]
+    fn supports_zhipu_name_variants() {
+        assert!(ZhipuCollector.supports(&make_ctx("zhipu", "")));
+        assert!(ZhipuCollector.supports(&make_ctx("Zhipu", "")));
+        assert!(ZhipuCollector.supports(&make_ctx("glm", "")));
+        assert!(ZhipuCollector.supports(&make_ctx("GLM", "")));
+        assert!(ZhipuCollector.supports(&make_ctx("bigmodel", "")));
+    }
+
+    #[test]
+    fn supports_bigmodel_url() {
+        assert!(ZhipuCollector.supports(&make_ctx("custom", "https://open.bigmodel.cn")));
+        assert!(ZhipuCollector.supports(&make_ctx("custom", "https://BIGMODEL.com")));
+    }
+
+    #[test]
+    fn supports_rejects_unrelated() {
+        assert!(!ZhipuCollector.supports(&make_ctx("deepseek", "https://api.deepseek.com")));
+        assert!(!ZhipuCollector.supports(&make_ctx("openai", "https://api.openai.com")));
+    }
+}

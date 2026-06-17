@@ -60,3 +60,102 @@ impl QuotaHeaders {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_header(key: &str, val: &str) -> reqwest::header::HeaderMap {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::HeaderName::from_bytes(key.as_bytes()).unwrap(),
+            reqwest::header::HeaderValue::from_str(val).unwrap(),
+        );
+        headers
+    }
+
+    #[test]
+    fn extract_x_ratelimit_full_headers() {
+        let headers = {
+            let mut h = reqwest::header::HeaderMap::new();
+            h.insert("x-ratelimit-remaining-requests", "42".parse().unwrap());
+            h.insert("x-ratelimit-limit-requests", "100".parse().unwrap());
+            h.insert("x-ratelimit-remaining-tokens", "5000".parse().unwrap());
+            h.insert("x-ratelimit-limit-tokens", "10000".parse().unwrap());
+            h
+        };
+
+        let result = QuotaHeaders::extract("openai", &headers).unwrap();
+        assert_eq!(result.remaining_requests, Some(42));
+        assert_eq!(result.limit_requests, Some(100));
+        assert_eq!(result.remaining_tokens, Some(5000));
+        assert_eq!(result.limit_tokens, Some(10000));
+    }
+
+    #[test]
+    fn extract_x_ratelimit_fallback_short_keys() {
+        // Some providers use shorter keys without the "-requests" suffix
+        let headers = {
+            let mut h = reqwest::header::HeaderMap::new();
+            h.insert("x-ratelimit-remaining", "7".parse().unwrap());
+            h.insert("x-ratelimit-limit", "20".parse().unwrap());
+            h
+        };
+
+        let result = QuotaHeaders::extract("azure", &headers).unwrap();
+        assert_eq!(result.remaining_requests, Some(7));
+        assert_eq!(result.limit_requests, Some(20));
+        assert_eq!(result.remaining_tokens, None);
+        assert_eq!(result.limit_tokens, None);
+    }
+
+    #[test]
+    fn extract_anthropic_headers() {
+        let headers = {
+            let mut h = reqwest::header::HeaderMap::new();
+            h.insert(
+                "anthropic-ratelimit-requests-remaining",
+                "15".parse().unwrap(),
+            );
+            h.insert("anthropic-ratelimit-requests-limit", "50".parse().unwrap());
+            h.insert(
+                "anthropic-ratelimit-tokens-remaining",
+                "8000".parse().unwrap(),
+            );
+            h.insert("anthropic-ratelimit-tokens-limit", "16000".parse().unwrap());
+            h
+        };
+
+        let result = QuotaHeaders::extract("anthropic", &headers).unwrap();
+        assert_eq!(result.remaining_requests, Some(15));
+        assert_eq!(result.limit_requests, Some(50));
+        assert_eq!(result.remaining_tokens, Some(8000));
+        assert_eq!(result.limit_tokens, Some(16000));
+    }
+
+    #[test]
+    fn extract_no_headers_returns_none() {
+        let headers = reqwest::header::HeaderMap::new();
+        let result = QuotaHeaders::extract("openai", &headers);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn extract_malformed_values_returns_none_for_field() {
+        let headers = make_header("x-ratelimit-remaining-requests", "not-a-number");
+        let result = QuotaHeaders::extract("openai", &headers);
+        // The malformed field should produce None, and since it's the only field,
+        // the overall result should be None (nothing valid found)
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn extract_partial_headers_returns_some() {
+        let headers = make_header("x-ratelimit-limit-tokens", "4096");
+        let result = QuotaHeaders::extract("openai", &headers).unwrap();
+        assert_eq!(result.remaining_requests, None);
+        assert_eq!(result.limit_requests, None);
+        assert_eq!(result.remaining_tokens, None);
+        assert_eq!(result.limit_tokens, Some(4096));
+    }
+}
