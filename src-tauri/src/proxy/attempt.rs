@@ -159,7 +159,8 @@ pub(super) async fn try_channel_attempt(
     // Build URL via provider (Gemini embeds model in URL; others use base_url + path)
     let url = provider.build_url(&channel.base_url, &upstream_model, is_stream);
 
-    let mut req_builder = state.http_pool.get().post(&url).json(&upstream_body);
+    let pool_guard = state.http_pool.get();
+    let mut req_builder = pool_guard.post(&url).json(&upstream_body);
 
     // Forward original request headers (excluding hop-by-hop and auth headers)
     for (name, value) in original_headers.iter() {
@@ -243,6 +244,11 @@ pub(super) async fn try_channel_attempt(
     };
 
     let status = resp.status();
+
+    // Record TTFT — time from dispatch start to first byte from upstream
+    crate::metrics::ttft_seconds()
+        .with_label_values(&[channel.provider.as_str(), current_model])
+        .observe(start.elapsed().as_secs_f64());
 
     if status == StatusCode::TOO_MANY_REQUESTS {
         let retry_after_secs = resp

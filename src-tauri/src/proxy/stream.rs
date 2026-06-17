@@ -8,6 +8,10 @@ use std::sync::Mutex;
 use tokio::sync::Notify;
 use tokio_stream::StreamExt;
 
+/// Per-read timeout for upstream SSE streams to prevent stalled connections
+/// from being held open indefinitely. Generous enough for slow LLM providers.
+const STREAM_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// Create an SSE streaming response that accumulates chunks for telemetry
 /// and raw SSE text for cache.
 /// Returns the response, a shared chunk list for post-stream cost tracking,
@@ -49,8 +53,26 @@ pub fn sse_stream_response_with_telemetry(
         tokio::spawn(async move {
             let mut upstream = Box::pin(upstream_stream);
 
-            while let Some(result) = upstream.next().await {
-                let bytes = match result {
+            loop {
+                let next_result = match tokio::time::timeout(
+                    STREAM_READ_TIMEOUT,
+                    upstream.next(),
+                ).await {
+                    Ok(Some(result)) => result,
+                    Ok(None) => break,        // stream ended normally
+                    Err(_elapsed) => {
+                        tracing::warn!(
+                            "Stream read timeout ({}s) — upstream stalled, aborting stream",
+                            STREAM_READ_TIMEOUT.as_secs()
+                        );
+                        let _ = tx.send(Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "upstream stream read timeout",
+                        ))).await;
+                        break;
+                    }
+                };
+                let bytes = match next_result {
                     Ok(b) => b,
                     Err(e) => {
                         // Forward error to client if still connected
@@ -120,8 +142,22 @@ pub fn sse_stream_response_with_telemetry(
                 if tx.send(Ok(output_bytes)).await.is_err() {
                     // Client disconnected — keep draining upstream for telemetry
                     // but don't attempt to forward.
-                    while let Some(result) = upstream.next().await {
-                        if let Ok(bytes) = result {
+                    loop {
+                        let next_result = match tokio::time::timeout(
+                            STREAM_READ_TIMEOUT,
+                            upstream.next(),
+                        ).await {
+                            Ok(Some(result)) => result,
+                            Ok(None) => break,
+                            Err(_elapsed) => {
+                                tracing::warn!(
+                                    "Stream read timeout ({}s) — upstream stalled, aborting stream (drain path)",
+                                    STREAM_READ_TIMEOUT.as_secs()
+                                );
+                                break;
+                            }
+                        };
+                        if let Ok(bytes) = next_result {
                             let text = String::from_utf8_lossy(&bytes);
                             let mut guard =
                                 chunks_clone.lock().unwrap_or_else(|e| e.into_inner());

@@ -24,6 +24,9 @@ static CACHE_EVICTIONS_TOTAL: OnceLock<IntCounter> = OnceLock::new();
 static ACTIVE_REQUESTS: OnceLock<Gauge> = OnceLock::new();
 static CIRCUIT_BREAKER_OPEN: OnceLock<prometheus::GaugeVec> = OnceLock::new();
 static RETRIES_TOTAL: OnceLock<IntCounterVec> = OnceLock::new();
+static TTFT_SECONDS: OnceLock<HistogramVec> = OnceLock::new();
+static INPUT_TOKENS_TOTAL: OnceLock<IntCounterVec> = OnceLock::new();
+static OUTPUT_TOKENS_TOTAL: OnceLock<IntCounterVec> = OnceLock::new();
 
 /// Total requests by provider, model, and status label.
 pub fn requests_total() -> &'static IntCounterVec {
@@ -133,6 +136,49 @@ pub fn retries_total() -> &'static IntCounterVec {
     })
 }
 
+/// TTFT histogram in seconds, labelled by provider and model.
+pub fn ttft_seconds() -> &'static HistogramVec {
+    TTFT_SECONDS.get_or_init(|| {
+        let m = HistogramVec::new(
+            prometheus::HistogramOpts::new(
+                "modelswitch_ttft_seconds",
+                "Time to first byte in seconds",
+            )
+            .buckets(vec![0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0]),
+            &["provider", "model"],
+        )
+        .expect("valid opts");
+        registry().register(Box::new(m.clone())).ok();
+        m
+    })
+}
+
+/// Total input tokens consumed, labelled by provider and model.
+pub fn input_tokens_total() -> &'static IntCounterVec {
+    INPUT_TOKENS_TOTAL.get_or_init(|| {
+        let m = IntCounterVec::new(
+            Opts::new("modelswitch_input_tokens_total", "Total input tokens consumed"),
+            &["provider", "model"],
+        )
+        .expect("valid opts");
+        registry().register(Box::new(m.clone())).ok();
+        m
+    })
+}
+
+/// Total output tokens consumed, labelled by provider and model.
+pub fn output_tokens_total() -> &'static IntCounterVec {
+    OUTPUT_TOKENS_TOTAL.get_or_init(|| {
+        let m = IntCounterVec::new(
+            Opts::new("modelswitch_output_tokens_total", "Total output tokens consumed"),
+            &["provider", "model"],
+        )
+        .expect("valid opts");
+        registry().register(Box::new(m.clone())).ok();
+        m
+    })
+}
+
 /// Render all registered metrics as Prometheus text format.
 pub fn render() -> String {
     let mut buf = Vec::new();
@@ -158,6 +204,9 @@ mod tests {
         // GaugeVec requires at least one labelled observation to appear in gather output
         circuit_breaker_open().with_label_values(&["test-channel"]);
         retries_total().with_label_values(&["test", "test-model"]);
+        ttft_seconds().with_label_values(&["test", "test-model"]).observe(0.1);
+        input_tokens_total().with_label_values(&["test", "test-model"]);
+        output_tokens_total().with_label_values(&["test", "test-model"]);
 
         let output = render();
         assert!(output.contains("modelswitch_requests_total"));
@@ -168,6 +217,9 @@ mod tests {
         assert!(output.contains("modelswitch_active_requests"));
         assert!(output.contains("modelswitch_circuit_breaker_open"));
         assert!(output.contains("modelswitch_retries_total"));
+        assert!(output.contains("modelswitch_ttft_seconds"));
+        assert!(output.contains("modelswitch_input_tokens_total"));
+        assert!(output.contains("modelswitch_output_tokens_total"));
     }
 
     #[test]

@@ -245,9 +245,8 @@ pub async fn ping_channel(
         ),
     };
 
-    let mut req_builder = state
-        .http_pool
-        .get()
+    let pool_guard = state.http_pool.get();
+    let mut req_builder = pool_guard
         .get(&url)
         .timeout(std::time::Duration::from_secs(10));
 

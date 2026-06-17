@@ -135,6 +135,7 @@ pub(super) async fn handle_streaming_success(
         let bg_request_cache = Arc::clone(&state.cache.request_cache);
         let bg_in_flight = Arc::clone(&state.cache.in_flight);
         let bg_original_model = original_model.to_string();
+        let bg_current_model = current_model.to_string();
         let bg_body = body.clone();
         let bg_raw_sse = Arc::clone(&raw_sse);
         let bg_stream_done = Arc::clone(&stream_done);
@@ -234,6 +235,18 @@ pub(super) async fn handle_streaming_success(
                 bg_provider_budgets
                     .accumulate_spend(&bg_provider_name, cost_cents)
                     .await;
+
+                // Token-level Prometheus metrics
+                if let Some(it) = input_tokens {
+                    crate::metrics::input_tokens_total()
+                        .with_label_values(&[&bg_provider_name, &bg_current_model])
+                        .inc_by(it);
+                }
+                if let Some(ot) = output_tokens {
+                    crate::metrics::output_tokens_total()
+                        .with_label_values(&[&bg_provider_name, &bg_current_model])
+                        .inc_by(ot);
+                }
             }
         });
     }
@@ -394,6 +407,18 @@ pub(super) async fn handle_json_success(
             crate::metrics::request_duration()
                 .with_label_values(&[provider_label, &bg_current_model])
                 .observe(bg_start.elapsed().as_secs_f64());
+
+            // Token-level metrics
+            if let Some(it) = bg_input_tokens {
+                crate::metrics::input_tokens_total()
+                    .with_label_values(&[provider_label, &bg_current_model])
+                    .inc_by(it);
+            }
+            if let Some(ot) = bg_output_tokens {
+                crate::metrics::output_tokens_total()
+                    .with_label_values(&[provider_label, &bg_current_model])
+                    .inc_by(ot);
+            }
 
             let _ = bg_channel_mgr
                 .record_latency(bg_channel_id, bg_start.elapsed().as_millis() as u64)

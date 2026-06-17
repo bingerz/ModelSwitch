@@ -1,20 +1,53 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 /// A pool of `reqwest::Client` instances to work around HTTP/2 single-connection-per-host limits.
 ///
-/// `reqwest`/`hyper` opens only one TCP connection per HTTP/2 host:port pair. When concurrent
-/// requests exceed `max_concurrent_streams` (default 100), requests stall. Round-robin selection
-/// across multiple clients spreads concurrent requests across multiple TCP connections.
+/// Uses least-busy selection: each client tracks its active request count via an
+/// `AtomicU8`. `get()` returns a `PooledClient` guard that increments the count
+/// on creation and decrements on drop, ensuring the count accurately reflects
+/// in-flight requests. Selection picks the client with the lowest active count.
 pub struct HttpPool {
-    clients: Vec<reqwest::Client>,
-    index: AtomicUsize,
+    clients: Vec<ClientEntry>,
+}
+
+struct ClientEntry {
+    client: reqwest::Client,
+    active: AtomicU8,
+}
+
+impl Clone for ClientEntry {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            active: AtomicU8::new(self.active.load(Ordering::Relaxed)),
+        }
+    }
+}
+
+/// RAII guard that tracks an in-flight request on a pooled client.
+/// Increments `active` on creation, decrements on drop.
+/// Derefs to `reqwest::Client` for transparent use.
+pub struct PooledClient<'a> {
+    entry: &'a ClientEntry,
+}
+
+impl std::ops::Deref for PooledClient<'_> {
+    type Target = reqwest::Client;
+    fn deref(&self) -> &Self::Target {
+        &self.entry.client
+    }
+}
+
+impl Drop for PooledClient<'_> {
+    fn drop(&mut self) {
+        self.entry.active.fetch_sub(1, Ordering::Release);
+    }
 }
 
 impl Clone for HttpPool {
     fn clone(&self) -> Self {
         Self {
             clients: self.clients.clone(),
-            index: AtomicUsize::new(self.index.load(Ordering::Relaxed)),
         }
     }
 }
@@ -26,24 +59,45 @@ impl HttpPool {
         F: Fn() -> reqwest::ClientBuilder,
     {
         let clients = (0..size)
-            .map(|_| build_fn().build())
+            .map(|_| {
+                Ok(ClientEntry {
+                    client: build_fn().build()?,
+                    active: AtomicU8::new(0),
+                })
+            })
             .collect::<reqwest::Result<Vec<_>>>()?;
-        Ok(Self {
-            clients,
-            index: AtomicUsize::new(0),
-        })
+        Ok(Self { clients })
     }
 
-    /// Get the next client via round-robin. Thread-safe.
-    pub fn get(&self) -> &reqwest::Client {
-        let idx = self.index.fetch_add(1, Ordering::Relaxed) % self.clients.len();
-        &self.clients[idx]
+    /// Get the least-busy client with an RAII guard.
+    /// The active count is decremented when the guard is dropped.
+    pub fn get(&self) -> PooledClient<'_> {
+        let idx = self.least_busy_index();
+        self.clients[idx].active.fetch_add(1, Ordering::AcqRel);
+        PooledClient {
+            entry: &self.clients[idx],
+        }
     }
 
-    /// Return a reference to the first client, suitable for low-frequency background tasks
-    /// where round-robin distribution is unnecessary.
-    pub fn first(&self) -> &reqwest::Client {
-        &self.clients[0]
+    /// Return the first client, suitable for low-frequency background tasks.
+    pub fn first(&self) -> PooledClient<'_> {
+        self.clients[0].active.fetch_add(1, Ordering::AcqRel);
+        PooledClient {
+            entry: &self.clients[0],
+        }
+    }
+
+    fn least_busy_index(&self) -> usize {
+        let mut best_idx = 0;
+        let mut best_count = u8::MAX;
+        for (i, entry) in self.clients.iter().enumerate() {
+            let count = entry.active.load(Ordering::Acquire);
+            if count < best_count {
+                best_count = count;
+                best_idx = i;
+            }
+        }
+        best_idx
     }
 }
 
@@ -52,34 +106,71 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pool_round_robin_cycles() {
+    fn pool_returns_least_busy_client() {
         let pool = HttpPool::new(3, reqwest::Client::builder).unwrap();
-        assert_eq!(pool.clients.len(), 3);
+        // All clients start at 0 active -- first call returns index 0
+        let c1 = pool.get();
+        // Client 0 now has 1 active, clients 1 and 2 have 0 -- next call picks 1
+        let c2 = pool.get();
+        // Client 0 has 1, client 1 has 1, client 2 has 0 -- picks 2
+        let c3 = pool.get();
+        // All have 1 active -- picks 0 (first with min count)
+        let c4 = pool.get();
 
-        // Round-robin should cycle through indices 0, 1, 2, 0, 1, 2, ...
-        let ptr0 = pool.get() as *const _;
-        let ptr1 = pool.get() as *const _;
-        let ptr2 = pool.get() as *const _;
-        let ptr3 = pool.get() as *const _;
+        // c1 and c4 should be the same client (both index 0)
+        assert!(std::ptr::eq(&*c1, &*c4), "c1 and c4 should be same client");
+        assert!(!std::ptr::eq(&*c1, &*c2), "c1 and c2 should differ");
+        assert!(!std::ptr::eq(&*c1, &*c3), "c1 and c3 should differ");
+    }
 
-        assert_ne!(ptr0, ptr1);
-        assert_ne!(ptr1, ptr2);
-        assert_eq!(ptr0, ptr3, "fourth call should wrap to first client");
+    #[test]
+    fn pool_drops_decrement_active() {
+        let pool = HttpPool::new(2, reqwest::Client::builder).unwrap();
+
+        {
+            let _guard = pool.get();
+            // Client 0 has 1 active, next get picks client 1
+            let _c2 = pool.get();
+        }
+        // After drop, all clients should be at 0 again
+        // Next get should pick index 0
+        let c_final = pool.get();
+        assert!(std::ptr::eq(&*c_final, &pool.clients[0].client));
     }
 
     #[test]
     fn pool_single_client_works() {
         let pool = HttpPool::new(1, reqwest::Client::builder).unwrap();
-        let c1 = pool.get() as *const _;
-        let c2 = pool.get() as *const _;
-        assert_eq!(c1, c2, "single-client pool always returns the same client");
+        let c1 = pool.get();
+        let c2 = pool.get();
+        assert!(
+            std::ptr::eq(&*c1, &*c2),
+            "single-client pool always returns same client"
+        );
     }
 
     #[test]
     fn pool_first_returns_first_client() {
         let pool = HttpPool::new(3, reqwest::Client::builder).unwrap();
-        let first_ptr = pool.first() as *const _;
-        let get_ptr = pool.get() as *const _;
-        assert_eq!(first_ptr, get_ptr);
+        let first_guard = pool.first();
+        let get_guard = pool.get();
+        // first() took index 0 (active=1), get() picks index 1 (active=0)
+        assert!(
+            !std::ptr::eq(&*first_guard, &*get_guard),
+            "get() should pick least-busy (index 1) not first (index 0 with active=1)"
+        );
+    }
+
+    #[test]
+    fn pool_clone_preserves_state() {
+        let pool = HttpPool::new(2, reqwest::Client::builder).unwrap();
+        let _guard = pool.get();
+        let cloned = pool.clone();
+        // Clone should see updated active counts since Vec<ClientEntry> is cloned
+        // (AtomicU8 values are copied)
+        // After clone, index 0 has 1 active in the clone too
+        let c = cloned.get();
+        // Should pick index 1 (0 active) over index 0 (1 active)
+        assert!(std::ptr::eq(&*c, &cloned.clients[1].client));
     }
 }
