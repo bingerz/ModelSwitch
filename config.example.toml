@@ -170,8 +170,10 @@ enabled = true
 # Max concurrent in-flight requests (None = unlimited)
 # max_concurrent = 50
 
-# Account group tag for multi-account pool management
-# account_group = "team-pro"
+# Account group tag for tag-based routing.
+# Send "X-Account-Group: production" header in the request to restrict
+# routing to channels where account_group = "production" or has no group.
+# account_group = "production"
 
 [channels.model_mapping]
 "gpt-4" = "gpt-4o"

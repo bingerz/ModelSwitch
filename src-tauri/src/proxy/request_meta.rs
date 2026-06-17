@@ -11,6 +11,10 @@ pub(super) struct RequestMeta<'a> {
     pub request_id: Option<&'a str>,
     pub session_id: Option<String>,
     pub affinity_channel: Option<Uuid>,
+    /// Account group tag from `X-Account-Group` header for tag-based routing.
+    /// When set, only channels with a matching `account_group` or no group
+    /// are considered for dispatch.
+    pub account_group: Option<String>,
 }
 
 /// Check if an affinity channel is still valid (available, supports model, not circuit-open).
@@ -67,12 +71,17 @@ pub(super) async fn extract_request_meta<'a>(
     } else {
         None
     };
+    let account_group = original_headers
+        .get("x-account-group")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
     RequestMeta {
         original_model,
         is_stream,
         request_id,
         session_id,
         affinity_channel,
+        account_group,
     }
 }
 

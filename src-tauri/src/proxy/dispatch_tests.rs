@@ -116,6 +116,19 @@ fn channel_config_disabled(id: &str, name: &str, base_url: &str, priority: u8) -
     cfg
 }
 
+/// Build a `ChannelConfig` with an account group tag.
+fn channel_config_with_group(
+    id: &str,
+    name: &str,
+    base_url: &str,
+    priority: u8,
+    group: &str,
+) -> ChannelConfig {
+    let mut cfg = channel_config(id, name, base_url, priority);
+    cfg.account_group = Some(group.to_string());
+    cfg
+}
+
 /// Build a minimal `AppConfig` with channels pointing at the given base URLs.
 fn test_config(channels: Vec<ChannelConfig>) -> AppConfig {
     AppConfig {
@@ -691,5 +704,210 @@ async fn dispatch_no_available_channel() {
     assert!(
         received.is_empty(),
         "No requests should reach the upstream when all channels are disabled"
+    );
+}
+
+// ── Account group routing tests ────────────────────────────────────────────
+
+/// Request with `X-Account-Group: production` should only route to channels
+/// tagged with "production" (or ungrouped channels), skipping channels tagged
+/// with a different group — even if that channel has higher priority.
+#[tokio::test]
+async fn dispatch_with_account_group_header_routes_to_matching_channel() {
+    let prod_server = MockServer::start().await;
+    let staging_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("Production!")),
+        )
+        .mount(&prod_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("Staging!")),
+        )
+        .mount(&staging_server)
+        .await;
+
+    // Staging channel has priority 1 (higher), production has priority 2.
+    // Without the header, staging would be preferred.
+    let state = build_test_state(vec![
+        channel_config_with_group(
+            "00000000-0000-0000-0000-000000000001",
+            "staging-channel",
+            &staging_server.uri(),
+            1,
+            "staging",
+        ),
+        channel_config_with_group(
+            "00000000-0000-0000-0000-000000000002",
+            "prod-channel",
+            &prod_server.uri(),
+            2,
+            "production",
+        ),
+    ]);
+
+    let mut headers = HeaderMap::new();
+    headers.insert("x-account-group", "production".parse().unwrap());
+    let body = chat_request_body("gpt-4", "Route by group");
+    let provider = openai_provider();
+
+    let response = dispatch(&state, &headers, &body, &provider).await;
+
+    assert_eq!(response_status(&response), 200);
+    let json = response_json(response).await;
+    assert_eq!(
+        json["choices"][0]["message"]["content"],
+        "Production!",
+        "should route to the production channel when X-Account-Group: production is set"
+    );
+
+    // Staging server should never have been hit
+    let staging_requests = staging_server.received_requests().await.unwrap();
+    assert!(
+        staging_requests.is_empty(),
+        "staging channel should be excluded when X-Account-Group: production is set"
+    );
+
+    // Production server should have been hit
+    let prod_requests = prod_server.received_requests().await.unwrap();
+    assert_eq!(
+        prod_requests.len(),
+        1,
+        "production channel should receive exactly one request"
+    );
+}
+
+/// Request without the `X-Account-Group` header should route to all channels
+/// (backward compatibility).
+#[tokio::test]
+async fn dispatch_without_account_group_header_uses_all_channels() {
+    let primary_server = MockServer::start().await;
+    let secondary_server = MockServer::start().await;
+
+    for server in [&primary_server, &secondary_server] {
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(chat_completion_response("OK")),
+            )
+            .mount(server)
+            .await;
+    }
+
+    let state = build_test_state(vec![
+        channel_config_with_group(
+            "00000000-0000-0000-0000-000000000001",
+            "prod-channel",
+            &primary_server.uri(),
+            1,
+            "production",
+        ),
+        channel_config_with_group(
+            "00000000-0000-0000-0000-000000000002",
+            "staging-channel",
+            &secondary_server.uri(),
+            1,
+            "staging",
+        ),
+    ]);
+
+    // No X-Account-Group header — all channels are eligible.
+    let headers = HeaderMap::new();
+    let body = chat_request_body("gpt-4", "No group header");
+    let provider = openai_provider();
+
+    let response = dispatch(&state, &headers, &body, &provider).await;
+
+    assert_eq!(
+        response_status(&response),
+        200,
+        "dispatch should succeed when no account group header is present"
+    );
+}
+
+/// Ungrouped channels are universal — they should be reachable even when an
+/// `X-Account-Group` header is set for a different group.
+#[tokio::test]
+async fn dispatch_with_account_group_includes_ungrouped_channels() {
+    let ungrouped_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("Ungrouped!")),
+        )
+        .mount(&ungrouped_server)
+        .await;
+
+    // Only an ungrouped channel exists. Request with X-Account-Group: production
+    // should still route to it because ungrouped channels are universal.
+    let state = build_test_state(vec![channel_config(
+        "00000000-0000-0000-0000-000000000001",
+        "ungrouped-channel",
+        &ungrouped_server.uri(),
+        1,
+    )]);
+
+    let mut headers = HeaderMap::new();
+    headers.insert("x-account-group", "production".parse().unwrap());
+    let body = chat_request_body("gpt-4", "Ungrouped fallback");
+    let provider = openai_provider();
+
+    let response = dispatch(&state, &headers, &body, &provider).await;
+
+    assert_eq!(response_status(&response), 200);
+    let json = response_json(response).await;
+    assert_eq!(
+        json["choices"][0]["message"]["content"],
+        "Ungrouped!",
+        "ungrouped channels should be reachable even with an account group header"
+    );
+}
+
+/// When all channels belong to a non-matching group and no ungrouped channels
+/// exist, dispatch should return 429 (all channels exhausted).
+#[tokio::test]
+async fn dispatch_with_non_matching_group_excludes_all_channels() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("Should not reach")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let state = build_test_state(vec![channel_config_with_group(
+        "00000000-0000-0000-0000-000000000001",
+        "staging-channel",
+        &mock_server.uri(),
+        1,
+        "staging",
+    )]);
+
+    let mut headers = HeaderMap::new();
+    headers.insert("x-account-group", "production".parse().unwrap());
+    let body = chat_request_body("gpt-4", "No matching group");
+    let provider = openai_provider();
+
+    let response = dispatch(&state, &headers, &body, &provider).await;
+
+    assert_eq!(
+        response_status(&response),
+        429,
+        "dispatch should return 429 when no channels match the requested account group"
+    );
+
+    let received = mock_server.received_requests().await.unwrap();
+    assert!(
+        received.is_empty(),
+        "upstream should not be called when no channels match the account group"
     );
 }

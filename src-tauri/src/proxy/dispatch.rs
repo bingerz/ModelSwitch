@@ -114,6 +114,8 @@ async fn check_request_cache(
 }
 
 /// Select a channel for the current attempt, preferring session affinity.
+/// When `account_group` is `Some(tag)`, only channels with a matching
+/// `account_group` or no group at all are considered.
 /// Returns `None` if no channel is available for the model.
 async fn select_channel_for_attempt(
     affinity_channel: Option<Uuid>,
@@ -121,11 +123,27 @@ async fn select_channel_for_attempt(
     current_model: &str,
     routing_strategy: &str,
     ctx: &RoutingContext<'_>,
+    account_group: Option<&str>,
 ) -> Option<Channel> {
+    // If an account group tag is specified, narrow the channel pool to
+    // channels that either match the tag or have no group (universal).
+    let effective_channels = if let Some(tag) = account_group {
+        let guard = channels.read().await;
+        let filtered: Vec<Channel> = guard
+            .iter()
+            .filter(|c| c.account_group.as_deref() == Some(tag) || c.account_group.is_none())
+            .cloned()
+            .collect();
+        drop(guard);
+        std::sync::Arc::new(tokio::sync::RwLock::new(filtered))
+    } else {
+        channels.clone()
+    };
+
     // Try affinity channel first if still valid
     if let Some(aff_id) = affinity_channel {
-        if is_affinity_valid(aff_id, channels, current_model).await {
-            let guard = channels.read().await;
+        if is_affinity_valid(aff_id, &effective_channels, current_model).await {
+            let guard = effective_channels.read().await;
             let found = guard.iter().find(|c| c.id == aff_id).map(|c| {
                 let mut c = c.clone();
                 c.recover_if_expired();
@@ -138,7 +156,7 @@ async fn select_channel_for_attempt(
         }
     }
     // No valid affinity channel — use normal routing
-    router::select_channel(channels.clone(), current_model, routing_strategy, ctx).await
+    router::select_channel(effective_channels, current_model, routing_strategy, ctx).await
 }
 
 /// Shared dispatch logic for both OpenAI and Anthropic proxy handlers.
@@ -159,6 +177,7 @@ pub(crate) async fn dispatch(
         request_id,
         session_id,
         affinity_channel,
+        account_group,
     } = meta;
     let vk_id = extract_virtual_key_id(original_headers);
 
@@ -258,6 +277,7 @@ pub(crate) async fn dispatch(
                     rate_limiter: &state.limits.rate_limiter,
                     latency_tracker: &state.router.latency_tracker,
                 },
+                account_group.as_deref(),
             )
             .await
             {
@@ -428,7 +448,8 @@ mod tests {
         let rate_limiter = Arc::new(RateLimiter::new(None));
         let latency_tracker = Arc::new(LatencyTracker::new());
         let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
-        let result = select_channel_for_attempt(None, &channels, "gpt-4", "weighted", &ctx).await;
+        let result =
+            select_channel_for_attempt(None, &channels, "gpt-4", "weighted", &ctx, None).await;
         assert!(result.is_none());
     }
 
@@ -443,7 +464,8 @@ mod tests {
         let rate_limiter = Arc::new(RateLimiter::new(None));
         let latency_tracker = Arc::new(LatencyTracker::new());
         let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
-        let result = select_channel_for_attempt(None, &channels, "gpt-4", "weighted", &ctx).await;
+        let result =
+            select_channel_for_attempt(None, &channels, "gpt-4", "weighted", &ctx, None).await;
         assert!(result.is_some());
     }
 
@@ -458,10 +480,134 @@ mod tests {
         let rate_limiter = Arc::new(RateLimiter::new(None));
         let latency_tracker = Arc::new(LatencyTracker::new());
         let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
-        let result =
-            select_channel_for_attempt(Some(channel_id), &channels, "gpt-4", "weighted", &ctx)
-                .await;
+        let result = select_channel_for_attempt(
+            Some(channel_id),
+            &channels,
+            "gpt-4",
+            "weighted",
+            &ctx,
+            None,
+        )
+        .await;
         assert!(result.is_some());
         assert_eq!(result.unwrap().id, channel_id);
+    }
+
+    // ── Account group routing tests ────────────────────────────────────────
+
+    fn make_test_channel_with_group(
+        id: Uuid,
+        model_mapping: HashMap<String, String>,
+        group: Option<&str>,
+    ) -> Channel {
+        let mut ch = make_test_channel(id, model_mapping);
+        ch.account_group = group.map(|s| s.to_string());
+        ch
+    }
+
+    #[tokio::test]
+    async fn account_group_filters_to_matching_channels() {
+        let matching_id = Uuid::new_v4();
+        let ungrouped_id = Uuid::new_v4();
+        let other_id = Uuid::new_v4();
+        let mut mm = HashMap::new();
+        mm.insert("gpt-4".to_string(), "gpt-4".to_string());
+
+        let channels: SharedChannels = Arc::new(RwLock::new(vec![
+            make_test_channel_with_group(matching_id, mm.clone(), Some("production")),
+            make_test_channel_with_group(ungrouped_id, mm.clone(), None),
+            make_test_channel_with_group(other_id, mm, Some("staging")),
+        ]));
+
+        let active_requests = Arc::new(ActiveRequests::new());
+        let rate_limiter = Arc::new(RateLimiter::new(None));
+        let latency_tracker = Arc::new(LatencyTracker::new());
+        let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
+
+        // Call 10 times — should never pick the "staging" channel
+        for _ in 0..10 {
+            let ch = select_channel_for_attempt(
+                None,
+                &channels,
+                "gpt-4",
+                "weighted",
+                &ctx,
+                Some("production"),
+            )
+            .await
+            .expect("should find a channel");
+            assert!(
+                ch.id == matching_id || ch.id == ungrouped_id,
+                "selected channel {} should be production or ungrouped, not staging",
+                ch.id
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn account_group_none_uses_all_channels() {
+        let prod_id = Uuid::new_v4();
+        let staging_id = Uuid::new_v4();
+        let mut mm = HashMap::new();
+        mm.insert("gpt-4".to_string(), "gpt-4".to_string());
+
+        let channels: SharedChannels = Arc::new(RwLock::new(vec![
+            make_test_channel_with_group(prod_id, mm.clone(), Some("production")),
+            make_test_channel_with_group(staging_id, mm, Some("staging")),
+        ]));
+
+        let active_requests = Arc::new(ActiveRequests::new());
+        let rate_limiter = Arc::new(RateLimiter::new(None));
+        let latency_tracker = Arc::new(LatencyTracker::new());
+        let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
+
+        // No account_group filter — both channels should be reachable.
+        let mut seen_ids = std::collections::HashSet::new();
+        for _ in 0..20 {
+            if let Some(ch) =
+                select_channel_for_attempt(None, &channels, "gpt-4", "weighted", &ctx, None).await
+            {
+                seen_ids.insert(ch.id);
+            }
+        }
+        assert!(
+            seen_ids.contains(&prod_id),
+            "production channel should be reachable without account_group filter"
+        );
+        assert!(
+            seen_ids.contains(&staging_id),
+            "staging channel should be reachable without account_group filter"
+        );
+    }
+
+    #[tokio::test]
+    async fn account_group_excludes_non_matching() {
+        let staging_id = Uuid::new_v4();
+        let mut mm = HashMap::new();
+        mm.insert("gpt-4".to_string(), "gpt-4".to_string());
+
+        // Only a staging channel exists — requesting production should fail.
+        let channels: SharedChannels = Arc::new(RwLock::new(vec![
+            make_test_channel_with_group(staging_id, mm, Some("staging")),
+        ]));
+
+        let active_requests = Arc::new(ActiveRequests::new());
+        let rate_limiter = Arc::new(RateLimiter::new(None));
+        let latency_tracker = Arc::new(LatencyTracker::new());
+        let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
+
+        let result = select_channel_for_attempt(
+            None,
+            &channels,
+            "gpt-4",
+            "weighted",
+            &ctx,
+            Some("production"),
+        )
+        .await;
+        assert!(
+            result.is_none(),
+            "no channel should be selected when account_group does not match any channel"
+        );
     }
 }
