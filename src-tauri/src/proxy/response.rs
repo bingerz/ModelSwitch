@@ -119,7 +119,7 @@ pub(super) async fn handle_streaming_success(
     pool_guard: crate::http_pool::PooledClient,
 ) -> Response {
     let is_gemini = provider.is_gemini_stream();
-    let (stream_resp, telemetry_chunks, raw_sse, stream_done) = sse_stream_response_with_telemetry(
+    let (stream_resp, output_buffer, stream_done) = sse_stream_response_with_telemetry(
         resp.bytes_stream(),
         is_gemini,
         upstream_model.to_string(),
@@ -189,7 +189,7 @@ pub(super) async fn handle_streaming_success(
         let bg_request_cache = Arc::clone(&state.cache.request_cache);
         let bg_in_flight = Arc::clone(&state.cache.in_flight);
         let bg_current_model = current_model.to_string();
-        let bg_raw_sse = Arc::clone(&raw_sse);
+        let bg_output_buffer = Arc::clone(&output_buffer);
         let bg_stream_done = Arc::clone(&stream_done);
         let bg_cache_key = cache_key;
         let bg_key_material = cache_key_material.to_string();
@@ -214,22 +214,33 @@ pub(super) async fn handle_streaming_success(
                 bg_stream_done.notified(),
             )
             .await;
-            let chunks = {
-                let guard = telemetry_chunks.lock().unwrap_or_else(|e| e.into_inner());
-                guard.clone()
+
+            // Single post-stream pass: lock the output buffer once and convert
+            // to a String. All SSE parsing (data-line extraction, usage
+            // detection) happens here instead of per-chunk on the hot path.
+            let output_text = {
+                let buf = bg_output_buffer.lock().unwrap_or_else(|e| e.into_inner());
+                String::from_utf8_lossy(&buf).to_string()
             };
+
             // Cache the accumulated SSE text for streaming cache hits.
             // Must happen before in_flight.complete for coalesced waiters.
-            {
-                let cached_sse = {
-                    let guard = bg_raw_sse.lock().unwrap_or_else(|e| e.into_inner());
-                    guard.clone()
-                };
-                if !cached_sse.is_empty() {
-                    bg_request_cache.insert(bg_cache_key, bg_key_material, cached_sse);
-                    bg_in_flight.complete(bg_cache_key);
-                }
+            if !output_text.is_empty() {
+                bg_request_cache.insert(bg_cache_key, bg_key_material, output_text.clone());
+                bg_in_flight.complete(bg_cache_key);
             }
+
+            // Parse SSE data lines once, post-stream, for usage extraction.
+            let chunks: Vec<String> = output_text
+                .lines()
+                .filter_map(|line| {
+                    let trimmed = line.trim();
+                    trimmed
+                        .strip_prefix("data: ")
+                        .filter(|d| !d.is_empty() && *d != "[DONE]")
+                        .map(|d| d.to_string())
+                })
+                .collect();
             if chunks.is_empty() {
                 return;
             }
