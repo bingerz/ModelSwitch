@@ -107,6 +107,14 @@ drain_timeout_secs = 30                       # Max wait for in-flight requests 
 "gpt-4o" = ["gpt-4o-mini", "gpt-3.5-turbo"]
 "claude-sonnet-4-20250514" = ["claude-3-5-sonnet-20241022", "claude-3-haiku-20240307"]
 
+# Wildcard patterns are supported in fallback keys:
+# "gpt-4*" matches "gpt-4-turbo", "gpt-4o", "gpt-4o-mini", etc.
+# "*" is a catch-all that matches any model.
+# Date suffixes are automatically stripped for matching:
+#   "claude-3-opus-20240229" matches key "claude-3-opus"
+# "gpt-4*" = ["gpt-3.5-turbo"]
+# "*" = ["gpt-3.5-turbo"]  # catch-all fallback
+
 
 # ══════════════════════════════════════════════════════════════════════
 # Provider Budgets

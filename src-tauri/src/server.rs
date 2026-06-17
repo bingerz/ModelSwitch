@@ -32,6 +32,7 @@ use axum::routing::{delete, get, post, put};
 use axum::Router;
 use std::sync::Arc;
 use tokio::sync::{oneshot, Notify};
+use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
@@ -493,6 +494,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .layer(axum::middleware::from_fn(
             middleware::request_id::request_id_middleware,
         ))
+        .layer(CompressionLayer::new())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024))

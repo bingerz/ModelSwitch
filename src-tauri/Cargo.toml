@@ -30,7 +30,7 @@ tauri-plugin-opener = { version = "2", optional = true }
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["ws"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
 
 # HTTP client
 reqwest = { version = "0.12", features = ["stream", "cookies", "json"] }
