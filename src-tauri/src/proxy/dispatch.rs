@@ -262,8 +262,21 @@ pub(crate) async fn dispatch(
     }
 
     // Resolve fallback chain: [original_model, fallback1, fallback2, ...]
-    let fallback_chain =
+    let mut fallback_chain =
         router::fallback::resolve_fallback_chain(&original_model, &state.gateway.model_fallbacks);
+
+    // Append context window fallbacks to the chain. When a request fails due
+    // to context length exceeded, the dispatch loop moves to the next model
+    // in the chain. Appending context fallbacks here means a context overflow
+    // on the original model (or any regular fallback) will naturally proceed
+    // to the larger-context models without a separate retry loop.
+    if let Some(ctx_fallbacks) = state.gateway.context_window_fallbacks.get(&original_model) {
+        for fb in ctx_fallbacks {
+            if !fallback_chain.contains(fb) {
+                fallback_chain.push(fb.clone());
+            }
+        }
+    }
 
     // Compute per-model retry counts, falling back to the global default
     let model_retry_counts: Vec<u32> = fallback_chain
@@ -387,6 +400,17 @@ pub(crate) async fn dispatch(
                     let jitter = rand::rng().random_range(0..50);
                     tokio::time::sleep(std::time::Duration::from_millis(exp_delay + jitter)).await;
                     continue;
+                }
+                AttemptOutcome::ContextOverflow => {
+                    // Context window exceeded — skip remaining retries for this
+                    // model and immediately try the next model in the fallback
+                    // chain (which includes context fallback models with larger
+                    // context windows).
+                    tracing::info!(
+                        model = %current_model,
+                        "Context overflow — moving to next model in chain"
+                    );
+                    break;
                 }
             }
         }

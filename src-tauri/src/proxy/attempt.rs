@@ -19,6 +19,10 @@ pub(super) enum AttemptOutcome {
     Respond(Response),
     /// Attempt failed; dispatch should retry with the next channel/attempt.
     Retry,
+    /// Upstream rejected the prompt because it exceeded the model's context
+    /// window. The dispatch loop should skip remaining retries for this model
+    /// and move to the next model in the (possibly extended) fallback chain.
+    ContextOverflow,
 }
 
 /// Log a failed attempt to a channel.
@@ -315,6 +319,31 @@ pub(super) async fn try_channel_attempt(
         let status_code = status;
         let body_text = resp.text().await.unwrap_or_default();
         state.router.active_requests.decrement(channel.id);
+
+        // Check for context window exceeded error before falling back to the
+        // generic client-error path. When detected, signal the dispatch loop
+        // to skip remaining retries for this model and try the next model in
+        // the fallback chain (which may include larger-context models via
+        // `context_window_fallbacks`).
+        if is_context_window_error(status_code, &body_text) {
+            tracing::info!(
+                channel = %channel.name,
+                model = %current_model,
+                "Context window exceeded — trying context fallback"
+            );
+            log_attempt_failure(
+                &state.logger,
+                current_model,
+                channel,
+                attempt,
+                FailureReason::ContextOverflow,
+                start,
+                request_id,
+            )
+            .await;
+            return AttemptOutcome::ContextOverflow;
+        }
+
         log_attempt_failure(
             &state.logger,
             current_model,
@@ -412,5 +441,127 @@ pub(super) async fn try_channel_attempt(
         )
         .await;
         AttemptOutcome::Respond(response)
+    }
+}
+
+/// Detect if an upstream error response indicates the prompt exceeded the
+/// model's context window.
+///
+/// Context-length errors are typically returned as `400 Bad Request` (OpenAI,
+/// Anthropic, most OpenAI-compatible providers) or `413 Request Entity Too
+/// Large`. The body is inspected for common error indicators across providers.
+fn is_context_window_error(status: StatusCode, body: &str) -> bool {
+    // Context errors are typically 400 (Bad Request) or 413 (Payload Too Large).
+    if status != StatusCode::BAD_REQUEST && status != StatusCode::PAYLOAD_TOO_LARGE {
+        return false;
+    }
+
+    // Check for common context-length error indicators across providers.
+    let body_lower = body.to_lowercase();
+
+    // OpenAI: "This model's maximum context length is..."
+    // OpenAI: "Please reduce the length of the messages"
+    // OpenAI error code: "context_length_exceeded"
+    if body_lower.contains("maximum context length")
+        || body_lower.contains("context_length_exceeded")
+        || body_lower.contains("context length exceeded")
+        || body_lower.contains("reduce the length of the messages")
+    {
+        return true;
+    }
+
+    // Anthropic: "prompt is too long"
+    if body_lower.contains("prompt is too long") {
+        return true;
+    }
+
+    // Generic: "context window" paired with "exceed" or "limit"
+    if body_lower.contains("context window")
+        && (body_lower.contains("exceed") || body_lower.contains("limit"))
+    {
+        return true;
+    }
+
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_context_window_error;
+    use reqwest::StatusCode;
+
+    #[test]
+    fn detects_openai_context_length_exceeded_code() {
+        let body = r#"{"error":{"code":"context_length_exceeded","message":"..."}}"#;
+        assert!(is_context_window_error(StatusCode::BAD_REQUEST, body));
+    }
+
+    #[test]
+    fn detects_openai_maximum_context_length_message() {
+        let body = r#"{"error":{"message":"This model's maximum context length is 8192 tokens."}}"#;
+        assert!(is_context_window_error(StatusCode::BAD_REQUEST, body));
+    }
+
+    #[test]
+    fn detects_openai_reduce_messages_message() {
+        let body =
+            r#"{"error":{"message":"Please reduce the length of the messages."}}"#;
+        assert!(is_context_window_error(StatusCode::BAD_REQUEST, body));
+    }
+
+    #[test]
+    fn detects_anthropic_prompt_too_long() {
+        let body = r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 250000 tokens > 200000 maximum"}}"#;
+        assert!(is_context_window_error(StatusCode::BAD_REQUEST, body));
+    }
+
+    #[test]
+    fn detects_generic_context_window_exceeded() {
+        let body = r#"{"error":{"message":"context window limit exceeded"}}"#;
+        assert!(is_context_window_error(StatusCode::BAD_REQUEST, body));
+    }
+
+    #[test]
+    fn detects_413_payload_too_large() {
+        let body = r#"{"error":{"message":"context window exceeded"}}"#;
+        assert!(is_context_window_error(StatusCode::PAYLOAD_TOO_LARGE, body));
+    }
+
+    #[test]
+    fn rejects_400_without_context_indicators() {
+        let body = r#"{"error":{"message":"Invalid model name"}}"#;
+        assert!(!is_context_window_error(StatusCode::BAD_REQUEST, body));
+    }
+
+    #[test]
+    fn rejects_success_statuses() {
+        let body = r#"{"ok":true}"#;
+        assert!(!is_context_window_error(StatusCode::OK, body));
+    }
+
+    #[test]
+    fn rejects_429_rate_limit() {
+        let body = r#"{"error":{"message":"Rate limited"}}"#;
+        assert!(!is_context_window_error(StatusCode::TOO_MANY_REQUESTS, body));
+    }
+
+    #[test]
+    fn rejects_500_server_error() {
+        let body = r#"{"error":{"message":"internal error"}}"#;
+        assert!(!is_context_window_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            body
+        ));
+    }
+
+    #[test]
+    fn detects_is_case_insensitive() {
+        let body = r#"{"error":{"message":"CONTEXT LENGTH EXCEEDED"}}"#;
+        assert!(is_context_window_error(StatusCode::BAD_REQUEST, body));
+    }
+
+    #[test]
+    fn rejects_empty_body() {
+        assert!(!is_context_window_error(StatusCode::BAD_REQUEST, ""));
     }
 }

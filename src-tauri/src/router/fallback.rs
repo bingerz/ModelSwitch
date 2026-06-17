@@ -184,16 +184,10 @@ mod tests {
     fn multiple_wildcards_by_specificity() {
         let mut fallbacks = HashMap::new();
         fallbacks.insert("gpt*".to_string(), vec!["fallback-gpt".to_string()]);
-        fallbacks.insert(
-            "gpt-4*".to_string(),
-            vec!["fallback-gpt4".to_string()],
-        );
+        fallbacks.insert("gpt-4*".to_string(), vec!["fallback-gpt4".to_string()]);
         let chain = resolve_fallback_chain("gpt-4o", &fallbacks);
         // gpt-4* (5 chars) is more specific than gpt* (3 chars)
-        assert_eq!(
-            chain,
-            vec!["gpt-4o", "fallback-gpt4", "fallback-gpt"]
-        );
+        assert_eq!(chain, vec!["gpt-4o", "fallback-gpt4", "fallback-gpt"]);
     }
 
     #[test]
@@ -209,10 +203,7 @@ mod tests {
             strip_date_suffix("claude-3-opus-20240229"),
             Some("claude-3-opus".to_string())
         );
-        assert_eq!(
-            strip_date_suffix("gpt-4-0613"),
-            Some("gpt-4".to_string())
-        );
+        assert_eq!(strip_date_suffix("gpt-4-0613"), Some("gpt-4".to_string()));
         assert_eq!(
             strip_date_suffix("text-embedding-3-small-20240101"),
             Some("text-embedding-3-small".to_string())

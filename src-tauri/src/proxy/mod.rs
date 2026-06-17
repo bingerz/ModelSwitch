@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod cache;
+pub mod embeddings;
 pub mod gemini;
 pub mod mcp_tools;
 pub mod openai;
@@ -181,7 +182,6 @@ const PASSTHROUGH_RESPONSE_HEADERS: &[&str] = &[
     "x-request-id",
 ];
 
-
 /// Categorized reason for a channel dispatch failure.
 #[derive(Debug, Clone)]
 pub(super) enum FailureReason {
@@ -192,6 +192,7 @@ pub(super) enum FailureReason {
     Timeout,
     #[allow(dead_code)]
     ModelFallback,
+    ContextOverflow,
     AllExhausted,
     ClientError(u16),
 }
@@ -205,6 +206,7 @@ impl FailureReason {
             Self::Timeout => "ttft_timeout".into(),
             Self::NoCredential => "no_credential".into(),
             Self::ModelFallback => "model_fallback".into(),
+            Self::ContextOverflow => "context_overflow".into(),
             Self::AllExhausted => "all_exhausted".into(),
             Self::ClientError(code) => code.to_string(),
         }

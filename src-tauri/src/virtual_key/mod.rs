@@ -108,11 +108,9 @@ impl VirtualKey {
     pub fn is_model_allowed(&self, model: &str) -> bool {
         match &self.allowed_models {
             None => true,
-            Some(allowed) => {
-                allowed.iter().any(|allowed_model| {
-                    model == allowed_model || model.starts_with(allowed_model)
-                })
-            }
+            Some(allowed) => allowed
+                .iter()
+                .any(|allowed_model| model == allowed_model || model.starts_with(allowed_model)),
         }
     }
 }
@@ -633,7 +631,9 @@ mod tests {
         let (vk, _) = store
             .create("test".to_string(), Some(100), Some(1000), None)
             .await;
-        store.update(vk.id, None, None, None, Some(false), None).await;
+        store
+            .update(vk.id, None, None, None, Some(false), None)
+            .await;
         let result = store.reserve_spend(vk.id, 10).await;
         assert!(matches!(result, ReserveResult::NoBudget));
     }

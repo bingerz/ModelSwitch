@@ -35,8 +35,7 @@ pub(crate) async fn apply_config_reload(
     // state for channels that already exist.
     let mut new_channels: Vec<Channel> = Vec::new();
     for cc in &new_config.channels {
-        let id =
-            uuid::Uuid::parse_str(&cc.id).unwrap_or_else(|_| uuid::Uuid::new_v4());
+        let id = uuid::Uuid::parse_str(&cc.id).unwrap_or_else(|_| uuid::Uuid::new_v4());
         if let Some(existing) = existing_by_id.get(&id) {
             // Update mutable fields only, preserve runtime state
             let mut updated = existing.clone();
@@ -80,8 +79,7 @@ pub(crate) async fn apply_config_reload(
 
     // Hot-reload rate limits and payload rules from channel configs
     for cc in &new_config.channels {
-        let id =
-            uuid::Uuid::parse_str(&cc.id).unwrap_or_else(|_| uuid::Uuid::new_v4());
+        let id = uuid::Uuid::parse_str(&cc.id).unwrap_or_else(|_| uuid::Uuid::new_v4());
 
         if let Some(rpm) = cc.rpm_limit {
             rate_limiter.set_channel_rpm_limit(id, rpm);
@@ -191,12 +189,7 @@ mod tests {
         Arc::new(FileCredentialStore::new())
     }
 
-    fn make_channel_config(
-        id: &str,
-        name: &str,
-        base_url: &str,
-        priority: u8,
-    ) -> ChannelConfig {
+    fn make_channel_config(id: &str, name: &str, base_url: &str, priority: u8) -> ChannelConfig {
         ChannelConfig {
             id: id.to_string(),
             name: name.to_string(),
@@ -323,11 +316,10 @@ tpm_limit = 10000
         let id2 = "00000000-0000-0000-0000-000000000002";
 
         // Start with two channels
-        let old_config =
-            make_app_config(vec![
-                make_channel_config(id1, "alpha", "https://a.com", 1),
-                make_channel_config(id2, "beta", "https://b.com", 2),
-            ]);
+        let old_config = make_app_config(vec![
+            make_channel_config(id1, "alpha", "https://a.com", 1),
+            make_channel_config(id2, "beta", "https://b.com", 2),
+        ]);
         let mgr = make_manager(&old_config);
         let mcp = McpManager::new();
         let limiter = RateLimiter::new(None);
@@ -351,8 +343,12 @@ tpm_limit = 10000
         let uuid = uuid::Uuid::parse_str(id).unwrap();
 
         // Seed the manager with a channel that has runtime state
-        let config =
-            make_app_config(vec![make_channel_config(id, "original", "https://old.com", 1)]);
+        let config = make_app_config(vec![make_channel_config(
+            id,
+            "original",
+            "https://old.com",
+            1,
+        )]);
         let mgr = make_manager(&config);
         let mcp = McpManager::new();
         let limiter = RateLimiter::new(None);
@@ -433,8 +429,12 @@ tpm_limit = 10000
     async fn reload_updates_mutable_fields_for_existing_channels() {
         let id = "00000000-0000-0000-0000-000000000001";
 
-        let old_config =
-            make_app_config(vec![make_channel_config(id, "original", "https://old.com", 1)]);
+        let old_config = make_app_config(vec![make_channel_config(
+            id,
+            "original",
+            "https://old.com",
+            1,
+        )]);
         let mgr = make_manager(&old_config);
         let mcp = McpManager::new();
         let limiter = RateLimiter::new(None);
@@ -575,8 +575,7 @@ tpm_limit = 10000
         let id = "00000000-0000-0000-0000-000000000001";
         let uuid = uuid::Uuid::parse_str(id).unwrap();
 
-        let config =
-            make_app_config(vec![make_channel_config(id, "test", "https://a.com", 1)]);
+        let config = make_app_config(vec![make_channel_config(id, "test", "https://a.com", 1)]);
         let mgr = make_manager(&config);
         let mcp = McpManager::new();
         let limiter = RateLimiter::new(None);
@@ -589,8 +588,12 @@ tpm_limit = 10000
         mgr.update(uuid, ch).await;
 
         // Reload — state should be preserved
-        let new_config =
-            make_app_config(vec![make_channel_config(id, "test-updated", "https://a.com", 1)]);
+        let new_config = make_app_config(vec![make_channel_config(
+            id,
+            "test-updated",
+            "https://a.com",
+            1,
+        )]);
         apply_config_reload(&new_config, &mgr, &mcp, &limiter, &rules).await;
 
         let ch = mgr.get(uuid).await.unwrap();

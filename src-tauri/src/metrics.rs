@@ -5,7 +5,7 @@
 //! first accessed.
 
 use prometheus::{
-    Encoder, Gauge, IntCounter, IntCounterVec, HistogramVec, Opts, Registry, TextEncoder,
+    Encoder, Gauge, HistogramVec, IntCounter, IntCounterVec, Opts, Registry, TextEncoder,
 };
 use std::sync::OnceLock;
 
@@ -52,9 +52,7 @@ pub fn request_duration() -> &'static HistogramVec {
                 "modelswitch_request_duration_seconds",
                 "Request duration in seconds",
             )
-            .buckets(vec![
-                0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0,
-            ]),
+            .buckets(vec![0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0]),
             &["provider", "model"],
         )
         .expect("valid opts");
@@ -66,8 +64,7 @@ pub fn request_duration() -> &'static HistogramVec {
 /// Cache hit counter.
 pub fn cache_hits() -> &'static IntCounter {
     CACHE_HITS_TOTAL.get_or_init(|| {
-        let m = IntCounter::new("modelswitch_cache_hits_total", "Cache hits")
-            .expect("valid opts");
+        let m = IntCounter::new("modelswitch_cache_hits_total", "Cache hits").expect("valid opts");
         registry().register(Box::new(m.clone())).ok();
         m
     })
@@ -76,8 +73,8 @@ pub fn cache_hits() -> &'static IntCounter {
 /// Cache miss counter.
 pub fn cache_misses() -> &'static IntCounter {
     CACHE_MISSES_TOTAL.get_or_init(|| {
-        let m = IntCounter::new("modelswitch_cache_misses_total", "Cache misses")
-            .expect("valid opts");
+        let m =
+            IntCounter::new("modelswitch_cache_misses_total", "Cache misses").expect("valid opts");
         registry().register(Box::new(m.clone())).ok();
         m
     })
@@ -96,9 +93,11 @@ pub fn cache_evictions() -> &'static IntCounter {
 /// Gauge for currently in-flight gateway requests.
 pub fn active_requests() -> &'static Gauge {
     ACTIVE_REQUESTS.get_or_init(|| {
-        let m =
-            Gauge::new("modelswitch_active_requests", "Currently in-flight requests")
-                .expect("valid opts");
+        let m = Gauge::new(
+            "modelswitch_active_requests",
+            "Currently in-flight requests",
+        )
+        .expect("valid opts");
         registry().register(Box::new(m.clone())).ok();
         m
     })
@@ -157,7 +156,10 @@ pub fn ttft_seconds() -> &'static HistogramVec {
 pub fn input_tokens_total() -> &'static IntCounterVec {
     INPUT_TOKENS_TOTAL.get_or_init(|| {
         let m = IntCounterVec::new(
-            Opts::new("modelswitch_input_tokens_total", "Total input tokens consumed"),
+            Opts::new(
+                "modelswitch_input_tokens_total",
+                "Total input tokens consumed",
+            ),
             &["provider", "model"],
         )
         .expect("valid opts");
@@ -170,7 +172,10 @@ pub fn input_tokens_total() -> &'static IntCounterVec {
 pub fn output_tokens_total() -> &'static IntCounterVec {
     OUTPUT_TOKENS_TOTAL.get_or_init(|| {
         let m = IntCounterVec::new(
-            Opts::new("modelswitch_output_tokens_total", "Total output tokens consumed"),
+            Opts::new(
+                "modelswitch_output_tokens_total",
+                "Total output tokens consumed",
+            ),
             &["provider", "model"],
         )
         .expect("valid opts");
@@ -204,7 +209,9 @@ mod tests {
         // GaugeVec requires at least one labelled observation to appear in gather output
         circuit_breaker_open().with_label_values(&["test-channel"]);
         retries_total().with_label_values(&["test", "test-model"]);
-        ttft_seconds().with_label_values(&["test", "test-model"]).observe(0.1);
+        ttft_seconds()
+            .with_label_values(&["test", "test-model"])
+            .observe(0.1);
         input_tokens_total().with_label_values(&["test", "test-model"]);
         output_tokens_total().with_label_values(&["test", "test-model"]);
 

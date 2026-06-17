@@ -70,6 +70,12 @@ pub struct GatewayConfig {
     pub max_retries: u32,
     #[serde(default)]
     pub model_fallbacks: HashMap<String, Vec<String>>,
+    /// Context window fallback models. When a request fails due to context
+    /// length exceeded, the gateway tries these alternative models in order.
+    /// Key = original model, Value = list of models with larger context windows.
+    /// They are appended to the regular fallback chain during dispatch.
+    #[serde(default)]
+    pub context_window_fallbacks: HashMap<String, Vec<String>>,
     /// Gateway-level model aliases. The key (alias) is replaced by the value
     /// (canonical model) before channel selection and fallback resolution.
     /// This is different from per-channel model_mapping, which maps at the
@@ -378,6 +384,7 @@ impl Default for GatewayConfig {
             circuit_breaker_minutes: default_circuit_breaker_minutes(),
             max_retries: default_max_retries(),
             model_fallbacks: HashMap::new(),
+            context_window_fallbacks: HashMap::new(),
             model_aliases: HashMap::new(),
             routing_strategy: default_routing_strategy(),
             health_check_interval_secs: default_health_check_interval_secs(),

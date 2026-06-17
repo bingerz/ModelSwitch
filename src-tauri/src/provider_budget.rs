@@ -368,7 +368,10 @@ mod tests {
         // Accumulating for a provider with no budget config should still track spend
         store.accumulate_spend("gemini", 10).await;
         let spend = store.get_spend("gemini").await;
-        assert!(spend.is_some(), "spend should be tracked even without config");
+        assert!(
+            spend.is_some(),
+            "spend should be tracked even without config"
+        );
         assert_eq!(spend.unwrap().total_cents, 10);
     }
 

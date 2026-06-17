@@ -98,7 +98,9 @@ mod tests {
 
     #[test]
     fn supports_shengsuanyun_by_url() {
-        assert!(ShengSuanYunCollector.supports(&make_ctx("custom", "https://router.shengsuanyun.com")));
+        assert!(
+            ShengSuanYunCollector.supports(&make_ctx("custom", "https://router.shengsuanyun.com"))
+        );
     }
 
     #[test]

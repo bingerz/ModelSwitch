@@ -52,10 +52,7 @@ pub async fn list_provider_budgets(
     let mut results: Vec<ProviderBudgetResponse> = budgets
         .iter()
         .map(|(provider, config)| {
-            let spend = spend_by_provider
-                .get(provider)
-                .cloned()
-                .unwrap_or_default();
+            let spend = spend_by_provider.get(provider).cloned().unwrap_or_default();
             ProviderBudgetResponse {
                 provider: provider.clone(),
                 daily_budget_cents: config.daily_budget_cents,
@@ -88,7 +85,10 @@ pub async fn set_provider_budget(
     Json(req): Json<SetProviderBudgetRequest>,
 ) -> Result<Json<ApiResponse<ProviderBudgetResponse>>, axum::response::Response> {
     if provider.trim().is_empty() {
-        return Err(ApiError::new(StatusCode::BAD_REQUEST, "Provider name is required"));
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "Provider name is required",
+        ));
     }
     if let Some(d) = req.daily_budget_cents {
         if let Some(m) = req.monthly_budget_cents {

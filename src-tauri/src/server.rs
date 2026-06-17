@@ -60,6 +60,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     let host = config.gateway.host.clone();
     let max_retries = config.gateway.max_retries;
     let model_fallbacks = config.gateway.model_fallbacks.clone();
+    let context_window_fallbacks = config.gateway.context_window_fallbacks.clone();
     let model_aliases = config.gateway.model_aliases.clone();
     let routing_strategy = config.gateway.routing_strategy.clone();
 
@@ -175,6 +176,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             stream_ttft_timeout_secs: config.gateway.stream_ttft_timeout_secs,
             max_retries,
             model_fallbacks,
+            context_window_fallbacks,
             model_aliases,
             routing_strategy,
             retry_base_ms: config.gateway.retry_base_ms,
@@ -383,6 +385,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/v1/chat/completions",
             post(proxy::openai::handle_chat_completions),
         )
+        .route(
+            "/v1/embeddings",
+            post(proxy::embeddings::handle_embeddings),
+        )
         .route("/v1/models", get(proxy::openai::handle_list_models))
         .route("/v1/tools", get(proxy::openai::handle_list_tools))
         .route("/v1/messages", post(proxy::anthropic::handle_messages))
@@ -392,6 +398,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/provider/{provider}/v1/chat/completions",
             post(proxy::openai::handle_chat_completions),
+        )
+        .route(
+            "/api/provider/{provider}/v1/embeddings",
+            post(proxy::embeddings::handle_embeddings),
         )
         .route(
             "/api/provider/{provider}/v1/messages",

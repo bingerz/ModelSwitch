@@ -247,29 +247,19 @@ mod tests {
     fn openai_applies_bearer_auth() {
         let adaptor = OpenAIAdaptor;
         let client = reqwest::Client::new();
-        let builder = client
-            .post("http://test")
-            .json(&serde_json::json!({}));
+        let builder = client.post("http://test").json(&serde_json::json!({}));
         let builder = adaptor.apply_auth(builder, "sk-test-key", false);
         let request = builder.build().unwrap();
         let headers = request.headers();
-        assert_eq!(
-            headers.get("authorization").unwrap(),
-            "Bearer sk-test-key"
-        );
-        assert_eq!(
-            headers.get("content-type").unwrap(),
-            "application/json"
-        );
+        assert_eq!(headers.get("authorization").unwrap(), "Bearer sk-test-key");
+        assert_eq!(headers.get("content-type").unwrap(), "application/json");
     }
 
     #[test]
     fn openai_applies_cookie_for_web_session() {
         let adaptor = OpenAIAdaptor;
         let client = reqwest::Client::new();
-        let builder = client
-            .post("http://test")
-            .json(&serde_json::json!({}));
+        let builder = client.post("http://test").json(&serde_json::json!({}));
         let builder = adaptor.apply_auth(builder, "session-cookie", true);
         let request = builder.build().unwrap();
         let headers = request.headers();
@@ -309,30 +299,20 @@ mod tests {
     fn anthropic_applies_api_key_auth() {
         let adaptor = AnthropicAdaptor;
         let client = reqwest::Client::new();
-        let builder = client
-            .post("http://test")
-            .json(&serde_json::json!({}));
+        let builder = client.post("http://test").json(&serde_json::json!({}));
         let builder = adaptor.apply_auth(builder, "sk-ant-key", false);
         let request = builder.build().unwrap();
         let headers = request.headers();
         assert_eq!(headers.get("x-api-key").unwrap(), "sk-ant-key");
-        assert_eq!(
-            headers.get("anthropic-version").unwrap(),
-            "2023-06-01"
-        );
-        assert_eq!(
-            headers.get("content-type").unwrap(),
-            "application/json"
-        );
+        assert_eq!(headers.get("anthropic-version").unwrap(), "2023-06-01");
+        assert_eq!(headers.get("content-type").unwrap(), "application/json");
     }
 
     #[test]
     fn anthropic_applies_cookie_for_web_session() {
         let adaptor = AnthropicAdaptor;
         let client = reqwest::Client::new();
-        let builder = client
-            .post("http://test")
-            .json(&serde_json::json!({}));
+        let builder = client.post("http://test").json(&serde_json::json!({}));
         let builder = adaptor.apply_auth(builder, "session-cookie", true);
         let request = builder.build().unwrap();
         let headers = request.headers();
@@ -351,7 +331,11 @@ mod tests {
     #[test]
     fn gemini_build_url_stream() {
         let adaptor = GeminiAdaptor;
-        let url = adaptor.build_url("https://generativelanguage.googleapis.com", "gemini-pro", true);
+        let url = adaptor.build_url(
+            "https://generativelanguage.googleapis.com",
+            "gemini-pro",
+            true,
+        );
         assert_eq!(
             url,
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:streamGenerateContent?alt=sse"
@@ -361,7 +345,11 @@ mod tests {
     #[test]
     fn gemini_build_url_non_stream() {
         let adaptor = GeminiAdaptor;
-        let url = adaptor.build_url("https://generativelanguage.googleapis.com", "gemini-pro", false);
+        let url = adaptor.build_url(
+            "https://generativelanguage.googleapis.com",
+            "gemini-pro",
+            false,
+        );
         assert_eq!(
             url,
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
@@ -371,7 +359,11 @@ mod tests {
     #[test]
     fn gemini_build_url_trims_trailing_slash() {
         let adaptor = GeminiAdaptor;
-        let url = adaptor.build_url("https://generativelanguage.googleapis.com/", "gemini-1.5-flash", true);
+        let url = adaptor.build_url(
+            "https://generativelanguage.googleapis.com/",
+            "gemini-1.5-flash",
+            true,
+        );
         assert!(url.starts_with("https://generativelanguage.googleapis.com/v1beta/"));
     }
 
@@ -390,26 +382,19 @@ mod tests {
     fn gemini_applies_goog_api_key() {
         let adaptor = GeminiAdaptor;
         let client = reqwest::Client::new();
-        let builder = client
-            .post("http://test")
-            .json(&serde_json::json!({}));
+        let builder = client.post("http://test").json(&serde_json::json!({}));
         let builder = adaptor.apply_auth(builder, "AIza-test-key", false);
         let request = builder.build().unwrap();
         let headers = request.headers();
         assert_eq!(headers.get("x-goog-api-key").unwrap(), "AIza-test-key");
-        assert_eq!(
-            headers.get("content-type").unwrap(),
-            "application/json"
-        );
+        assert_eq!(headers.get("content-type").unwrap(), "application/json");
     }
 
     #[test]
     fn gemini_applies_cookie_for_web_session() {
         let adaptor = GeminiAdaptor;
         let client = reqwest::Client::new();
-        let builder = client
-            .post("http://test")
-            .json(&serde_json::json!({}));
+        let builder = client.post("http://test").json(&serde_json::json!({}));
         let builder = adaptor.apply_auth(builder, "session-cookie", true);
         let request = builder.build().unwrap();
         let headers = request.headers();

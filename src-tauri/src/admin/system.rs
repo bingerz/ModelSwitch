@@ -142,7 +142,11 @@ pub async fn cache_stats(
 /// Parse a counter value from Prometheus text format output.
 fn parse_counter_value(metrics_text: &str, metric_name: &str) -> u64 {
     for line in metrics_text.lines() {
-        if line.starts_with(metric_name) && !line.contains("_bucket") && !line.contains("_sum") && !line.contains("_count") {
+        if line.starts_with(metric_name)
+            && !line.contains("_bucket")
+            && !line.contains("_sum")
+            && !line.contains("_count")
+        {
             // Format: "metric_name 123" or "metric_name{labels} 123"
             if let Some(value_str) = line.split_whitespace().last() {
                 if let Ok(value) = value_str.parse::<u64>() {
@@ -301,19 +305,28 @@ mod tests {
     #[test]
     fn parse_simple_counter() {
         let metrics = "modelswitch_cache_hits_total 42\n";
-        assert_eq!(parse_counter_value(metrics, "modelswitch_cache_hits_total"), 42);
+        assert_eq!(
+            parse_counter_value(metrics, "modelswitch_cache_hits_total"),
+            42
+        );
     }
 
     #[test]
     fn parse_counter_not_found() {
         let metrics = "some_other_metric 10\n";
-        assert_eq!(parse_counter_value(metrics, "modelswitch_cache_hits_total"), 0);
+        assert_eq!(
+            parse_counter_value(metrics, "modelswitch_cache_hits_total"),
+            0
+        );
     }
 
     #[test]
     fn parse_skips_histogram_lines() {
         let metrics = "modelswitch_cache_hits_total 5\nmodelswitch_cache_hits_total_sum 10.5\nmodelswitch_cache_hits_total_count 5\n";
-        assert_eq!(parse_counter_value(metrics, "modelswitch_cache_hits_total"), 5);
+        assert_eq!(
+            parse_counter_value(metrics, "modelswitch_cache_hits_total"),
+            5
+        );
     }
 
     #[test]

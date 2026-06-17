@@ -26,6 +26,7 @@ pub struct GatewayParams {
     pub stream_ttft_timeout_secs: Option<u64>,
     pub max_retries: u32,
     pub model_fallbacks: HashMap<String, Vec<String>>,
+    pub context_window_fallbacks: HashMap<String, Vec<String>>,
     pub model_aliases: HashMap<String, String>,
     pub routing_strategy: String,
     pub retry_base_ms: u64,

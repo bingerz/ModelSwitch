@@ -131,6 +131,19 @@ drain_timeout_secs = 30                       # Max wait for in-flight requests 
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Context Window Fallbacks
+# ══════════════════════════════════════════════════════════════════════
+# When a request fails because the prompt exceeds the model's context
+# window, the gateway automatically retries with these alternative models.
+# They are appended to the regular fallback chain, so a context overflow
+# on the original model naturally proceeds to the larger-context models.
+
+# [gateway.context_window_fallbacks]
+# "gpt-4o-mini" = ["gpt-4o"]
+# "claude-3-haiku" = ["claude-3-sonnet", "claude-3-opus"]
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Provider Budgets
 # ══════════════════════════════════════════════════════════════════════
 # Per-provider daily/monthly spend caps (in USD cents).

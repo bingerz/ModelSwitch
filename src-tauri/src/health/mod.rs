@@ -76,9 +76,7 @@ pub fn start_health_checker(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::channel::{
-        Channel, Credential, CredentialType, Provider,
-    };
+    use crate::channel::{Channel, Credential, CredentialType, Provider};
     use crate::config::{AppConfig, GatewayConfig};
     use crate::credential::file_store::FileCredentialStore;
     use crate::credential::SharedCredentialStore;
