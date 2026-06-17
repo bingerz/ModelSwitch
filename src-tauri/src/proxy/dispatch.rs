@@ -2,6 +2,7 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 use rand::Rng;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -246,15 +247,30 @@ pub(crate) async fn dispatch(
     let fallback_chain =
         router::fallback::resolve_fallback_chain(&original_model, &state.gateway.model_fallbacks);
 
+    // Compute per-model retry counts, falling back to the global default
+    let model_retry_counts: Vec<u32> = fallback_chain
+        .iter()
+        .map(|m| {
+            resolve_model_retry_config(m, &state.gateway.model_retry_overrides)
+                .max_retries
+                .unwrap_or(max_retries)
+        })
+        .collect();
+    let max_total_attempts: u32 = model_retry_counts.iter().sum();
     let mut total_attempts: u32 = 0;
-    let max_total_attempts = max_retries * fallback_chain.len() as u32;
     let deadline =
         start + std::time::Duration::from_secs(state.gateway.request_timeout_secs.unwrap_or(120));
 
-    for current_model in &fallback_chain {
+    for (model_idx, current_model) in fallback_chain.iter().enumerate() {
+        let model_max_retries = model_retry_counts[model_idx];
+        let model_cfg =
+            resolve_model_retry_config(current_model, &state.gateway.model_retry_overrides);
+        let model_base_ms = model_cfg.retry_base_ms.unwrap_or(state.gateway.retry_base_ms);
+        let model_max_ms = model_cfg.retry_max_ms.unwrap_or(state.gateway.retry_max_ms);
+
         let mut attempt: u32 = 0;
 
-        while total_attempts < max_total_attempts {
+        while attempt < model_max_retries && total_attempts < max_total_attempts {
             // Per-request deadline check
             if std::time::Instant::now() > deadline {
                 tracing::warn!(
@@ -310,6 +326,7 @@ pub(crate) async fn dispatch(
             tracing::info!(
                 attempt,
                 total_attempts,
+                model_max_retries,
                 channel = %channel.name,
                 model = %current_model,
                 stream = is_stream,
@@ -341,11 +358,9 @@ pub(crate) async fn dispatch(
                         .with_label_values(&[channel.provider.as_str(), current_model.as_str()])
                         .inc();
                     // Exponential backoff with jitter to avoid thundering herd
-                    let base_ms = state.gateway.retry_base_ms;
-                    let max_ms = state.gateway.retry_max_ms;
                     let exp_delay = std::cmp::min(
-                        base_ms.saturating_mul(1u64 << attempt.min(6)),
-                        max_ms,
+                        model_base_ms.saturating_mul(1u64 << attempt.min(6)),
+                        model_max_ms,
                     );
                     let jitter = rand::rng().random_range(0..50);
                     tokio::time::sleep(std::time::Duration::from_millis(
@@ -380,12 +395,57 @@ pub(crate) async fn dispatch(
     .await
 }
 
+/// Resolve per-model retry config, supporting wildcard pattern keys.
+/// Checks exact match first, then wildcard patterns (longest prefix first),
+/// matching the fallback chain resolver's wildcard logic.
+fn resolve_model_retry_config(
+    model: &str,
+    overrides: &HashMap<String, crate::config::ModelRetryConfig>,
+) -> crate::config::ModelRetryConfig {
+    use crate::router::fallback;
+
+    // Exact match first
+    if let Some(cfg) = overrides.get(model) {
+        return cfg.clone();
+    }
+
+    // Date-suffix stripped exact match
+    let stripped = fallback::strip_date_suffix(model);
+    if let Some(ref stripped_model) = stripped {
+        if let Some(cfg) = overrides.get(stripped_model) {
+            return cfg.clone();
+        }
+    }
+
+    // Wildcard matches (longest prefix first)
+    let mut best_match: Option<(&String, &crate::config::ModelRetryConfig)> = None;
+    for (key, cfg) in overrides.iter() {
+        if key.ends_with('*') && key.len() > 1 {
+            let prefix = &key[..key.len() - 1];
+            if model.starts_with(prefix)
+                && (best_match.is_none() || key.len() > best_match.as_ref().unwrap().0.len())
+            {
+                best_match = Some((key, cfg));
+            }
+        } else if key.as_str() == "*" && best_match.is_none() {
+            best_match = Some((key, cfg));
+        }
+    }
+
+    if let Some((_, cfg)) = best_match {
+        return cfg.clone();
+    }
+
+    crate::config::ModelRetryConfig::default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::channel::{
         Channel, ChannelStatus, Credential, CredentialType, Provider, SharedChannels,
     };
+    use crate::config::ModelRetryConfig;
     use crate::proxy::rate_limiter::RateLimiter;
     use crate::router::active_requests::ActiveRequests;
     use crate::router::latency_tracker::LatencyTracker;
@@ -609,5 +669,59 @@ mod tests {
             result.is_none(),
             "no channel should be selected when account_group does not match any channel"
         );
+    }
+
+    // ── resolve_model_retry_config tests ─────────────────────────────────
+
+    #[test]
+    fn resolve_retry_config_exact_match() {
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "gpt-4o".to_string(),
+            ModelRetryConfig {
+                max_retries: Some(5),
+                retry_base_ms: Some(200),
+                retry_max_ms: Some(10000),
+            },
+        );
+        let cfg = resolve_model_retry_config("gpt-4o", &overrides);
+        assert_eq!(cfg.max_retries, Some(5));
+        assert_eq!(cfg.retry_base_ms, Some(200));
+    }
+
+    #[test]
+    fn resolve_retry_config_falls_back_to_default() {
+        let overrides = HashMap::new();
+        let cfg = resolve_model_retry_config("gpt-4o", &overrides);
+        assert_eq!(cfg.max_retries, None);
+        assert_eq!(cfg.retry_base_ms, None);
+    }
+
+    #[test]
+    fn resolve_retry_config_wildcard_match() {
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "gpt-4*".to_string(),
+            ModelRetryConfig {
+                max_retries: Some(7),
+                ..Default::default()
+            },
+        );
+        let cfg = resolve_model_retry_config("gpt-4-turbo", &overrides);
+        assert_eq!(cfg.max_retries, Some(7));
+    }
+
+    #[test]
+    fn resolve_retry_config_date_suffix_stripped() {
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "claude-3-opus".to_string(),
+            ModelRetryConfig {
+                max_retries: Some(2),
+                ..Default::default()
+            },
+        );
+        let cfg = resolve_model_retry_config("claude-3-opus-20240229", &overrides);
+        assert_eq!(cfg.max_retries, Some(2));
     }
 }

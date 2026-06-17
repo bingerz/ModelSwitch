@@ -141,6 +141,26 @@ pub struct GatewayConfig {
     /// Maximum delay in milliseconds for retry backoff (default 5000).
     #[serde(default = "default_retry_max_ms")]
     pub retry_max_ms: u64,
+    /// Per-model retry overrides. Key = model name (supports exact match and
+    /// wildcard patterns like "gpt-4*", same as model_fallbacks).
+    /// Fields not specified fall back to the global defaults.
+    #[serde(default)]
+    pub model_retry_overrides: HashMap<String, ModelRetryConfig>,
+}
+
+/// Per-model retry configuration overrides.
+/// Any field set to `None` falls back to the global gateway default.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModelRetryConfig {
+    /// Override the global max_retries for this model.
+    #[serde(default)]
+    pub max_retries: Option<u32>,
+    /// Override the global retry_base_ms for this model.
+    #[serde(default)]
+    pub retry_base_ms: Option<u64>,
+    /// Override the global retry_max_ms for this model.
+    #[serde(default)]
+    pub retry_max_ms: Option<u64>,
 }
 
 /// Privacy guardrail configuration for the sanitizer middleware.
@@ -380,6 +400,7 @@ impl Default for GatewayConfig {
             provider_budgets: HashMap::new(),
             retry_base_ms: default_retry_base_ms(),
             retry_max_ms: default_retry_max_ms(),
+            model_retry_overrides: HashMap::new(),
         }
     }
 }

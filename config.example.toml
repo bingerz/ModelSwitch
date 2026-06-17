@@ -26,6 +26,13 @@ max_retries = 3                               # Max dispatch retries across chan
 retry_base_ms = 100                           # Base delay for exponential backoff in ms (default: 100)
 retry_max_ms = 5000                           # Max delay cap for exponential backoff in ms (default: 5000)
 
+# Per-model retry overrides. Key supports exact match and wildcard patterns.
+# Fields not specified fall back to global defaults.
+# [gateway.model_retry_overrides."gpt-4*"]
+# max_retries = 5
+# retry_base_ms = 200
+# retry_max_ms = 10000
+
 # ── Timeouts ─────────────────────────────────────────────────────────
 # Overall per-request deadline in seconds. None = 120s default.
 # request_timeout_secs = 120

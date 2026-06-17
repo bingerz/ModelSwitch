@@ -184,6 +184,7 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
             routing_strategy: "weighted_random".to_string(),
             retry_base_ms: config.gateway.retry_base_ms,
             retry_max_ms: config.gateway.retry_max_ms,
+            model_retry_overrides: HashMap::new(),
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),

@@ -29,6 +29,7 @@ pub struct GatewayParams {
     pub routing_strategy: String,
     pub retry_base_ms: u64,
     pub retry_max_ms: u64,
+    pub model_retry_overrides: HashMap<String, crate::config::ModelRetryConfig>,
 }
 
 /// Router state (session affinity, active request tracking, latency tracking).

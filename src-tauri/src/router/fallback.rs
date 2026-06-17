@@ -60,7 +60,7 @@ pub fn resolve_fallback_chain(
 
 /// Strip a trailing date-like suffix from a model name.
 /// Matches patterns like `-20240229` (8 digits) or `-0613` (4-8 digits).
-fn strip_date_suffix(model: &str) -> Option<String> {
+pub(crate) fn strip_date_suffix(model: &str) -> Option<String> {
     // Look for trailing `-\d{4,8}` at the end
     let dash_pos = model.rfind('-')?;
     let suffix = &model[dash_pos + 1..];
