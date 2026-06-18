@@ -9,6 +9,7 @@ import { CostDashboard } from "./components/CostDashboard";
 import { QuotaPanel } from "./components/QuotaPanel";
 import { McpServersPanel } from "./components/McpServersPanel";
 import { VirtualKeysPanel } from "./components/VirtualKeysPanel";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { QuotaProvider } from "./hooks/useQuota";
 
 type TabId = "channels" | "quota" | "logs" | "status" | "cost" | "mcp" | "virtualKeys";
@@ -127,7 +128,9 @@ export default function App() {
   return (
     <ToastProvider>
       <QuotaProvider>
-        <AppInner />
+        <ErrorBoundary>
+          <AppInner />
+        </ErrorBoundary>
       </QuotaProvider>
     </ToastProvider>
   );
