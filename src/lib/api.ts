@@ -125,13 +125,29 @@ export interface QuotaInfo {
   error: string | null;
 }
 
+/** Backend PaginatedResponse<T> envelope: `{ data, total, offset, limit }` */
+interface PaginatedEnvelope<T> {
+  data: T;
+  total: number;
+  offset: number;
+  limit: number;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
-  return res.json();
+  const json = await res.json();
+  // Auto-unwrap ApiResponse<T> envelope used by all admin endpoints
+  if (json && typeof json === "object" && "ok" in json && "data" in json) {
+    if (!json.ok) {
+      throw new Error(json.error?.message ?? "Unknown API error");
+    }
+    return json.data as T;
+  }
+  return json as T;
 }
 
 export interface UpdateChannelData {
@@ -291,8 +307,14 @@ export const api = {
     request<{ status: string; circuit_open_until: string | null }>(
       `/api/channels/${id}/status`
     ),
-  logs: (offset = 0, limit = 50) =>
-    request<DispatchLog[]>(`/api/logs?offset=${offset}&limit=${limit}`),
+  logs: async (offset = 0, limit = 50): Promise<DispatchLog[]> => {
+    const res = await fetch(`${API_BASE}/api/logs?offset=${offset}&limit=${limit}`, {
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    const json: PaginatedEnvelope<DispatchLog[]> = await res.json();
+    return json.data;
+  },
   stats: () => request<DispatchStats>("/api/stats"),
   costStats: () => request<CostStats>("/api/stats/cost"),
   quota: () => request<QuotaInfo[]>("/api/quota"),
