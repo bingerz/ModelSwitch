@@ -8,6 +8,7 @@ import {
   type UpdateMcpServerData,
 } from "../lib/api";
 import { useToast } from "./Toast";
+import "../styles/pages-enhanced.css";
 
 // ─── Status Helpers ─────────────────────────────────────
 
@@ -183,7 +184,12 @@ export function McpServersPanel() {
   };
 
   if (loading) {
-    return <div className="panel-loading">Loading MCP servers...</div>;
+    return (
+      <div className="panel-loading-enhanced">
+        <div className="spinner" />
+        <span>Loading MCP servers...</span>
+      </div>
+    );
   }
 
   return (
@@ -206,7 +212,11 @@ export function McpServersPanel() {
 
       {servers.length === 0 && !showAddForm ? (
         <div className="empty-state">
-          No MCP servers configured. Click "Add Server" to create one.
+          <div className="empty-state-icon">🔌</div>
+          <div className="empty-state-title">No MCP servers configured</div>
+          <div className="empty-state-description">
+            Add an MCP server to enable tool injection for LLM requests. Supports stdio-based servers with custom commands and environment variables.
+          </div>
         </div>
       ) : (
         <div className="mcp-server-list">

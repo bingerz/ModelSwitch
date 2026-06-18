@@ -7,6 +7,7 @@ import {
   type UpdateVirtualKeyData,
 } from "../lib/api";
 import { useToast } from "./Toast";
+import "../styles/pages-enhanced.css";
 
 // ─── Formatting Helpers ─────────────────────────────────
 
@@ -142,7 +143,12 @@ export function VirtualKeysPanel() {
   };
 
   if (loading) {
-    return <div className="panel-loading">Loading virtual keys...</div>;
+    return (
+      <div className="panel-loading-enhanced">
+        <div className="spinner" />
+        <span>Loading virtual keys...</span>
+      </div>
+    );
   }
 
   return (
@@ -179,9 +185,36 @@ export function VirtualKeysPanel() {
         />
       )}
 
+      {/* Summary stat cards */}
+      {keys.length > 0 && (
+        <div className="vk-summary-grid">
+          <div className="stat-card">
+            <span className="stat-card-icon">🔑</span>
+            <div className="stat-value">{keys.length}</div>
+            <div className="stat-label">Total Keys</div>
+          </div>
+          <div className="stat-card">
+            <span className="stat-card-icon">✅</span>
+            <div className="stat-value">{keys.filter((k) => k.enabled).length}</div>
+            <div className="stat-label">Active Keys</div>
+          </div>
+          <div className="stat-card">
+            <span className="stat-card-icon">💰</span>
+            <div className="stat-value">
+              {formatCents(keys.reduce((sum, k) => sum + k.spend.this_month.cents, 0))}
+            </div>
+            <div className="stat-label">Spend This Month</div>
+          </div>
+        </div>
+      )}
+
       {keys.length === 0 && !showAddForm ? (
         <div className="empty-state">
-          No virtual keys configured. Click "Add Key" to create one.
+          <div className="empty-state-icon">🔑</div>
+          <div className="empty-state-title">No virtual keys configured</div>
+          <div className="empty-state-description">
+            Create virtual keys to distribute access with per-key budgets and rate limits. Click "Add Key" to get started.
+          </div>
         </div>
       ) : (
         <div className="vk-list">

@@ -1,0 +1,51 @@
+/* ─── Enhanced Loading Spinner ─── */
+
+.panel-loading-enhanced {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-10) var(--space-8);
+  gap: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ─── Stat Card Icon ─── */
+
+.stat-card-icon {
+  font-size: 1.5rem;
+  margin-bottom: var(--space-2);
+  display: block;
+  line-height: 1;
+}
+
+/* ─── Cost Summary Grid (4 columns for 4 stat cards) ─── */
+
+.cost-summary-grid {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+/* ─── Virtual Keys Summary Grid ─── */
+
+.vk-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
