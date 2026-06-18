@@ -1,0 +1,136 @@
+/* ─── Log Viewer ─── */
+
+/* Filter bar row: filter buttons + search input */
+.log-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.log-filter-btn {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease);
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.log-filter-btn:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.log-filter-btn.active {
+  background: var(--color-accent);
+  color: white;
+  border-color: var(--color-accent);
+}
+
+.log-filter-btn .badge {
+  margin-left: var(--space-1);
+  font-weight: 600;
+}
+
+/* Search input alongside filter buttons */
+.log-search-input {
+  margin-left: auto;
+  min-width: 180px;
+  max-width: 260px;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  outline: none;
+  transition: border-color var(--duration-fast) var(--ease);
+  height: 30px;
+}
+
+.log-search-input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+
+.log-search-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* Summary stats bar */
+.log-summary-stats {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+.log-summary-stat {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.log-summary-stat-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.log-summary-stat-value.success-color {
+  color: var(--color-success);
+}
+
+.log-summary-stat-value.danger-color {
+  color: var(--color-danger);
+}
+
+.log-summary-stat-divider {
+  width: 1px;
+  height: 14px;
+  background: var(--color-border);
+}
+
+/* Color-coded table rows */
+
+.log-table tr.log-row-success {
+  border-left: 3px solid var(--color-success);
+}
+
+.log-table tr.log-row-failure {
+  border-left: 3px solid var(--color-danger);
+  background: var(--color-danger-soft);
+}
+
+.log-table tr.log-row-failure td {
+  background: transparent;
+}
+
+/* Override the base table hover to add elevation */
+.log-table tr:hover td {
+  background: var(--color-surface-elevated);
+}
+
+.log-table tr.log-row-failure:hover td {
+  background: var(--color-danger-soft);
+}
+
+/* Relative time helper text */
+.log-time-relative {
+  color: var(--color-text-muted);
+  font-size: 0.65rem;
+  margin-left: var(--space-1);
+}
