@@ -220,6 +220,7 @@ pub(super) async fn try_channel_attempt(
                             .rate_limiter
                             .record(channel.id, estimated_tokens);
                         state.router.active_requests.decrement(channel.id);
+                        state.channel_mgr.mark_circuit_open(channel.id).await;
                         log_attempt_failure(
                             &state.logger,
                             current_model,

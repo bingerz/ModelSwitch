@@ -121,8 +121,6 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             account_group: None,
-            failure_window_start: None,
-            window_failure_count: 0,
             max_concurrent: None,
             api_keys: vec![],
         }

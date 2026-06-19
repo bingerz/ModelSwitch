@@ -266,8 +266,6 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             account_group: None,
-            failure_window_start: None,
-            window_failure_count: 0,
             max_concurrent: None,
             api_keys: vec![],
         }
@@ -330,61 +328,6 @@ mod tests {
     }
 
     // -- Circuit breaker tests ------------------------------------------------
-
-    #[tokio::test]
-    async fn record_failure_opens_circuit_on_threshold() {
-        let manager = make_test_manager();
-        let id = Uuid::new_v4();
-        let channel = make_test_channel(id, "cb-threshold");
-        manager.create(channel).await;
-
-        // Simulate 5 failures within the 5-minute sliding window via
-        // Channel::record_window_failure. The 5th call should signal that
-        // the circuit breaker threshold has been reached.
-        let mut should_open = false;
-        for _ in 0..5 {
-            let mut ch = manager.get(id).await.unwrap();
-            should_open = ch.record_window_failure();
-            manager.update(id, ch).await;
-        }
-        assert!(should_open);
-
-        // Dispatch would then call mark_circuit_open to trip the breaker.
-        manager.mark_circuit_open(id).await;
-
-        let ch = manager.get(id).await.unwrap();
-        assert_eq!(ch.status, ChannelStatus::CircuitOpen);
-        assert!(ch.circuit_open_until.is_some());
-    }
-
-    #[tokio::test]
-    async fn record_failure_resets_window_after_expiry() {
-        let manager = make_test_manager();
-        let id = Uuid::new_v4();
-
-        // Pre-seed the channel with a stale window (6 minutes ago) that
-        // already accumulated 4 failures.
-        let mut channel = make_test_channel(id, "cb-window");
-        channel.failure_window_start = Some(Utc::now() - Duration::minutes(6));
-        channel.window_failure_count = 4;
-        manager.create(channel).await;
-
-        // A new failure after the window expired should reset the window
-        // and start counting from 1.
-        let mut ch = manager.get(id).await.unwrap();
-        let should_open = ch.record_window_failure();
-        manager.update(id, ch).await;
-
-        assert!(
-            !should_open,
-            "window should have reset, not enough failures to open"
-        );
-
-        let ch = manager.get(id).await.unwrap();
-        assert_eq!(ch.window_failure_count, 1);
-        let window_start = ch.failure_window_start.unwrap();
-        assert!(Utc::now() - window_start < Duration::seconds(5));
-    }
 
     #[tokio::test]
     async fn circuit_recovers_after_cooldown() {

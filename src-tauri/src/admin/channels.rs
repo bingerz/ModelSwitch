@@ -27,6 +27,10 @@ pub struct CreateChannelRequest {
     #[serde(default = "default_weight")]
     pub weight: u32,
     pub cost_per_token: Option<f64>,
+    #[serde(default)]
+    pub input_cost_per_mtok: Option<f64>,
+    #[serde(default)]
+    pub output_cost_per_mtok: Option<f64>,
     #[serde(default = "default_credential_type")]
     pub credential_type: String,
     #[serde(default)]
@@ -34,6 +38,16 @@ pub struct CreateChannelRequest {
     pub base_url: String,
     #[serde(default)]
     pub model_mapping: HashMap<String, String>,
+    #[serde(default)]
+    pub cooldown_minutes: Option<u64>,
+    #[serde(default)]
+    pub rpm_limit: Option<u64>,
+    #[serde(default)]
+    pub tpm_limit: Option<u64>,
+    #[serde(default)]
+    pub account_group: Option<String>,
+    #[serde(default)]
+    pub max_concurrent: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,8 +112,8 @@ pub async fn create_channel(
         priority: req.priority,
         weight: req.weight,
         cost_per_token: req.cost_per_token,
-        input_cost_per_mtok: None,
-        output_cost_per_mtok: None,
+        input_cost_per_mtok: req.input_cost_per_mtok,
+        output_cost_per_mtok: req.output_cost_per_mtok,
         credential: Credential {
             cred_type,
             key_ref,
@@ -115,13 +129,11 @@ pub async fn create_channel(
         updated_at: chrono::Utc::now(),
         avg_latency_ms: 0,
         consecutive_failures: 0,
-        cooldown_minutes: None,
-        rpm_limit: None,
-        tpm_limit: None,
-        account_group: None,
-        failure_window_start: None,
-        window_failure_count: 0,
-        max_concurrent: None,
+        cooldown_minutes: req.cooldown_minutes,
+        rpm_limit: req.rpm_limit,
+        tpm_limit: req.tpm_limit,
+        account_group: req.account_group,
+        max_concurrent: req.max_concurrent,
         api_keys: vec![],
     };
 

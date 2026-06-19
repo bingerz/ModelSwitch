@@ -127,12 +127,6 @@ pub struct Channel {
     /// Optional account group tag for multi-account pool management.
     #[serde(default)]
     pub account_group: Option<String>,
-    /// Start timestamp of the current sliding failure window (5-minute window).
-    #[serde(default)]
-    pub failure_window_start: Option<DateTime<Utc>>,
-    /// Failure count within the current sliding window.
-    #[serde(default)]
-    pub window_failure_count: u32,
     /// Maximum concurrent in-flight requests for this channel (None = no limit).
     #[serde(default)]
     pub max_concurrent: Option<u32>,
@@ -224,36 +218,13 @@ impl Channel {
     }
 
     /// Promote a HalfOpen channel to Healthy after a successful dispatch.
-    /// Resets failure counters and sliding window.
+    /// Resets failure counters.
     pub fn recover_to_healthy(&mut self) {
         if self.status == ChannelStatus::HalfOpen {
             self.status = ChannelStatus::Healthy;
             self.consecutive_failures = 0;
-            self.window_failure_count = 0;
-            self.failure_window_start = None;
             self.updated_at = Utc::now();
         }
-    }
-
-    /// Record a failure in the sliding window. Returns true if the failure
-    /// rate exceeds the threshold and the circuit should open.
-    /// Window: 5 minutes, threshold: 5 failures.
-    pub fn record_window_failure(&mut self) -> bool {
-        let now = Utc::now();
-        let window_duration = chrono::Duration::minutes(5);
-
-        // Reset window if expired
-        if self.failure_window_start.is_none()
-            || now - self.failure_window_start.unwrap() > window_duration
-        {
-            self.failure_window_start = Some(now);
-            self.window_failure_count = 0;
-        }
-
-        self.window_failure_count += 1;
-
-        // Open circuit if threshold exceeded within the window
-        self.window_failure_count >= 5
     }
 
     /// Create a new Channel from a ChannelConfig with fresh runtime state.
@@ -290,8 +261,6 @@ impl Channel {
             rpm_limit: c.rpm_limit,
             tpm_limit: c.tpm_limit,
             account_group: c.account_group.clone(),
-            failure_window_start: None,
-            window_failure_count: 0,
             max_concurrent: c.max_concurrent,
             api_keys: c.api_keys.clone(),
         }
