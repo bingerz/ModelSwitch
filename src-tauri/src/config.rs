@@ -139,9 +139,11 @@ pub struct GatewayConfig {
     /// None or 0 = no TTFT timeout (use only the overall request timeout).
     #[serde(default = "default_stream_ttft_timeout_secs")]
     pub stream_ttft_timeout_secs: Option<u64>,
-    /// Number of HTTP client instances in the connection pool (default 4).
-    /// Each client opens a separate TCP connection per HTTP/2 host, so
-    /// increasing this spreads concurrent requests across more connections.
+    /// Number of HTTP client instances in the connection pool.
+    /// Each client maintains a separate TCP connection per host.
+    /// HTTP/2 limits concurrent streams to ~100 per connection.
+    /// Pool size × 100 = max concurrent upstream requests.
+    /// Default: 8 (800 concurrent streams). Increase for higher throughput.
     #[serde(default = "default_http_pool_size")]
     pub http_pool_size: usize,
     /// Per-provider budget limits. Key = provider name (e.g., "openai", "anthropic").
@@ -361,7 +363,7 @@ fn default_stream_ttft_timeout_secs() -> Option<u64> {
     Some(30)
 }
 fn default_http_pool_size() -> usize {
-    4
+    8
 }
 fn default_retry_base_ms() -> u64 {
     100

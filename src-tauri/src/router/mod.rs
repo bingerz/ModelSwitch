@@ -37,14 +37,11 @@ pub async fn select_channel(
 ) -> Option<Channel> {
     let guard = channels.read().await;
 
-    // Recover any expired circuit-open channels and filter by availability + model support
+    // Filter by availability, group, concurrency, and model — then clone + recover
+    // only the surviving candidates. is_available() already accounts for expired
+    // circuit breakers, so recover_if_expired() can safely run after filtering.
     let mut candidates: Vec<Channel> = guard
         .iter()
-        .map(|c| {
-            let mut c = c.clone();
-            c.recover_if_expired();
-            c
-        })
         .filter(|c| c.is_available())
         .filter(|c| {
             // Account group filter: match if channel group equals tag, or
@@ -67,6 +64,11 @@ pub async fn select_channel(
             // Empty mapping = pass-through, supports all models
             // Non-empty mapping = only supports explicitly listed models
             c.model_mapping.is_empty() || c.model_mapping.contains_key(requested_model)
+        })
+        .map(|c| {
+            let mut c = c.clone();
+            c.recover_if_expired();
+            c
         })
         .collect();
 

@@ -52,8 +52,10 @@ retry_max_ms = 5000                           # Max delay cap for exponential ba
 
 # ── HTTP Connection Pool ─────────────────────────────────────────────
 # Number of HTTP client instances. Each opens a separate TCP connection
-# per HTTP/2 host. Increase to spread load across more connections.
-# http_pool_size = 4
+# per HTTP/2 host, supporting ~100 concurrent streams per connection.
+# Pool capacity = pool_size × 100. Default 8 (800 concurrent streams).
+# Increase for higher throughput at 1000+ req/s.
+# http_pool_size = 8
 
 # ── Circuit Breaker ──────────────────────────────────────────────────
 circuit_breaker_minutes = 30                   # Cooldown after channel failure (default: 30)

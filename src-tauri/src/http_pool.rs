@@ -1,7 +1,19 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
+/// Maximum concurrent HTTP/2 streams per client connection.
+/// HTTP/2 servers typically limit this to 100. When the pool client
+/// is at capacity, hyper queues the request internally, adding latency.
+/// Pool capacity = pool_size × HTTP2_MAX_CONCURRENT_STREAMS.
+#[allow(dead_code)] // Documentation constant for pool capacity calculations
+const HTTP2_MAX_CONCURRENT_STREAMS: u8 = 100;
+
 /// A pool of `reqwest::Client` instances to work around HTTP/2 single-connection-per-host limits.
+///
+/// Each client maintains its own TCP connection per host. HTTP/2 multiplexes
+/// requests over each connection but caps concurrent streams at ~100. Pool
+/// capacity = pool_size × 100 concurrent upstream requests. Use `get()` for
+/// least-busy selection across the pool.
 ///
 /// Uses least-busy selection: each client tracks its active request count via an
 /// `Arc<AtomicU8>`. `get()` returns an owned `PooledClient` guard that increments
