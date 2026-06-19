@@ -85,8 +85,9 @@ impl RoutingStrategy for LeastBusyStrategy {
         let mut min_count = u32::MAX;
         let mut least_busy: Vec<&Channel> = Vec::new();
 
+        let snapshot = self.active_requests.snapshot();
         for c in candidates {
-            let count = self.active_requests.get(c.id);
+            let count = snapshot.get(&c.id).copied().unwrap_or(0);
             if count < min_count {
                 min_count = count;
                 least_busy.clear();

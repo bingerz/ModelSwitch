@@ -7,19 +7,6 @@ pub struct ActiveRequests {
     counts: Mutex<HashMap<Uuid, u32>>,
 }
 
-impl Clone for ActiveRequests {
-    fn clone(&self) -> Self {
-        Self {
-            counts: Mutex::new(
-                self.counts
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone(),
-            ),
-        }
-    }
-}
-
 impl ActiveRequests {
     pub fn new() -> Self {
         Self {

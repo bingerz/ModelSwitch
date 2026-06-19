@@ -18,7 +18,7 @@ use strategy::{
 /// Context references needed by the routing layer.
 /// Bundled into a struct to keep `select_channel` signatures manageable.
 pub struct RoutingContext<'a> {
-    pub active_requests: &'a ActiveRequests,
+    pub active_requests: &'a std::sync::Arc<ActiveRequests>,
     pub rate_limiter: &'a Arc<RateLimiter>,
     pub latency_tracker: &'a Arc<LatencyTracker>,
 }
@@ -76,8 +76,8 @@ pub async fn select_channel(
 
     let strategy: Box<dyn RoutingStrategy> = match routing_strategy {
         "latency" => Box::new(LatencyBasedStrategy::new(Arc::clone(ctx.latency_tracker))),
-        "least_busy" => Box::new(LeastBusyStrategy::new(Arc::new(
-            ctx.active_requests.clone(),
+        "least_busy" => Box::new(LeastBusyStrategy::new(std::sync::Arc::clone(
+            ctx.active_requests,
         ))),
         "usage" => Box::new(UsageBasedStrategy::new(Arc::clone(ctx.rate_limiter))),
         "lowest_cost" => Box::new(LowestCostStrategy),
