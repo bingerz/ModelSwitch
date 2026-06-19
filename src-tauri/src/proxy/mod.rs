@@ -19,7 +19,6 @@ mod usage;
 #[cfg(test)]
 mod dispatch_tests;
 
-use crate::channel::Channel;
 use crate::log::DispatchLog;
 use crate::proxy::stream::json_response;
 use axum::response::Response;
@@ -27,14 +26,6 @@ use chrono::Utc;
 use reqwest::StatusCode;
 use serde_json::Value;
 use uuid::Uuid;
-
-/// Build upstream URL for a channel given a path suffix.
-#[allow(dead_code)]
-pub fn upstream_url(channel: &Channel, path: &str) -> String {
-    let base = channel.base_url.trim_end_matches('/');
-    let path = path.trim_start_matches('/');
-    format!("{}/{}", base, path)
-}
 
 /// Build a DispatchLog entry.
 #[allow(clippy::too_many_arguments)]
