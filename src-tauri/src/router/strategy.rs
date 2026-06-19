@@ -38,28 +38,48 @@ impl LatencyBasedStrategy {
 
 impl RoutingStrategy for LatencyBasedStrategy {
     fn select(&self, candidates: &[Channel]) -> Option<Channel> {
-        // Separate candidates into those with latency data and those without
-        let mut with_latency: Vec<(&Channel, u64)> = Vec::new();
-        let mut without_latency: Vec<&Channel> = Vec::new();
+        if candidates.is_empty() {
+            return None;
+        }
+
+        // Tier 1: channels with per-token latency data (most informative)
+        let mut with_per_token: Vec<(&Channel, u64)> = Vec::new();
+        // Tier 2: channels with raw latency only
+        let mut with_raw_latency: Vec<(&Channel, u64)> = Vec::new();
+        // Tier 3: no latency data at all
+        let mut without_data: Vec<&Channel> = Vec::new();
 
         for c in candidates {
-            let lat = self.latency_tracker.avg_latency(c.id);
-            if lat > 0 {
-                with_latency.push((c, lat));
+            if let Some(ms_per_token) = self.latency_tracker.avg_latency_per_token(c.id) {
+                with_per_token.push((c, ms_per_token));
             } else {
-                without_latency.push(c);
+                let lat = self.latency_tracker.avg_latency(c.id);
+                if lat > 0 {
+                    with_raw_latency.push((c, lat));
+                } else {
+                    without_data.push(c);
+                }
             }
         }
 
-        // If we have latency data, sort by latency and pick from top K
-        if !with_latency.is_empty() {
-            with_latency.sort_by_key(|(_, lat)| *lat);
-            let top = &with_latency[..self.top_k.min(with_latency.len())];
+        // Prefer per-token data (most accurate throughput metric)
+        if !with_per_token.is_empty() {
+            with_per_token.sort_by_key(|(_, score)| *score);
+            let top = &with_per_token[..self.top_k.min(with_per_token.len())];
             let idx = rand::rng().random_range(0..top.len());
             return Some(top[idx].0.clone());
         }
 
-        // No latency data — fall back to weighted random
+        // Fall back to raw latency
+        if !with_raw_latency.is_empty() {
+            with_raw_latency.sort_by_key(|(_, score)| *score);
+            let top = &with_raw_latency[..self.top_k.min(with_raw_latency.len())];
+            let idx = rand::rng().random_range(0..top.len());
+            return Some(top[idx].0.clone());
+        }
+
+        // No data — weighted random
+        let _ = without_data;
         super::weighted::weighted_random(candidates)
     }
 }
@@ -263,6 +283,36 @@ mod tests {
         let strategy = LatencyBasedStrategy::new(tracker);
         let selected = strategy.select(&candidates);
         assert!(selected.is_some());
+    }
+
+    #[test]
+    fn latency_strategy_prefers_better_throughput() {
+        let tracker = Arc::new(LatencyTracker::new());
+        // Channel A: 5000ms for 2000 tokens = 2.5ms/token (fast throughput)
+        let fast = make_channel("fast_throughput", 1, 100, 0);
+        // Channel B: 1000ms for 100 tokens = 10ms/token (slow throughput)
+        let slow = make_channel("slow_throughput", 1, 100, 0);
+
+        tracker.record_with_tokens(fast.id, 5000, Some(2000));
+        tracker.record_with_tokens(slow.id, 1000, Some(100));
+
+        let candidates = vec![slow.clone(), fast.clone()];
+        let strategy = LatencyBasedStrategy::new(Arc::clone(&tracker));
+
+        // With top_k=2, both are candidates, but fast should be preferred more often
+        let mut fast_count = 0;
+        for _ in 0..100 {
+            let selected = strategy.select(&candidates).unwrap();
+            if selected.id == fast.id {
+                fast_count += 1;
+            }
+        }
+        // fast (2.5ms/token) is scored lower than slow (10ms/token)
+        // With top_k=2, both are eligible, but fast should be picked more
+        assert!(
+            fast_count > 40,
+            "fast throughput channel should be preferred, got {fast_count}/100"
+        );
     }
 
     #[test]

@@ -519,7 +519,11 @@ pub(super) async fn handle_json_success(
             let _ = bg_channel_mgr
                 .record_latency(bg_channel_id, bg_start.elapsed().as_millis() as u64)
                 .await;
-            bg_latency_tracker.record(bg_channel_id, bg_start.elapsed().as_millis() as u64);
+            bg_latency_tracker.record_with_tokens(
+                bg_channel_id,
+                bg_start.elapsed().as_millis() as u64,
+                bg_output_tokens,
+            );
         });
     }
 
