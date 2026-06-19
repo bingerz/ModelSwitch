@@ -389,10 +389,18 @@ pub(super) async fn handle_json_success(
 
     // Translate response body via provider (pass-through for OpenAI/Anthropic,
     // Gemini-to-OpenAI translation for Gemini).
-    let response_body = if let Ok(v) = serde_json::from_str::<Value>(&body_text) {
-        let translated = provider.transform_response(&v, upstream_model);
-        serde_json::to_string(&translated).unwrap_or(body_text)
+    // Short-circuit for pass-through providers (OpenAI, Anthropic) — avoids
+    // a full JSON parse + Value tree allocation + re-serialize per response.
+    let response_body = if provider.needs_response_transform() {
+        // Only Gemini needs parse + transform + re-serialize
+        if let Ok(v) = serde_json::from_str::<Value>(&body_text) {
+            let translated = provider.transform_response(&v, upstream_model);
+            serde_json::to_string(&translated).unwrap_or(body_text)
+        } else {
+            body_text
+        }
     } else {
+        // Pass-through — use original bytes, no parse/re-serialize
         body_text
     };
     let token_usage = extract_usage(&response_body);

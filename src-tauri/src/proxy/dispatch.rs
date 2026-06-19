@@ -17,9 +17,7 @@ use crate::virtual_key::ReserveResult;
 
 use super::attempt::{try_channel_attempt, AttemptOutcome};
 use super::provider::ProviderAdaptor;
-use super::request_meta::{
-    extract_request_meta, extract_virtual_key_id, is_affinity_valid, RequestMeta,
-};
+use super::request_meta::{extract_request_meta, extract_virtual_key_id, RequestMeta};
 use super::{estimate_tokens, make_log, FailureReason};
 
 /// RAII guard that increments `active_requests` on creation and decrements on drop.
@@ -124,38 +122,39 @@ async fn select_channel_for_attempt(
     ctx: &RoutingContext<'_>,
     account_group: Option<&str>,
 ) -> Option<Channel> {
-    // If an account group tag is specified, narrow the channel pool to
-    // channels that either match the tag or have no group (universal).
-    let effective_channels = if let Some(tag) = account_group {
-        let guard = channels.read().await;
-        let filtered: Vec<Channel> = guard
-            .iter()
-            .filter(|c| c.account_group.as_deref() == Some(tag) || c.account_group.is_none())
-            .cloned()
-            .collect();
-        drop(guard);
-        std::sync::Arc::new(tokio::sync::RwLock::new(filtered))
-    } else {
-        channels.clone()
-    };
-
-    // Try affinity channel first if still valid
+    // Try affinity channel first if still valid.
+    // Check against the original channel list with inline account_group
+    // filtering so we avoid cloning the entire channel list into a new
+    // Vec + Arc<RwLock> on every request.
     if let Some(aff_id) = affinity_channel {
-        if is_affinity_valid(aff_id, &effective_channels, current_model).await {
-            let guard = effective_channels.read().await;
-            let found = guard.iter().find(|c| c.id == aff_id).map(|c| {
-                let mut c = c.clone();
-                c.recover_if_expired();
-                c
+        let guard = channels.read().await;
+        if let Some(ch) = guard.iter().find(|c| c.id == aff_id) {
+            let group_ok = account_group.is_none_or(|tag| {
+                ch.account_group.as_deref() == Some(tag) || ch.account_group.is_none()
             });
-            drop(guard);
-            if let Some(ch) = found {
-                return Some(ch);
+            let model_ok =
+                ch.model_mapping.is_empty() || ch.model_mapping.contains_key(current_model);
+            if group_ok && model_ok && ch.is_available() {
+                let mut c = ch.clone();
+                c.recover_if_expired();
+                drop(guard);
+                return Some(c);
             }
         }
+        drop(guard);
     }
-    // No valid affinity channel — use normal routing
-    router::select_channel(effective_channels, current_model, routing_strategy, ctx).await
+
+    // Normal routing — pass account_group to select_channel for inline
+    // filtering inside the candidate-building filter chain. No more
+    // effective_channels clone.
+    router::select_channel(
+        channels.clone(),
+        current_model,
+        routing_strategy,
+        ctx,
+        account_group,
+    )
+    .await
 }
 
 /// Shared dispatch logic for both OpenAI and Anthropic proxy handlers.

@@ -111,6 +111,7 @@ pub async fn handle_embeddings(
         &resolved_model,
         &state.gateway.routing_strategy,
         &ctx,
+        None,
     )
     .await
     {

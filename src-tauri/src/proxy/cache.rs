@@ -203,14 +203,36 @@ impl RequestCache {
 /// request with otherwise identical bodies would share a cache key but receive
 /// different upstream responses.
 fn canonical_key_material(model: &str, body: &serde_json::Value) -> String {
-    let body_str = if let Some(mut map) = body.as_object().cloned() {
-        map.remove("stream");
-        map.remove("stream_options");
-        serde_json::to_string(&map).unwrap_or_default()
+    let mut buf = String::with_capacity(256);
+    buf.push_str(model);
+    buf.push('\0');
+
+    if let Some(map) = body.as_object() {
+        // Build canonical JSON without cloning the entire map.
+        // Iterates by reference — only individual values are serialized.
+        buf.push('{');
+        let mut first = true;
+        for (key, value) in map {
+            if key == "stream" || key == "stream_options" {
+                continue;
+            }
+            if !first {
+                buf.push(',');
+            }
+            first = false;
+            // Serialize key as JSON string (handles escaping)
+            buf.push_str(&serde_json::to_string(key).unwrap_or_else(|_| "\"\"".into()));
+            buf.push(':');
+            // Serialize value individually — much cheaper than cloning the whole map
+            buf.push_str(&serde_json::to_string(value).unwrap_or_else(|_| "null".into()));
+        }
+        buf.push('}');
     } else {
-        serde_json::to_string(body).unwrap_or_default()
-    };
-    format!("{model}\x00{body_str}")
+        // Non-object body (array, string, etc.) — serialize as-is
+        buf.push_str(&serde_json::to_string(body).unwrap_or_default());
+    }
+
+    buf
 }
 
 /// Default TTL: 5 minutes, max 1000 entries

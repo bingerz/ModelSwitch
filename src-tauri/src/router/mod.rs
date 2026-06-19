@@ -25,11 +25,15 @@ pub struct RoutingContext<'a> {
 
 /// Select a healthy channel using the specified routing strategy.
 /// Falls back to weighted_random for unknown strategy names.
+///
+/// When `account_group` is `Some(tag)`, only channels whose `account_group`
+/// matches the tag or is `None` (universal) are considered.
 pub async fn select_channel(
     channels: SharedChannels,
     requested_model: &str,
     routing_strategy: &str,
     ctx: &RoutingContext<'_>,
+    account_group: Option<&str>,
 ) -> Option<Channel> {
     let guard = channels.read().await;
 
@@ -42,6 +46,15 @@ pub async fn select_channel(
             c
         })
         .filter(|c| c.is_available())
+        .filter(|c| {
+            // Account group filter: match if channel group equals tag, or
+            // channel has no group (universal).
+            if let Some(tag) = account_group {
+                c.account_group.as_deref() == Some(tag) || c.account_group.is_none()
+            } else {
+                true
+            }
+        })
         .filter(|c| {
             // Check concurrent request limit
             if let Some(max) = c.max_concurrent {

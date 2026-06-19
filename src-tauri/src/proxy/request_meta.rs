@@ -18,6 +18,7 @@ pub(super) struct RequestMeta<'a> {
 }
 
 /// Check if an affinity channel is still valid (available, supports model, not circuit-open).
+#[allow(dead_code)]
 pub(super) async fn is_affinity_valid(
     affinity_id: Uuid,
     channels: &crate::channel::SharedChannels,

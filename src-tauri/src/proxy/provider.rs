@@ -81,6 +81,14 @@ pub(crate) trait ProviderAdaptor: Send + Sync {
     fn transform_response(&self, body: &Value, _model: &str) -> Value {
         body.clone()
     }
+
+    /// Whether this provider transforms non-streaming responses.
+    /// When false, the response body is used as-is without parse + re-serialize.
+    /// Default: false (pass-through). Override to true only for providers
+    /// that translate response format (e.g., Gemini to OpenAI).
+    fn needs_response_transform(&self) -> bool {
+        false
+    }
 }
 
 // ── OpenAI ──────────────────────────────────────────────────────────────────
@@ -218,6 +226,10 @@ impl ProviderAdaptor for GeminiAdaptor {
 
     fn transform_response(&self, body: &Value, model: &str) -> Value {
         crate::proxy::translate::gemini_to_openai(body, model)
+    }
+
+    fn needs_response_transform(&self) -> bool {
+        true
     }
 }
 
