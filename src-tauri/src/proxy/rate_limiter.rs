@@ -4,19 +4,26 @@ use std::time::Instant;
 use uuid::Uuid;
 
 const WINDOW_MS: u64 = 60_000; // 1 minute
-const FULL_PRUNE_INTERVAL: u32 = 100;
 
-/// Sliding window for a single metric (tokens or requests).
-struct SlidingWindow {
-    entries: Vec<(u64, u64)>, // (relative_ms, count)
+/// Fixed-size time-bucketed counter for sliding-window rate limiting.
+/// Uses O(bucket_count) memory and per-operation time, independent of request volume.
+struct BucketedWindow {
+    /// Each bucket: (bucket_start_ms, count). Index = (timestamp_ms / bucket_ms) % bucket_count.
+    buckets: Vec<(u64, u64)>,
+    bucket_ms: u64,
+    bucket_count: u64,
     window_ms: u64,
     epoch: Instant,
 }
 
-impl SlidingWindow {
+impl BucketedWindow {
     fn new(window_ms: u64) -> Self {
+        let bucket_ms = 1000.min(window_ms);
+        let bucket_count = (window_ms / bucket_ms).max(1);
         Self {
-            entries: Vec::new(),
+            buckets: vec![(0u64, 0u64); bucket_count as usize],
+            bucket_ms,
+            bucket_count,
             window_ms,
             epoch: Instant::now(),
         }
@@ -28,16 +35,23 @@ impl SlidingWindow {
 
     fn add(&mut self, count: u64) {
         let now = self.now_ms();
-        self.prune(now);
-        self.entries.push((now, count));
+        let bucket_ts = (now / self.bucket_ms) * self.bucket_ms;
+        let idx = ((now / self.bucket_ms) % self.bucket_count) as usize;
+        if self.buckets[idx].0 == bucket_ts {
+            // Same bucket — accumulate.
+            self.buckets[idx].1 += count;
+        } else {
+            // Stale bucket — overwrite.
+            self.buckets[idx] = (bucket_ts, count);
+        }
     }
 
-    /// Sum counts within the window without modifying entries.
-    /// Filtering during summation avoids the O(n) retain() on every check.
+    /// Sum counts from buckets whose start time falls within the active window.
+    /// O(bucket_count) — independent of request volume.
     fn current_total(&self) -> u64 {
         let now = self.now_ms();
         let cutoff = now.saturating_sub(self.window_ms);
-        self.entries
+        self.buckets
             .iter()
             .filter(|(ts, _)| *ts >= cutoff)
             .map(|(_, c)| c)
@@ -46,11 +60,6 @@ impl SlidingWindow {
 
     fn check_and_add(&self, count: u64, limit: u64) -> bool {
         self.current_total() + count <= limit
-    }
-
-    fn prune(&mut self, now: u64) {
-        let cutoff = now.saturating_sub(self.window_ms);
-        self.entries.retain(|(ts, _)| *ts >= cutoff);
     }
 }
 
@@ -66,17 +75,17 @@ impl Default for ChannelLimits {
     }
 }
 
-/// Per-channel sliding windows for TPM and RPM.
+/// Per-channel bucketed windows for TPM and RPM.
 struct ChannelWindows {
-    tpm: SlidingWindow,
-    rpm: SlidingWindow,
+    tpm: BucketedWindow,
+    rpm: BucketedWindow,
 }
 
 impl ChannelWindows {
     fn new() -> Self {
         Self {
-            tpm: SlidingWindow::new(WINDOW_MS),
-            rpm: SlidingWindow::new(WINDOW_MS),
+            tpm: BucketedWindow::new(WINDOW_MS),
+            rpm: BucketedWindow::new(WINDOW_MS),
         }
     }
 }
@@ -84,27 +93,7 @@ impl ChannelWindows {
 /// Internal state behind a single Mutex.
 struct RateLimiterState {
     channels: HashMap<Uuid, (ChannelWindows, ChannelLimits)>,
-    global_tpm_window: SlidingWindow,
-    call_count: u32,
-}
-
-impl RateLimiterState {
-    /// Periodically prune all windows to reclaim memory from dead channels.
-    /// Amortized: O(channels * window_entries) every FULL_PRUNE_INTERVAL calls
-    /// instead of on every check/record.
-    fn maybe_full_prune(&mut self) {
-        self.call_count = self.call_count.wrapping_add(1);
-        if self.call_count.is_multiple_of(FULL_PRUNE_INTERVAL) {
-            for (windows, _) in self.channels.values_mut() {
-                let now = windows.tpm.now_ms();
-                windows.tpm.prune(now);
-                let now = windows.rpm.now_ms();
-                windows.rpm.prune(now);
-            }
-            let now = self.global_tpm_window.now_ms();
-            self.global_tpm_window.prune(now);
-        }
-    }
+    global_tpm_window: BucketedWindow,
 }
 
 /// Per-channel rate limiting for tokens per minute (TPM) and requests per minute (RPM).
@@ -119,8 +108,7 @@ impl RateLimiter {
         Self {
             state: Mutex::new(RateLimiterState {
                 channels: HashMap::new(),
-                global_tpm_window: SlidingWindow::new(WINDOW_MS),
-                call_count: 0,
+                global_tpm_window: BucketedWindow::new(WINDOW_MS),
             }),
             global_tpm_limit,
         }
@@ -148,7 +136,6 @@ impl RateLimiter {
     /// Returns (allowed, reason).
     pub fn check(&self, channel_id: Uuid, estimated_tokens: u64) -> (bool, &'static str) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.maybe_full_prune();
 
         // Check global TPM
         if let Some(global_limit) = self.global_tpm_limit {
@@ -184,7 +171,6 @@ impl RateLimiter {
     /// Record that a request was dispatched to a channel.
     pub fn record(&self, channel_id: Uuid, tokens: u64) {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.maybe_full_prune();
 
         let entry = state
             .channels
@@ -277,7 +263,7 @@ mod tests {
 
     #[test]
     fn window_prunes_old_entries() {
-        let mut window = SlidingWindow::new(100); // 100ms window
+        let mut window = BucketedWindow::new(100); // 100ms window
         window.add(10);
         assert_eq!(window.current_total(), 10);
         window.add(20);
@@ -301,5 +287,28 @@ mod tests {
         assert_eq!(limiter.tpm_limit(ch_id), None);
         limiter.set_channel_tpm_limit(ch_id, 10_000);
         assert_eq!(limiter.tpm_limit(ch_id), Some(10_000));
+    }
+
+    #[test]
+    fn bucketed_window_accumulates_within_same_bucket() {
+        let mut window = BucketedWindow::new(60_000);
+        window.add(10);
+        window.add(20);
+        window.add(30);
+        assert_eq!(window.current_total(), 60);
+    }
+
+    #[test]
+    fn bucketed_window_excludes_expired_data() {
+        // Use a tiny window so data expires quickly
+        let mut window = BucketedWindow::new(50); // 50ms window, bucket_ms=50, 1 bucket
+        window.add(100);
+        assert_eq!(window.current_total(), 100);
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        // After window expires, old data should be excluded
+        assert_eq!(window.current_total(), 0);
+        // New add should work
+        window.add(50);
+        assert_eq!(window.current_total(), 50);
     }
 }
