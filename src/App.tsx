@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { type GwStatus, invokeTauri } from "./lib/api";
 import { ToastProvider, useToast } from "./components/Toast";
-import { ChannelPanel } from "./components/ChannelPanel";
+import { ChannelPanel } from "./components/channel/ChannelPanel";
 import { LogViewer } from "./components/LogViewer";
 import { StatusBar } from "./components/StatusBar";
 import { StatusDashboard } from "./components/StatusDashboard";
