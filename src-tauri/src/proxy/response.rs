@@ -54,7 +54,7 @@ mod tests {
     #[test]
     fn no_fallback_headers_when_trigger_reason_none() {
         let resp = json_response(reqwest::StatusCode::OK, "{}".to_string());
-        let mut resp = inject_passthrough_headers(resp, &[]);
+        let resp = inject_passthrough_headers(resp, &[]);
         // When trigger_reason is not model_fallback, no headers should be set
         // (this is just verifying the guard logic)
         assert!(resp.headers().get("x-modelswitch-fallback-model").is_none());
