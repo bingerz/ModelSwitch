@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import { useToast } from "../Toast";
-import "../styles/pages-enhanced.css";
+import "../../styles/pages-enhanced.css";
 import type { McpServer, McpToolDetail } from "./types";
 import { statusIsRunning } from "./types";
 import { McpServerCard } from "./McpServerCard";
