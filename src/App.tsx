@@ -7,7 +7,7 @@ import { StatusBar } from "./components/StatusBar";
 import { StatusDashboard } from "./components/StatusDashboard";
 import { CostDashboard } from "./components/CostDashboard";
 import { QuotaPanel } from "./components/quota/QuotaPanel";
-import { McpServersPanel } from "./components/McpServersPanel";
+import { McpServersPanel } from "./components/mcp/McpServersPanel";
 import { VirtualKeysPanel } from "./components/VirtualKeysPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ErrorBoundary } from "./components/ErrorBoundary";
