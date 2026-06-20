@@ -5,10 +5,11 @@ import "../../styles/status-dashboard.css";
 import { ActivityChart } from "./ActivityChart";
 import { ChannelHealth } from "./ChannelHealth";
 import { LiveBadge } from "./LiveBadge";
+import { PerformanceCard } from "./PerformanceCard";
 import { QuotaSummary } from "./QuotaSummary";
 import { StatCard } from "./StatCard";
 import { TopEntities } from "./TopEntities";
-import { Activity, CircleCheck, CircleOff, CircleX, DollarSign, RefreshCw, Timer, TriangleAlert, Zap } from "./icons";
+import { RefreshCw, TriangleAlert, Zap } from "./icons";
 import {
   aggregateByChannel,
   aggregateByHour,
@@ -163,7 +164,7 @@ export function StatusDashboard() {
             value={stats ? formatNumber(stats.total_requests) : "0"}
             label="Total Requests"
             accent="blue"
-            size="hero"
+            size="mega"
             sparkline={requestSpark}
             subtitle={`${healthyCount} healthy · ${circuitOpenCount + disabledCount} broken`}
           />
@@ -178,76 +179,18 @@ export function StatusDashboard() {
           />
         </div>
 
-        {/* Secondary stat row: 4 cards */}
-        <div className="dsh-stat-cell">
-          <StatCard
-            icon={CircleCheck}
-            value={stats ? formatNumber(stats.successes) : "0"}
-            label="Successes"
-            accent="green"
-            sparkline={successSpark}
-          />
-        </div>
-        <div className="dsh-stat-cell">
-          <StatCard
-            icon={CircleX}
-            value={stats ? formatNumber(stats.failures) : "0"}
-            label="Failures"
-            accent="red"
-            sparkline={failureSpark}
-          />
-        </div>
-        <div className="dsh-stat-cell">
-          <StatCard
-            icon={Timer}
-            value={stats ? `${Math.round(stats.avg_latency_ms)}ms` : "—"}
-            label="Avg Latency"
-            accent="amber"
-            sparkline={latencySpark}
-          />
-        </div>
-        <div className="dsh-stat-cell">
-          <StatCard
-            icon={DollarSign}
-            value={`$${totalCost.toFixed(2)}`}
-            label="Est. Cost (24h)"
-            accent="blue"
-            sparkline={costSpark}
-            subtitle={`${formatNumber((usage?.total_input_tokens ?? 0) + (usage?.total_output_tokens ?? 0))} tokens`}
-          />
-        </div>
-
-        {/* Channel overview stat row */}
-        <div className="dsh-stat-cell">
-          <StatCard
-            icon={Activity}
-            value={channels.length}
-            label="Total Channels"
-            accent="blue"
-          />
-        </div>
-        <div className="dsh-stat-cell">
-          <StatCard
-            icon={CircleCheck}
-            value={healthyCount}
-            label="Healthy"
-            accent="green"
-          />
-        </div>
-        <div className="dsh-stat-cell">
-          <StatCard
-            icon={TriangleAlert}
-            value={circuitOpenCount}
-            label="Circuit Broken"
-            accent="amber"
-          />
-        </div>
-        <div className="dsh-stat-cell">
-          <StatCard
-            icon={CircleOff}
-            value={disabledCount}
-            label="Disabled"
-            accent="gray"
+        {/* Performance consolidation: 4 metrics in one card */}
+        <div className="dsh-performance-cell">
+          <PerformanceCard
+            successes={stats?.successes ?? 0}
+            failures={stats?.failures ?? 0}
+            avgLatencyMs={stats?.avg_latency_ms ?? null}
+            totalCost={totalCost}
+            totalTokens={(usage?.total_input_tokens ?? 0) + (usage?.total_output_tokens ?? 0)}
+            successSpark={successSpark}
+            failureSpark={failureSpark}
+            latencySpark={latencySpark}
+            costSpark={costSpark}
           />
         </div>
 
@@ -260,6 +203,9 @@ export function StatusDashboard() {
             channels={channels}
             usageByChannel={usageByChannel}
             logs={logs}
+            healthyCount={healthyCount}
+            circuitOpenCount={circuitOpenCount}
+            disabledCount={disabledCount}
           />
         </div>
 

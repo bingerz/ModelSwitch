@@ -871,3 +871,185 @@
   background: var(--color-danger);
   color: white;
 }
+
+/* ─── Mega Hero Card ─── */
+
+.dsh-card-mega {
+  padding: var(--space-6) var(--space-8);
+  background:
+    radial-gradient(ellipse at top right, color-mix(in srgb, var(--stat-accent) 12%, transparent), transparent 60%),
+    linear-gradient(180deg, color-mix(in srgb, var(--stat-accent) 6%, var(--color-surface-elevated)), var(--color-surface-elevated));
+  border-color: color-mix(in srgb, var(--stat-accent) 25%, var(--color-border));
+  min-height: 200px;
+  justify-content: space-between;
+}
+
+.dsh-card-mega::before {
+  height: 4px;
+}
+
+.dsh-stat-value-mega {
+  font-size: 3.5rem;
+  margin-top: var(--space-2);
+}
+
+.dsh-stat-spark-mega {
+  margin-top: var(--space-5);
+  opacity: 0.9;
+}
+
+.dsh-stat-spark-mega svg {
+  width: 100%;
+  max-width: 320px;
+}
+
+/* ─── Performance Card (4 quadrants) ─── */
+
+.dsh-performance-cell {
+  grid-column: span 4;
+}
+
+.dsh-performance-card {
+  padding: var(--space-5) var(--space-6);
+}
+
+.dsh-performance-tokens {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.dsh-performance-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.dsh-performance-quadrant {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--perf-accent, var(--color-accent)) 5%, transparent);
+  --perf-accent: var(--color-accent);
+}
+
+.dsh-performance-quadrant-green { --perf-accent: var(--color-success); }
+.dsh-performance-quadrant-red { --perf-accent: var(--color-danger); }
+.dsh-performance-quadrant-amber { --perf-accent: var(--color-warning); }
+.dsh-performance-quadrant-blue { --perf-accent: var(--color-accent); }
+
+.dsh-performance-quadrant:not(:last-child) {
+  border-right: 1px solid var(--color-border);
+}
+
+.dsh-performance-quadrant-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dsh-performance-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  color: var(--perf-accent);
+}
+
+.dsh-performance-icon-green { color: var(--color-success); }
+.dsh-performance-icon-red { color: var(--color-danger); }
+.dsh-performance-icon-amber { color: var(--color-warning); }
+.dsh-performance-icon-blue { color: var(--color-accent); }
+
+.dsh-performance-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.dsh-performance-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 500;
+}
+
+.dsh-performance-spark {
+  margin-top: var(--space-1);
+  width: 100%;
+}
+
+/* ─── Channel Health pills ─── */
+
+.dsh-health-title-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dsh-health-pills {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.dsh-health-pill {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.dsh-health-pill-success {
+  color: var(--color-success);
+  background: var(--color-success-soft);
+}
+
+.dsh-health-pill-danger {
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+
+.dsh-health-pill-muted {
+  color: var(--color-text-muted);
+  background: var(--color-surface-hover);
+}
+
+/* ─── Responsive: Performance grid collapses to 2x2 ─── */
+
+@media (max-width: 1200px) {
+  .dsh-performance-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .dsh-performance-quadrant:not(:last-child) {
+    border-right: none;
+  }
+  .dsh-performance-quadrant:nth-child(odd) {
+    border-right: 1px solid var(--color-border);
+  }
+}
+
+@media (max-width: 768px) {
+  .dsh-performance-cell,
+  .dsh-performance-grid {
+    grid-template-columns: 1fr;
+  }
+  .dsh-performance-quadrant:not(:last-child) {
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .dsh-stat-value-mega {
+    font-size: 2.5rem;
+  }
+}

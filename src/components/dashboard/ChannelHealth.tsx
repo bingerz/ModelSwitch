@@ -12,6 +12,9 @@ export interface ChannelHealthProps {
     spark: number[];
   }>;
   logs: DispatchLog[];
+  healthyCount?: number;
+  circuitOpenCount?: number;
+  disabledCount?: number;
 }
 
 const STATUS_PRIORITY: Record<string, number> = {
@@ -33,7 +36,10 @@ function errorRate(chId: string, logs: DispatchLog[]): number {
   return (failures / relevant.length) * 100;
 }
 
-export function ChannelHealth({ channels, usageByChannel, logs }: ChannelHealthProps) {
+export function ChannelHealth({
+  channels, usageByChannel, logs,
+  healthyCount, circuitOpenCount, disabledCount,
+}: ChannelHealthProps) {
   const sorted = useMemo(() => {
     return [...channels].sort((a, b) => {
       const pa = STATUS_PRIORITY[a.status] ?? 99;
@@ -60,8 +66,21 @@ export function ChannelHealth({ channels, usageByChannel, logs }: ChannelHealthP
   return (
     <div className="dsh-card dsh-health-card">
       <div className="dsh-card-title-row">
-        <span className="dsh-card-title">Channel Health</span>
-        <span className="dsh-card-count">{channels.length}</span>
+        <div className="dsh-health-title-group">
+          <span className="dsh-card-title">Channel Health</span>
+          <span className="dsh-card-count">{channels.length}</span>
+        </div>
+        <div className="dsh-health-pills">
+          {healthyCount !== undefined && healthyCount > 0 && (
+            <span className="dsh-health-pill dsh-health-pill-success">{healthyCount} healthy</span>
+          )}
+          {circuitOpenCount !== undefined && circuitOpenCount > 0 && (
+            <span className="dsh-health-pill dsh-health-pill-danger">{circuitOpenCount} broken</span>
+          )}
+          {disabledCount !== undefined && disabledCount > 0 && (
+            <span className="dsh-health-pill dsh-health-pill-muted">{disabledCount} disabled</span>
+          )}
+        </div>
       </div>
       <div className="dsh-health-list">
         {sorted.map((ch) => {

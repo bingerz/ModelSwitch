@@ -15,7 +15,7 @@ export interface StatCardProps {
   trend?: "up" | "down" | "flat";
   trendLabel?: string;
   subtitle?: string;
-  size?: "hero" | "regular";
+  size?: "mega" | "hero" | "regular";
 }
 
 export function StatCard({
@@ -29,7 +29,8 @@ export function StatCard({
   subtitle,
   size = "regular",
 }: StatCardProps) {
-  const isHero = size === "hero";
+  const isMega = size === "mega";
+  const isHero = isMega || size === "hero";
   const trendIcon =
     trend === "up" ? TrendingUp : trend === "down" ? TrendingDown : ArrowUpRight;
   const TrendIcon = trendIcon;
@@ -37,13 +38,13 @@ export function StatCard({
   return (
     <div
       className={`dsh-card dsh-card-hover dsh-stat-card dsh-stat-card-${accent} ${
-        isHero ? "dsh-card-hero" : ""
+        isMega ? "dsh-card-mega" : isHero ? "dsh-card-hero" : ""
       }`}
     >
       <span className={`dsh-card-accent-bar dsh-accent-${accent}`} />
       <div className="dsh-stat-header">
         <span className={`dsh-stat-icon-chip dsh-stat-icon-chip-${accent}`}>
-          <Icon size={isHero ? 24 : 18} />
+          <Icon size={isMega ? 28 : isHero ? 24 : 18} />
         </span>
         {trend && trendLabel && (
           <span
@@ -56,17 +57,17 @@ export function StatCard({
           </span>
         )}
       </div>
-      <div className={`dsh-stat-value ${isHero ? "dsh-stat-value-hero" : ""}`}>
+      <div className={`dsh-stat-value ${isMega ? "dsh-stat-value-mega" : isHero ? "dsh-stat-value-hero" : ""}`}>
         {value}
       </div>
       <div className="dsh-stat-label">{label}</div>
       {subtitle && <div className="dsh-stat-subtitle">{subtitle}</div>}
       {sparkline && sparkline.length > 0 && (
-        <div className="dsh-stat-spark">
+        <div className={`dsh-stat-spark ${isMega ? "dsh-stat-spark-mega" : ""}`}>
           <Sparkline
             values={sparkline}
-            width={isHero ? 160 : 100}
-            height={isHero ? 48 : 32}
+            width={isMega ? 240 : isHero ? 160 : 100}
+            height={isMega ? 80 : isHero ? 48 : 32}
             color={`var(--stat-accent, var(--color-accent))`}
           />
         </div>
