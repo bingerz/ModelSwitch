@@ -4,7 +4,7 @@ import { ToastProvider, useToast } from "./components/Toast";
 import { ChannelPanel } from "./components/channel/ChannelPanel";
 import { LogViewer } from "./components/LogViewer";
 import { StatusBar } from "./components/StatusBar";
-import { StatusDashboard } from "./components/StatusDashboard";
+import { StatusDashboard } from "./components/dashboard/StatusDashboard";
 import { CostDashboard } from "./components/CostDashboard";
 import { QuotaPanel } from "./components/quota/QuotaPanel";
 import { McpServersPanel } from "./components/mcp/McpServersPanel";
