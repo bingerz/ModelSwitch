@@ -2078,3 +2078,25 @@ button, a, .clickable {
   border-color: var(--color-accent);
   color: var(--color-accent);
 }
+
+/* ─── Sidebar Group Headers ─── */
+
+.sidebar-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.sidebar-group + .sidebar-group {
+  margin-top: var(--space-4);
+}
+
+.sidebar-group-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  padding: var(--space-1) var(--space-3);
+  margin-bottom: var(--space-1);
+}

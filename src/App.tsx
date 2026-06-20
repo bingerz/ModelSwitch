@@ -12,17 +12,34 @@ import { VirtualKeysPanel } from "./components/VirtualKeysPanel";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { QuotaProvider } from "./hooks/useQuota";
 
-type TabId = "channels" | "quota" | "logs" | "status" | "cost" | "mcp" | "virtualKeys";
+type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "logs" | "cost" | "quota" | "settings";
 type Theme = "light" | "dark";
 
-const TABS: { id: TabId; label: string }[] = [
-  { id: "channels", label: "Channels" },
-  { id: "quota", label: "Quota" },
-  { id: "logs", label: "Logs" },
-  { id: "status", label: "Status" },
-  { id: "cost", label: "Cost" },
-  { id: "mcp", label: "MCP Servers" },
-  { id: "virtualKeys", label: "Virtual Keys" },
+const TAB_GROUPS: { title: string; tabs: { id: TabId; label: string }[] }[] = [
+  {
+    title: "Overview",
+    tabs: [{ id: "dashboard", label: "Dashboard" }],
+  },
+  {
+    title: "Configuration",
+    tabs: [
+      { id: "channels", label: "Channels" },
+      { id: "virtualKeys", label: "Virtual Keys" },
+      { id: "mcp", label: "MCP" },
+    ],
+  },
+  {
+    title: "Monitoring",
+    tabs: [
+      { id: "logs", label: "Logs" },
+      { id: "cost", label: "Cost Analytics" },
+      { id: "quota", label: "Provider Quota" },
+    ],
+  },
+  {
+    title: "System",
+    tabs: [{ id: "settings", label: "Settings" }],
+  },
 ];
 
 function getInitialTheme(): Theme {
@@ -33,7 +50,7 @@ function getInitialTheme(): Theme {
 
 function AppInner() {
   const toast = useToast();
-  const [activeTab, setActiveTab] = useState<TabId>("channels");
+  const [activeTab, setActiveTab] = useState<TabId>("dashboard");
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
 
   useEffect(() => {
@@ -95,14 +112,19 @@ function AppInner() {
         <nav className="sidebar">
           <div className="sidebar-brand">ModelSwitch</div>
           <div className="sidebar-nav">
-            {TABS.map((tab) => (
-              <button
-                key={tab.id}
-                className={`nav-item ${activeTab === tab.id ? "active" : ""}`}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                {tab.label}
-              </button>
+            {TAB_GROUPS.map((group) => (
+              <div key={group.title} className="sidebar-group">
+                <div className="sidebar-group-title">{group.title}</div>
+                {group.tabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    className={`nav-item ${activeTab === tab.id ? "active" : ""}`}
+                    onClick={() => setActiveTab(tab.id)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
           <button className="theme-toggle" onClick={toggleTheme} title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}>
@@ -110,13 +132,14 @@ function AppInner() {
           </button>
         </nav>
         <main className="main">
+          {activeTab === "dashboard" && <StatusDashboard />}
           {activeTab === "channels" && <ChannelPanel />}
-          {activeTab === "quota" && <QuotaPanel />}
-          {activeTab === "logs" && <LogViewer />}
-          {activeTab === "status" && <StatusDashboard />}
-          {activeTab === "cost" && <CostDashboard />}
-          {activeTab === "mcp" && <McpServersPanel />}
           {activeTab === "virtualKeys" && <VirtualKeysPanel />}
+          {activeTab === "mcp" && <McpServersPanel />}
+          {activeTab === "logs" && <LogViewer />}
+          {activeTab === "cost" && <CostDashboard />}
+          {activeTab === "quota" && <QuotaPanel />}
+          {activeTab === "settings" && <div className="panel-loading">Settings page loading...</div>}
         </main>
       </div>
       <StatusBar />
