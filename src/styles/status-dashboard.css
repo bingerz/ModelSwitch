@@ -87,10 +87,12 @@
 
 .dsh-activity-cell {
   grid-column: span 3;
+  align-self: stretch;
 }
 
 .dsh-health-cell {
   grid-column: span 1;
+  align-self: stretch;
 }
 
 .dsh-top-cell {
@@ -304,6 +306,10 @@
   width: 100%;
   height: auto;
   display: block;
+}
+
+.dsh-sparkline-empty {
+  color: var(--color-text-muted);
 }
 
 /* ─── LiveBadge ─── */
@@ -629,7 +635,7 @@
   flex-direction: column;
   gap: 1px;
   margin: calc(-1 * var(--space-2)) calc(-1 * var(--space-1));
-  max-height: 340px;
+  min-height: 200px;
   overflow-y: auto;
   flex: 1;
 }

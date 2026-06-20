@@ -30,11 +30,23 @@ export function Sparkline({
   if (values.length === 0) {
     return (
       <svg
-        className="dsh-sparkline"
+        className="dsh-sparkline dsh-sparkline-empty"
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="none"
         aria-hidden="true"
-      />
+      >
+        <line
+          x1="0"
+          y1={height * 0.65}
+          x2={width}
+          y2={height * 0.65}
+          stroke="currentColor"
+          strokeWidth="1"
+          strokeDasharray="4 4"
+          opacity="0.25"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
     );
   }
 
