@@ -90,6 +90,7 @@ export function ChannelPanel() {
   const { quotas, channels, refresh, loading } = useQuota();
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [overflowOpenId, setOverflowOpenId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "healthy" | "circuit_open" | "disabled">("all");
 
@@ -329,23 +330,41 @@ export function ChannelPanel() {
                         <QuotaBadge quota={quotaMap.get(ch.id)} />
                       </div>
                       <div className="channel-card-actions">
-                        <button className="btn btn-sm" onClick={() => handlePing(ch.id)}>
-                          Ping
-                        </button>
                         <button className="btn btn-sm" onClick={() => setEditingId(ch.id)}>
                           Edit
                         </button>
                         <button className="btn btn-sm" onClick={() => handleToggle(ch)}>
                           {ch.enabled ? "Disable" : "Enable"}
                         </button>
-                        <button
-                          className={`btn btn-sm ${confirmDeleteId === ch.id ? "btn-danger" : ""}`}
-                          style={confirmDeleteId !== ch.id ? { color: "var(--color-danger)" } : undefined}
-                          onClick={() => handleDelete(ch.id)}
-                          onBlur={() => setConfirmDeleteId(null)}
-                        >
-                          {confirmDeleteId === ch.id ? "Confirm?" : "Delete"}
-                        </button>
+                        <div className="channel-actions-overflow-wrapper">
+                          <button
+                            className="btn btn-sm btn-overflow"
+                            onClick={() => setOverflowOpenId(overflowOpenId === ch.id ? null : ch.id)}
+                            title="More actions"
+                          >
+                            {"\u22EF"}
+                          </button>
+                          {overflowOpenId === ch.id && (
+                            <>
+                              <div className="channel-overflow-backdrop" onClick={() => setOverflowOpenId(null)} />
+                              <div className="channel-overflow-menu">
+                                <button
+                                  className="channel-overflow-item"
+                                  onClick={() => { setOverflowOpenId(null); handlePing(ch.id); }}
+                                >
+                                  Ping
+                                </button>
+                                <button
+                                  className={`channel-overflow-item ${confirmDeleteId === ch.id ? "danger-confirm" : "danger"}`}
+                                  onClick={() => handleDelete(ch.id)}
+                                  onBlur={() => setConfirmDeleteId(null)}
+                                >
+                                  {confirmDeleteId === ch.id ? "Confirm Delete?" : "Delete"}
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -580,6 +599,11 @@ function ChannelForm({ onSave }: { onSave: () => void }) {
         credential_value: credentialValue,
         base_url: baseUrl,
         model_mapping: modelMapping,
+        input_cost_per_mtok: inputCostPerMtok ? parseFloat(inputCostPerMtok) : null,
+        output_cost_per_mtok: outputCostPerMtok ? parseFloat(outputCostPerMtok) : null,
+        cooldown_minutes: cooldownMinutes ? parseInt(cooldownMinutes, 10) : null,
+        rpm_limit: rpmLimit ? parseInt(rpmLimit, 10) : null,
+        tpm_limit: tpmLimit ? parseInt(tpmLimit, 10) : null,
       });
       toast.success("Channel created");
       onSave();
@@ -886,7 +910,9 @@ function FormFields({
   apiFormats?: ApiFormat[];
   onApiFormatChange?: (format: ApiFormat) => void;
 }) {
+  const [showAdvanced, setShowAdvanced] = useState(false);
   return (
+    <>
     <div className="form-grid">
       <label className="form-field">
         <span>Name</span>
@@ -919,16 +945,6 @@ function FormFields({
           onChange={(e) => setWeight(Number(e.target.value))}
           min={1}
           max={1000}
-        />
-      </label>
-      <label className="form-field">
-        <span>Cost per 1K tokens ($)</span>
-        <input
-          type="number"
-          step="0.0001"
-          value={costPerToken}
-          onChange={(e) => setCostPerToken(e.target.value)}
-          placeholder="e.g. 0.0015"
         />
       </label>
       {showCredential && (
@@ -976,56 +992,6 @@ function FormFields({
           </label>
         </>
       )}
-      <label className="form-field">
-        <span>Cooldown (minutes)</span>
-        <input
-          type="number"
-          value={cooldownMinutes}
-          onChange={(e) => setCooldownMinutes(e.target.value)}
-          placeholder="default (30)"
-          min={1}
-        />
-      </label>
-      <label className="form-field">
-        <span>Input cost per 1M tokens ($)</span>
-        <input
-          type="number"
-          step="0.0001"
-          value={inputCostPerMtok}
-          onChange={(e) => setInputCostPerMtok(e.target.value)}
-          placeholder="e.g. 0.0015"
-        />
-      </label>
-      <label className="form-field">
-        <span>Output cost per 1M tokens ($)</span>
-        <input
-          type="number"
-          step="0.0001"
-          value={outputCostPerMtok}
-          onChange={(e) => setOutputCostPerMtok(e.target.value)}
-          placeholder="e.g. 0.0075"
-        />
-      </label>
-      <label className="form-field">
-        <span>RPM Limit</span>
-        <input
-          type="number"
-          value={rpmLimit}
-          onChange={(e) => setRpmLimit(e.target.value)}
-          placeholder="default (60)"
-          min={1}
-        />
-      </label>
-      <label className="form-field">
-        <span>TPM Limit</span>
-        <input
-          type="number"
-          value={tpmLimit}
-          onChange={(e) => setTpmLimit(e.target.value)}
-          placeholder="no limit"
-          min={1}
-        />
-      </label>
       {apiFormats && onApiFormatChange && (
         <label className="form-field">
           <span>API Format</span>
@@ -1061,5 +1027,81 @@ function FormFields({
         />
       </div>
     </div>
+
+    <div className="form-advanced-toggle">
+      <button
+        type="button"
+        className="btn btn-sm btn-ghost"
+        onClick={() => setShowAdvanced(!showAdvanced)}
+      >
+        {showAdvanced ? "\u25BC" : "\u25B6"} Advanced Settings
+      </button>
+    </div>
+
+    {showAdvanced && (
+      <div className="form-grid">
+        <label className="form-field">
+          <span>Cost per 1K tokens ($)</span>
+          <input
+            type="number"
+            step="0.0001"
+            value={costPerToken}
+            onChange={(e) => setCostPerToken(e.target.value)}
+            placeholder="e.g. 0.0015"
+          />
+        </label>
+        <label className="form-field">
+          <span>Input cost per 1M tokens ($)</span>
+          <input
+            type="number"
+            step="0.0001"
+            value={inputCostPerMtok}
+            onChange={(e) => setInputCostPerMtok(e.target.value)}
+            placeholder="e.g. 0.0015"
+          />
+        </label>
+        <label className="form-field">
+          <span>Output cost per 1M tokens ($)</span>
+          <input
+            type="number"
+            step="0.0001"
+            value={outputCostPerMtok}
+            onChange={(e) => setOutputCostPerMtok(e.target.value)}
+            placeholder="e.g. 0.0075"
+          />
+        </label>
+        <label className="form-field">
+          <span>Cooldown (minutes)</span>
+          <input
+            type="number"
+            value={cooldownMinutes}
+            onChange={(e) => setCooldownMinutes(e.target.value)}
+            placeholder="default (30)"
+            min={1}
+          />
+        </label>
+        <label className="form-field">
+          <span>RPM Limit</span>
+          <input
+            type="number"
+            value={rpmLimit}
+            onChange={(e) => setRpmLimit(e.target.value)}
+            placeholder="default (60)"
+            min={1}
+          />
+        </label>
+        <label className="form-field">
+          <span>TPM Limit</span>
+          <input
+            type="number"
+            value={tpmLimit}
+            onChange={(e) => setTpmLimit(e.target.value)}
+            placeholder="no limit"
+            min={1}
+          />
+        </label>
+      </div>
+    )}
+    </>
   );
 }
