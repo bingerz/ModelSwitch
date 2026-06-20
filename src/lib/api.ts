@@ -282,6 +282,39 @@ export interface UpdateVirtualKeyData {
   enabled?: boolean;
 }
 
+export interface CacheStats {
+  entries: number;
+  mode: string;
+  hits: number;
+  misses: number;
+  evictions: number;
+  hit_rate_percent: number;
+  total_requests: number;
+}
+
+export interface GatewayInfo {
+  version: string;
+  uptime_seconds: number;
+  uptime_formatted: string;
+  total_channels: number;
+  healthy_channels: number;
+  active_requests: number;
+  cache_entries: number;
+  routing_strategy: string;
+  max_retries: number;
+}
+
+export interface ProviderBudgetEntry {
+  provider: string;
+  daily_budget_cents: number | null;
+  monthly_budget_cents: number | null;
+  spend: {
+    today: { date: string; cents: number };
+    this_month: { month: string; cents: number };
+    total_cents: number;
+  };
+}
+
 export const api = {
   listChannels: () => request<Channel[]>("/api/channels"),
   createChannel: (data: Partial<Channel> & { credential_value: string; credential_type?: string }) =>
@@ -363,4 +396,15 @@ export const api = {
       return res;
     },
   },
+  cacheStats: () => request<CacheStats>("/api/cache/stats"),
+  flushCache: () =>
+    request<{ flushed: boolean; remaining: number }>("/api/cache/flush", {
+      method: "POST",
+    }),
+  reloadConfig: () =>
+    request<{ created: number; updated: number; removed: number }>("/api/config/reload", {
+      method: "POST",
+    }),
+  gatewayInfo: () => request<GatewayInfo>("/api/gateway/info"),
+  providerBudgets: () => request<ProviderBudgetEntry[]>("/api/provider-budgets"),
 };

@@ -9,6 +9,7 @@ import { CostDashboard } from "./components/CostDashboard";
 import { QuotaPanel } from "./components/QuotaPanel";
 import { McpServersPanel } from "./components/McpServersPanel";
 import { VirtualKeysPanel } from "./components/VirtualKeysPanel";
+import { SettingsPanel } from "./components/SettingsPanel";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { QuotaProvider } from "./hooks/useQuota";
 
@@ -139,7 +140,7 @@ function AppInner() {
           {activeTab === "logs" && <LogViewer />}
           {activeTab === "cost" && <CostDashboard />}
           {activeTab === "quota" && <QuotaPanel />}
-          {activeTab === "settings" && <div className="panel-loading">Settings page loading...</div>}
+          {activeTab === "settings" && <SettingsPanel />}
         </main>
       </div>
       <StatusBar />
