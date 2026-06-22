@@ -3,15 +3,7 @@ import { api, type Channel, PRIORITY_TIERS } from "../../lib/api";
 import { useQuota } from "../../hooks/useQuota";
 import type { QuotaInfo } from "../../lib/api";
 import { useToast } from "../Toast";
-import { STATUS_DOT, type ChannelStatus } from "./types";
-import {
-  API_FORMAT_COLORS,
-  API_FORMAT_LABELS,
-  QuotaBadge,
-  formatRecoveryTime,
-  providerBadgeStyle,
-  providerToFormat,
-} from "./ui";
+import { ChannelCard } from "./ChannelCard";
 import { ChannelForm } from "./ChannelForm";
 import { EditChannelForm } from "./EditChannelForm";
 
@@ -231,107 +223,25 @@ export function ChannelPanel() {
                         />
                       );
                     }
-                    const statusKey = (ch.status as ChannelStatus) ?? "disabled";
                     return (
-                      <div
+                      <ChannelCard
                         key={ch.id}
-                        className={`channel-card ${ch.status === "circuit_open" ? "channel-card-warning" : ""} ${!ch.enabled ? "channel-card-disabled" : ""}`}
-                        draggable
+                        channel={ch}
+                        quota={quotaMap.get(ch.id)}
+                        confirmDelete={confirmDeleteId === ch.id}
+                        overflowOpen={overflowOpenId === ch.id}
+                        onEdit={() => setEditingId(ch.id)}
+                        onToggle={() => handleToggle(ch)}
+                        onPing={() => handlePing(ch.id)}
+                        onDelete={() => handleDelete(ch.id)}
+                        onToggleOverflow={() =>
+                          setOverflowOpenId(overflowOpenId === ch.id ? null : ch.id)
+                        }
+                        onCloseOverflow={() => setOverflowOpenId(null)}
+                        onCancelDelete={() => setConfirmDeleteId(null)}
                         onDragStart={() => handleDragStart(ch.id)}
                         onDragEnd={() => setDragId(null)}
-                      >
-                        <div className="channel-card-header">
-                          <div className="channel-card-title">
-                            <span
-                              className={`status-dot ${ch.status === "healthy" ? "healthy" : ""}`}
-                              style={{ background: STATUS_DOT[statusKey] }}
-                            />
-                            <strong>{ch.name}</strong>
-                          </div>
-                          <span
-                            className="channel-provider channel-provider-badge"
-                            style={providerBadgeStyle(ch.provider)}
-                          >
-                            {ch.provider}
-                          </span>
-                          {!ch.enabled && (
-                            <span className="channel-disabled-tag">Disabled</span>
-                          )}
-                          {ch.status === "circuit_open" && (
-                            <span className="channel-circuit-tag">
-                              Circuit Open
-                              {ch.circuit_open_until
-                                ? ` · ${formatRecoveryTime(ch.circuit_open_until)}`
-                                : ""}
-                            </span>
-                          )}
-                        </div>
-                        <div className="channel-card-meta">
-                          <span
-                            className="api-format-card-badge"
-                            style={{ color: API_FORMAT_COLORS[providerToFormat(ch.provider)] }}
-                          >
-                            {API_FORMAT_LABELS[providerToFormat(ch.provider)]}
-                          </span>
-                          <span className="meta-tag">W:{ch.weight}</span>
-                          {Object.keys(ch.model_mapping).length > 0 && (
-                            <span className="meta-tag">
-                              {Object.keys(ch.model_mapping).length} models
-                            </span>
-                          )}
-                          {ch.avg_latency_ms > 0 && (
-                            <span className="meta-tag">
-                              {Math.round(ch.avg_latency_ms)}ms
-                            </span>
-                          )}
-                          <QuotaBadge quota={quotaMap.get(ch.id)} />
-                        </div>
-                        <div className="channel-card-actions">
-                          <button className="btn btn-sm" onClick={() => setEditingId(ch.id)}>
-                            Edit
-                          </button>
-                          <button className="btn btn-sm" onClick={() => handleToggle(ch)}>
-                            {ch.enabled ? "Disable" : "Enable"}
-                          </button>
-                          <div className="channel-actions-overflow-wrapper">
-                            <button
-                              className="btn btn-sm btn-overflow"
-                              onClick={() =>
-                                setOverflowOpenId(overflowOpenId === ch.id ? null : ch.id)
-                              }
-                              title="More actions"
-                            >
-                              {"\u22EF"}
-                            </button>
-                            {overflowOpenId === ch.id && (
-                              <>
-                                <div
-                                  className="channel-overflow-backdrop"
-                                  onClick={() => setOverflowOpenId(null)}
-                                />
-                                <div className="channel-overflow-menu">
-                                  <button
-                                    className="channel-overflow-item"
-                                    onClick={() => {
-                                      setOverflowOpenId(null);
-                                      handlePing(ch.id);
-                                    }}
-                                  >
-                                    Ping
-                                  </button>
-                                  <button
-                                    className={`channel-overflow-item ${confirmDeleteId === ch.id ? "danger-confirm" : "danger"}`}
-                                    onClick={() => handleDelete(ch.id)}
-                                    onBlur={() => setConfirmDeleteId(null)}
-                                  >
-                                    {confirmDeleteId === ch.id ? "Confirm Delete?" : "Delete"}
-                                  </button>
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
+                      />
                     );
                   })}
                 </div>

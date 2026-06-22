@@ -12,6 +12,40 @@ use tokio_stream::StreamExt;
 /// from being held open indefinitely. Generous enough for slow LLM providers.
 const STREAM_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// Translate a Gemini SSE chunk to OpenAI SSE format.
+/// Each `data:` line is parsed as JSON and converted via `gemini_stream_to_openai`.
+/// Non-JSON lines, comments, and `[DONE]` markers are passed through.
+fn translate_gemini_sse_chunk(bytes: &[u8], model: &str) -> Bytes {
+    use crate::proxy::translate::gemini_stream_to_openai;
+    let text = String::from_utf8_lossy(bytes);
+    let mut output = String::new();
+    for line in text.split('\n') {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with(':') {
+            output.push_str(line);
+            output.push('\n');
+            continue;
+        }
+        let json_str = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
+        if json_str == "[DONE]" {
+            output.push_str("data: [DONE]\n\n");
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
+            if let Some(translated) = gemini_stream_to_openai(&v, model) {
+                output.push_str(&translated);
+            } else {
+                output.push_str(line);
+                output.push_str("\n\n");
+            }
+        } else {
+            output.push_str(line);
+            output.push('\n');
+        }
+    }
+    Bytes::from(output)
+}
+
 /// Create an SSE streaming response that accumulates output bytes for
 /// post-stream telemetry and cache insertion.
 ///
@@ -81,34 +115,7 @@ pub fn sse_stream_response_with_telemetry(
 
                 // Translate if needed (must happen per-chunk for real-time delivery)
                 let output_bytes = if translate_gemini {
-                    let text = String::from_utf8_lossy(&bytes);
-                    use crate::proxy::translate::gemini_stream_to_openai;
-                    let mut output = String::new();
-                    for line in text.split('\n') {
-                        let trimmed = line.trim();
-                        if trimmed.is_empty() || trimmed.starts_with(':') {
-                            output.push_str(line);
-                            output.push('\n');
-                            continue;
-                        }
-                        let json_str = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
-                        if json_str == "[DONE]" {
-                            output.push_str("data: [DONE]\n\n");
-                            continue;
-                        }
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
-                            if let Some(translated) = gemini_stream_to_openai(&v, &model) {
-                                output.push_str(&translated);
-                            } else {
-                                output.push_str(line);
-                                output.push_str("\n\n");
-                            }
-                        } else {
-                            output.push_str(line);
-                            output.push('\n');
-                        }
-                    }
-                    Bytes::from(output)
+                    translate_gemini_sse_chunk(&bytes, &model)
                 } else {
                     bytes
                 };
@@ -150,39 +157,7 @@ pub fn sse_stream_response_with_telemetry(
                             // path accumulated raw upstream bytes instead of
                             // translated output for Gemini streams.
                             let drain_output = if translate_gemini {
-                                let text = String::from_utf8_lossy(&bytes);
-                                use crate::proxy::translate::gemini_stream_to_openai;
-                                let mut output = String::new();
-                                for line in text.split('\n') {
-                                    let trimmed = line.trim();
-                                    if trimmed.is_empty() || trimmed.starts_with(':') {
-                                        output.push_str(line);
-                                        output.push('\n');
-                                        continue;
-                                    }
-                                    let json_str =
-                                        trimmed.strip_prefix("data: ").unwrap_or(trimmed);
-                                    if json_str == "[DONE]" {
-                                        output.push_str("data: [DONE]\n\n");
-                                        continue;
-                                    }
-                                    if let Ok(v) =
-                                        serde_json::from_str::<serde_json::Value>(json_str)
-                                    {
-                                        if let Some(translated) =
-                                            gemini_stream_to_openai(&v, &model)
-                                        {
-                                            output.push_str(&translated);
-                                        } else {
-                                            output.push_str(line);
-                                            output.push_str("\n\n");
-                                        }
-                                    } else {
-                                        output.push_str(line);
-                                        output.push('\n');
-                                    }
-                                }
-                                Bytes::from(output)
+                                translate_gemini_sse_chunk(&bytes, &model)
                             } else {
                                 bytes
                             };

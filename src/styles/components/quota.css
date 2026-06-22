@@ -1,0 +1,369 @@
+/* ─── Quota Panel ─── */
+
+.quota-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+}
+
+.quota-filter-bar {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.quota-filter-btn {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease);
+  font-family: inherit;
+}
+
+.quota-filter-btn:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.quota-filter-btn.active {
+  background: var(--color-accent);
+  color: white;
+  border-color: var(--color-accent);
+}
+
+.quota-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--space-4);
+}
+
+.quota-card {
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
+  transition: border-color var(--duration-fast) var(--ease), box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.quota-card:hover {
+  border-color: var(--color-border-hover);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15), 0 2px 4px rgba(0, 0, 0, 0.12);
+  transform: translateY(-1px);
+}
+
+[data-theme="light"] .quota-card {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .quota-card:hover {
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.06), 0 2px 4px rgba(0, 0, 0, 0.04);
+}
+
+.quota-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-3);
+}
+
+.quota-card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.quota-card-title strong {
+  font-size: var(--text-sm);
+}
+
+.quota-provider {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.quota-source-badge {
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-hover);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.quota-balance-section {
+  margin-bottom: var(--space-3);
+}
+
+.quota-balance-value {
+  margin-bottom: var(--space-2);
+}
+
+.quota-limit {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.quota-progress-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-border);
+  overflow: hidden;
+  margin-bottom: var(--space-2);
+}
+
+.quota-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+
+.quota-usage-text {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.quota-items {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  margin-bottom: var(--space-2);
+}
+
+.quota-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.quota-item-label {
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.quota-item-value {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+.quota-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  margin-bottom: var(--space-2);
+}
+
+.quota-group {
+  display: grid;
+  grid-template-columns: 48px 1fr 40px;
+  gap: var(--space-2);
+  align-items: center;
+  font-size: var(--text-xs);
+}
+
+.quota-group-window {
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.quota-group-bar-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.quota-group-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+
+.quota-group-value {
+  text-align: right;
+  font-size: var(--text-xs);
+}
+
+.quota-group-resets {
+  grid-column: 1 / -1;
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+}
+
+.quota-ratelimit {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-2);
+}
+
+.quota-rl-item {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.quota-rl-label {
+  font-weight: 600;
+}
+
+.quota-rl-time {
+  margin-left: auto;
+  font-size: 0.65rem;
+}
+
+/* Token usage section */
+.quota-proxy-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.quota-section-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 var(--space-2);
+  color: var(--color-text-muted);
+}
+.quota-section-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+}
+.quota-section-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+.quota-tokens-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.75rem;
+}
+.quota-tokens-row-sub {
+  opacity: 0.7;
+}
+.quota-tokens-label {
+  color: var(--color-text-muted);
+  min-width: 60px;
+}
+.quota-tokens-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+.quota-cache-pct {
+  color: var(--color-success);
+  font-size: 0.65rem;
+}
+
+.quota-no-data {
+  padding: var(--space-4);
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.quota-expires {
+  font-size: 0.65rem;
+  color: var(--color-text-muted);
+  margin-top: var(--space-2);
+}
+
+.quota-updated {
+  font-size: 0.6rem;
+  color: var(--color-text-muted);
+  margin-top: var(--space-1);
+  opacity: 0.7;
+}
+
+.quota-card-error {
+  border-color: var(--color-danger);
+  opacity: 0.85;
+}
+
+.quota-card-error:hover {
+  border-color: var(--color-danger);
+  opacity: 1;
+}
+
+.quota-card-pending {
+  border-style: dashed;
+  opacity: 0.6;
+}
+
+.quota-card-pending:hover {
+  opacity: 0.8;
+}
+
+.quota-hint {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  background: var(--color-surface-hover);
+  border-radius: var(--radius-sm);
+  line-height: 1.5;
+}
+
+.quota-error {
+  font-size: var(--text-xs);
+  color: var(--color-danger);
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  background: var(--color-danger-soft);
+  border-radius: var(--radius-sm);
+}
+
+.quota-empty {
+  text-align: center;
+  padding: var(--space-8) var(--space-4);
+  color: var(--color-text-muted);
+}
+
+.quota-empty-icon {
+  font-size: 2rem;
+  margin-bottom: var(--space-3);
+}
+
+.quota-empty p {
+  max-width: 400px;
+  margin: 0 auto;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+/* ─── Status Bar Quota ─── */
+
+.status-bar-quota {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.status-bar-quota-label {
+  font-size: 0.6rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+

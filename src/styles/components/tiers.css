@@ -1,0 +1,115 @@
+/* ─── Tier Drag Columns ─── */
+.drag-hint {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-4);
+}
+
+.tiers-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.tier-column {
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-5);
+  min-height: 60px;
+  transition: border-color var(--duration-fast) var(--ease);
+}
+
+.tier-column[data-priority="1"] {
+  border-left-color: var(--color-success);
+}
+
+.tier-column[data-priority="2"] {
+  border-left-color: var(--color-accent);
+}
+
+.tier-column[data-priority="3"] {
+  border-left-color: var(--color-warning);
+}
+
+.tier-column.tier-drop-target {
+  border-style: dashed;
+  border-left-style: dashed;
+}
+
+.tier-column.tier-drop-target:hover {
+  border-color: var(--color-accent);
+  border-left-color: var(--color-accent);
+}
+
+.tier-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tier-label {
+  font-weight: 700;
+  font-size: var(--text-sm);
+}
+
+.tier-desc {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.tier-count {
+  font-size: var(--text-xs);
+  background: var(--color-surface-hover);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  margin-left: auto;
+}
+
+.tier-channels {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--space-3);
+}
+
+.tier-empty {
+  text-align: center;
+  padding: var(--space-6) var(--space-4);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  margin-top: var(--space-1);
+}
+
+.channel-card[draggable="true"] {
+  cursor: grab;
+}
+
+.channel-card[draggable="true"]:active {
+  cursor: grabbing;
+  opacity: 0.7;
+}
+
+.channel-provider {
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-surface-hover);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+}
+
+.channel-disabled-tag {
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-danger-soft);
+  border-radius: var(--radius-sm);
+  color: var(--color-danger);
+  font-weight: 500;
+}
+

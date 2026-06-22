@@ -40,22 +40,9 @@ use tower_http::trace::TraceLayer;
 /// Callable from both Tauri setup and CLI mode.
 /// If `config_path` is provided, loads config from that path instead of the default.
 pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> GatewayHandles {
-    // Initialize tracing (no-op if already initialized, e.g. by CLI main)
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
-        )
-        .try_init();
-
-    // Load config
     let watcher_config_path = config_path.clone();
-    let config = match config_path {
-        Some(path) => AppConfig::load_from(path).unwrap_or_else(|e| {
-            eprintln!("Failed to load config: {e}");
-            std::process::exit(1);
-        }),
-        None => AppConfig::load().unwrap_or_default(),
-    };
+    let (config, http_pool) = build_infra(config_path);
+
     let port = config.gateway.port;
     let host = config.gateway.host.clone();
     let max_retries = config.gateway.max_retries;
@@ -63,24 +50,6 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     let context_window_fallbacks = config.gateway.context_window_fallbacks.clone();
     let model_aliases = config.gateway.model_aliases.clone();
     let routing_strategy = config.gateway.routing_strategy.clone();
-
-    // Build HTTP connection pool — multiple reqwest::Client instances to work around
-    // HTTP/2 single-connection-per-host limits under high concurrency.
-    let pool_size = config.gateway.http_pool_size.max(1);
-    let http_pool = crate::http_pool::HttpPool::new(pool_size, || {
-        reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(
-                config.gateway.http_timeout_secs,
-            ))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .read_timeout(std::time::Duration::from_secs(300))
-            .pool_idle_timeout(std::time::Duration::from_secs(90))
-            .pool_max_idle_per_host(20)
-            .tcp_keepalive(std::time::Duration::from_secs(60))
-            .tcp_nodelay(true)
-    })
-    .expect("Failed to build HTTP client pool");
-    tracing::info!(pool_size, "HTTP connection pool created");
 
     // Initialize channel manager and logger
     let credential_store = create_credential_store();
@@ -106,9 +75,6 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     let quota_store = Arc::new(QuotaStore::new());
     let virtual_key_store = Arc::new(VirtualKeyStore::new());
     let provider_budget_store = Arc::new(ProviderBudgetStore::new());
-    let quota_registry = Arc::new(QuotaProviderRegistry::new(
-        quota::collectors::default_registry(),
-    ));
     let in_flight = Arc::new(InFlightRequests::new());
 
     // Build MCP manager and load server configs (does NOT auto-start servers)
@@ -214,15 +180,71 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         started_at: std::time::Instant::now(),
     });
 
+    spawn_persistence_tasks(&state);
+
+    spawn_background_services(&state, &config);
+
+    spawn_config_watcher(&state, &watcher_config_path);
+    GatewayHandles {
+        state,
+        host,
+        port,
+        drain_timeout_secs: config.gateway.drain_timeout_secs,
+    }
+}
+
+/// Initialize tracing, load config, and build the HTTP connection pool.
+fn build_infra(
+    config_path: Option<std::path::PathBuf>,
+) -> (AppConfig, crate::http_pool::HttpPool) {
+    // Initialize tracing (no-op if already initialized, e.g. by CLI main)
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
+        .try_init();
+
+    // Load config
+    let config = match config_path {
+        Some(path) => AppConfig::load_from(path).unwrap_or_else(|e| {
+            eprintln!("Failed to load config: {e}");
+            std::process::exit(1);
+        }),
+        None => AppConfig::load().unwrap_or_default(),
+    };
+
+    // Build HTTP connection pool — multiple reqwest::Client instances to work around
+    // HTTP/2 single-connection-per-host limits under high concurrency.
+    let pool_size = config.gateway.http_pool_size.max(1);
+    let http_pool = crate::http_pool::HttpPool::new(pool_size, || {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(
+                config.gateway.http_timeout_secs,
+            ))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .read_timeout(std::time::Duration::from_secs(300))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .pool_max_idle_per_host(20)
+            .tcp_keepalive(std::time::Duration::from_secs(60))
+            .tcp_nodelay(true)
+    })
+    .expect("Failed to build HTTP client pool");
+    tracing::info!(pool_size, "HTTP connection pool created");
+
+    (config, http_pool)
+}
+
+/// Spawn tasks that load persisted state and periodically save it to disk.
+fn spawn_persistence_tasks(state: &Arc<AppState>) {
     // Load persisted dispatch logs at startup
-    let boot_logger = Arc::clone(&logger);
+    let boot_logger = Arc::clone(&state.logger);
     spawn_bg(async move {
         boot_logger.load_from_file().await;
     });
 
     // Load persisted quota data (token usage survives restarts)
     {
-        let boot_quota = Arc::clone(&quota_store);
+        let boot_quota = Arc::clone(&state.billing.quota_store);
         spawn_bg(async move {
             boot_quota.load_from_file().await;
         });
@@ -230,7 +252,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
 
     // Periodic quota persistence (every 60s)
     {
-        let persist_quota = Arc::clone(&quota_store);
+        let persist_quota = Arc::clone(&state.billing.quota_store);
         spawn_bg(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
@@ -242,7 +264,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
 
     // Load persisted virtual keys (so keys + spend survive restarts)
     {
-        let boot_vk = Arc::clone(&virtual_key_store);
+        let boot_vk = Arc::clone(&state.billing.virtual_key_store);
         spawn_bg(async move {
             if let Err(e) = boot_vk.load().await {
                 tracing::warn!(error = %e, "Failed to load virtual keys");
@@ -255,7 +277,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
 
     // Periodic virtual key persistence (every 60s)
     {
-        let persist_vk = Arc::clone(&virtual_key_store);
+        let persist_vk = Arc::clone(&state.billing.virtual_key_store);
         spawn_bg(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
@@ -269,7 +291,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
 
     // Load persisted provider budget spend (so limits + spend survive restarts)
     {
-        let boot_pb = Arc::clone(&provider_budget_store);
+        let boot_pb = Arc::clone(&state.billing.provider_budgets);
         spawn_bg(async move {
             if let Err(e) = boot_pb.load().await {
                 tracing::warn!(error = %e, "Failed to load provider budgets");
@@ -281,7 +303,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
 
     // Periodic provider budget persistence (every 60s)
     {
-        let persist_pb = Arc::clone(&provider_budget_store);
+        let persist_pb = Arc::clone(&state.billing.provider_budgets);
         spawn_bg(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
@@ -292,22 +314,27 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             }
         });
     }
+}
 
+/// Spawn background services: health checker, quota poller, session affinity cleanup, cache sweep.
+fn spawn_background_services(state: &Arc<AppState>, config: &AppConfig) {
     // Start background health checker
     if config.gateway.health_check_enabled {
-        let hc_mgr = Arc::clone(&channel_mgr);
-        let hc_client = http_pool.first().clone();
+        let hc_mgr = Arc::clone(&state.channel_mgr);
+        let hc_client = state.http_pool.first().clone();
         let hc_interval = config.gateway.health_check_interval_secs;
         health::start_health_checker(hc_mgr, hc_interval, hc_client);
     }
 
     // Start background quota poller
     {
-        let qp_mgr = Arc::clone(&channel_mgr);
-        let qp_store = Arc::clone(&quota_store);
-        let qp_client = http_pool.first().clone();
+        let qp_mgr = Arc::clone(&state.channel_mgr);
+        let qp_store = Arc::clone(&state.billing.quota_store);
+        let qp_client = state.http_pool.first().clone();
         let qp_interval = config.gateway.quota_poll_interval_secs;
-        let qp_registry = Arc::clone(&quota_registry);
+        let qp_registry = Arc::new(QuotaProviderRegistry::new(
+            quota::collectors::default_registry(),
+        ));
         // Build per-channel quota config map
         let qp_configs: std::collections::HashMap<String, config::QuotaConfig> = config
             .channels
@@ -341,7 +368,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     // Periodic cache sweep — bulk-evict expired entries every 60s so that
     // `get()` only needs a lazy per-key TTL check.
     {
-        let sweep_cache = Arc::clone(&request_cache);
+        let sweep_cache = Arc::clone(&state.cache.request_cache);
         spawn_bg(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(60)).await;
@@ -349,23 +376,22 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             }
         });
     }
+}
 
+/// Start the hot config reload watcher.
+fn spawn_config_watcher(state: &Arc<AppState>, watcher_config_path: &Option<std::path::PathBuf>) {
     // Start hot config reload watcher
-    let watcher_path = watcher_config_path.or_else(|| AppConfig::config_path().ok());
+    let watcher_path = watcher_config_path
+        .clone()
+        .or_else(|| AppConfig::config_path().ok());
     if let Some(path) = watcher_path {
         config::watcher::start_config_watcher(
             path,
-            Arc::clone(&channel_mgr),
-            Arc::clone(&mcp_manager),
-            Arc::clone(&rate_limiter),
-            Arc::clone(&payload_rules),
+            Arc::clone(&state.channel_mgr),
+            Arc::clone(&state.mcp.mcp_manager),
+            Arc::clone(&state.limits.rate_limiter),
+            Arc::clone(&state.limits.payload_rules),
         );
-    }
-    GatewayHandles {
-        state,
-        host,
-        port,
-        drain_timeout_secs: config.gateway.drain_timeout_secs,
     }
 }
 

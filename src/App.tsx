@@ -8,7 +8,7 @@ import { StatusDashboard } from "./components/dashboard/StatusDashboard";
 import { CostDashboard } from "./components/CostDashboard";
 import { QuotaPanel } from "./components/quota/QuotaPanel";
 import { McpServersPanel } from "./components/mcp/McpServersPanel";
-import { VirtualKeysPanel } from "./components/VirtualKeysPanel";
+import { VirtualKeysPanel } from "./components/virtualkeys/VirtualKeysPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { MockBadge } from "./components/MockBadge";
