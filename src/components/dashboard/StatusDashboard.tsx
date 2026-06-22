@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type Channel, type DispatchLog, type DispatchStats, type UsageHistory } from "../../lib/api";
 import { useQuota } from "../../hooks/useQuota";
 import "../../styles/status-dashboard.css";
@@ -32,6 +32,7 @@ export function StatusDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [refreshing, setRefreshing] = useState(false);
+  const loadingRef = useRef(true);
   const { totalBalance, channelsWithData, lowBalanceCount, errorCount, totalChannels } =
     useQuota();
 
@@ -48,19 +49,41 @@ export function StatusDashboard() {
       setLogs([...lg].reverse());
       setUsage(us);
       setError(null);
+      if (loadingRef.current) {
+        loadingRef.current = false;
+        setLoading(false);
+      }
       setLastUpdated(new Date());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to fetch dashboard data");
+    } catch {
+      // Only show error if we previously had data (connection lost).
+      // During initial gateway startup, keep showing the loading spinner.
+      if (!loadingRef.current) {
+        setError("Connection lost — retrying...");
+      }
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    const poll = async () => {
+      await fetchData();
+      if (!cancelled) {
+        // Retry faster while waiting for gateway, slower once connected
+        const delay = loadingRef.current ? 1500 : 5000;
+        timeoutId = setTimeout(poll, delay);
+      }
+    };
+
+    poll();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
   }, [fetchData]);
 
   const handleRefresh = () => {
@@ -108,7 +131,7 @@ export function StatusDashboard() {
         </div>
         <div className="dsh-loading">
           <div className="dsh-loading-spinner" />
-          <span className="dsh-loading-text">Loading dashboard data...</span>
+          <span className="dsh-loading-text">Connecting to gateway...</span>
         </div>
       </section>
     );
@@ -194,10 +217,7 @@ export function StatusDashboard() {
           />
         </div>
 
-        {/* Activity + Health row */}
-        <div className="dsh-activity-cell">
-          <ActivityChart logs={logs} />
-        </div>
+        {/* Health + Top entities row */}
         <div className="dsh-health-cell">
           <ChannelHealth
             channels={channels}
@@ -208,10 +228,13 @@ export function StatusDashboard() {
             disabledCount={disabledCount}
           />
         </div>
-
-        {/* Top entities row */}
         <div className="dsh-top-cell">
           <TopEntities channels={channelStats} models={modelStats} />
+        </div>
+
+        {/* Activity row (full width) */}
+        <div className="dsh-activity-cell">
+          <ActivityChart logs={logs} />
         </div>
       </div>
     </section>

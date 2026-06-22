@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { KeyRound, CheckCircle, DollarSign } from "lucide-react";
 import {
   api,
   type VirtualKey,
@@ -7,6 +8,9 @@ import {
   type UpdateVirtualKeyData,
 } from "../lib/api";
 import { useToast } from "./Toast";
+import { StatTile } from "./ui/StatTile";
+import { SectionHeader } from "./ui/SectionHeader";
+import { EmptyState } from "./ui/EmptyState";
 import "../styles/pages-enhanced.css";
 
 // ─── Formatting Helpers ─────────────────────────────────
@@ -153,15 +157,18 @@ export function VirtualKeysPanel() {
 
   return (
     <section className="vk-panel">
-      <div className="panel-header">
-        <h2 className="panel-title">Virtual Keys</h2>
-        <button
-          className="btn btn-primary"
-          onClick={() => setShowAddForm(!showAddForm)}
-        >
-          {showAddForm ? "Cancel" : "+ Add Key"}
-        </button>
-      </div>
+      <SectionHeader
+        title="Virtual Keys"
+        icon={KeyRound}
+        action={
+          <button
+            className="btn btn-primary"
+            onClick={() => setShowAddForm(!showAddForm)}
+          >
+            {showAddForm ? "Cancel" : "+ Add Key"}
+          </button>
+        }
+      />
 
       {createdResponse && (
         <PlaintextBanner
@@ -188,34 +195,33 @@ export function VirtualKeysPanel() {
       {/* Summary stat cards */}
       {keys.length > 0 && (
         <div className="vk-summary-grid">
-          <div className="stat-card">
-            <span className="stat-card-icon">🔑</span>
-            <div className="stat-value">{keys.length}</div>
-            <div className="stat-label">Total Keys</div>
-          </div>
-          <div className="stat-card">
-            <span className="stat-card-icon">✅</span>
-            <div className="stat-value">{keys.filter((k) => k.enabled).length}</div>
-            <div className="stat-label">Active Keys</div>
-          </div>
-          <div className="stat-card">
-            <span className="stat-card-icon">💰</span>
-            <div className="stat-value">
-              {formatCents(keys.reduce((sum, k) => sum + k.spend.this_month.cents, 0))}
-            </div>
-            <div className="stat-label">Spend This Month</div>
-          </div>
+          <StatTile
+            icon={KeyRound}
+            value={keys.length}
+            label="Total Keys"
+            accent="blue"
+          />
+          <StatTile
+            icon={CheckCircle}
+            value={keys.filter((k) => k.enabled).length}
+            label="Active Keys"
+            accent="green"
+          />
+          <StatTile
+            icon={DollarSign}
+            value={formatCents(keys.reduce((sum, k) => sum + k.spend.this_month.cents, 0))}
+            label="Spend This Month"
+            accent="amber"
+          />
         </div>
       )}
 
       {keys.length === 0 && !showAddForm ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">🔑</div>
-          <div className="empty-state-title">No virtual keys configured</div>
-          <div className="empty-state-description">
-            Create virtual keys to distribute access with per-key budgets and rate limits. Click "Add Key" to get started.
-          </div>
-        </div>
+        <EmptyState
+          icon={KeyRound}
+          title="No virtual keys configured"
+          description='Create virtual keys to distribute access with per-key budgets and rate limits. Click "Add Key" to get started.'
+        />
       ) : (
         <div className="vk-list">
           {keys.map((vk) => {

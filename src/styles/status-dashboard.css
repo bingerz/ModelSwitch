@@ -86,17 +86,31 @@
 }
 
 .dsh-activity-cell {
-  grid-column: span 3;
+  grid-column: span 4;
   align-self: stretch;
 }
 
 .dsh-health-cell {
-  grid-column: span 1;
+  grid-column: span 2;
   align-self: stretch;
 }
 
 .dsh-top-cell {
-  grid-column: span 4;
+  grid-column: span 2;
+  align-self: stretch;
+}
+
+/* Container queries: inner grids respond to CELL width, not viewport */
+.dsh-health-cell {
+  container-type: inline-size;
+}
+
+/* Mid-width: Health and Top each take a full row to avoid cramping */
+@media (max-width: 1600px) {
+  .dsh-health-cell,
+  .dsh-top-cell {
+    grid-column: span 4;
+  }
 }
 
 @media (max-width: 1200px) {
@@ -104,14 +118,11 @@
     grid-template-columns: repeat(2, 1fr);
   }
   .dsh-hero-cell,
-  .dsh-quota-cell,
-  .dsh-activity-cell,
-  .dsh-health-cell {
+  .dsh-quota-cell {
     grid-column: span 1;
   }
-  .dsh-activity-cell {
-    grid-column: span 2;
-  }
+  .dsh-activity-cell,
+  .dsh-health-cell,
   .dsh-top-cell {
     grid-column: span 2;
   }
@@ -298,18 +309,20 @@
 .dsh-stat-spark {
   margin-top: var(--space-3);
   width: 100%;
+  height: 32px;
 }
 
 /* ─── Sparkline ─── */
 
 .dsh-sparkline {
   width: 100%;
-  height: auto;
+  height: 100%;
   display: block;
 }
 
 .dsh-sparkline-empty {
-  color: var(--color-text-muted);
+  color: var(--color-text-secondary);
+  opacity: 0.5;
 }
 
 /* ─── LiveBadge ─── */
@@ -635,14 +648,14 @@
   flex-direction: column;
   gap: 1px;
   margin: calc(-1 * var(--space-2)) calc(-1 * var(--space-1));
-  min-height: 200px;
+  min-height: 0;
   overflow-y: auto;
   flex: 1;
 }
 
 .dsh-health-row {
   display: grid;
-  grid-template-columns: auto minmax(60px, 1fr) auto auto auto;
+  grid-template-columns: auto minmax(50px, 1fr) minmax(0, auto) minmax(0, auto) minmax(0, auto);
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-2);
@@ -704,6 +717,9 @@
   color: var(--color-text-secondary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .dsh-health-err {
@@ -712,23 +728,35 @@
 
 .dsh-health-spark {
   width: 60px;
+  height: 20px;
   display: inline-flex;
   align-items: center;
+}
+
+/* When health cell is narrow, hide sparkline to prevent row deformation */
+@container (max-width: 480px) {
+  .dsh-health-spark {
+    display: none;
+  }
+  .dsh-health-row {
+    grid-template-columns: auto minmax(50px, 1fr) minmax(0, auto) minmax(0, auto);
+  }
 }
 
 /* ─── TopEntities ─── */
 
 .dsh-top-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--space-4);
   height: 100%;
 }
 
-@media (max-width: 768px) {
-  .dsh-top-grid {
-    grid-template-columns: 1fr;
-  }
+/* Each Top card: grow to fill, but never shrink below 280px.
+   When container can't fit two side-by-side, they wrap automatically. */
+.dsh-top-grid > .dsh-top-card {
+  flex: 1 1 280px;
+  min-width: 0;
 }
 
 .dsh-top-card {
@@ -902,11 +930,14 @@
 .dsh-stat-spark-mega {
   margin-top: var(--space-5);
   opacity: 0.9;
+  width: 100%;
+  height: 80px;
 }
 
 .dsh-stat-spark-mega svg {
   width: 100%;
   max-width: 320px;
+  height: 100%;
 }
 
 /* ─── Performance Card (4 quadrants) ─── */
@@ -992,6 +1023,7 @@
 .dsh-performance-spark {
   margin-top: var(--space-1);
   width: 100%;
+  height: 32px;
 }
 
 /* ─── Channel Health pills ─── */

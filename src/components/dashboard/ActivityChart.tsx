@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DispatchLog } from "../../lib/api";
 import { latencyColor } from "./helpers";
-import { ActivityTooltip, LegendSwatch, VIEW_HEIGHT, VIEW_WIDTH } from "./ActivityTooltip";
+import { ActivityTooltip, LegendSwatch, VIEW_HEIGHT } from "./ActivityTooltip";
 import { Inbox } from "./icons";
 
 export interface ActivityChartProps {
@@ -13,7 +13,6 @@ const PAD_BOTTOM = 28;
 const PAD_LEFT = 40;
 const PAD_RIGHT = 12;
 const CHART_H = VIEW_HEIGHT - PAD_TOP - PAD_BOTTOM;
-const CHART_W = VIEW_WIDTH - PAD_LEFT - PAD_RIGHT;
 
 interface HoverState {
   index: number;
@@ -38,6 +37,21 @@ function formatAxisTime(ts: string, now: Date): string {
 
 export function ActivityChart({ logs }: ActivityChartProps) {
   const [hover, setHover] = useState<HoverState | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [viewWidth, setViewWidth] = useState(760);
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0].contentRect.width;
+      if (w > 0) setViewWidth(w);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const chartW = viewWidth - PAD_LEFT - PAD_RIGHT;
 
   const { bars, maxLatency, now, successCount, failureCount } = useMemo(() => {
     const sorted = [...logs].sort(
@@ -68,7 +82,7 @@ export function ActivityChart({ logs }: ActivityChartProps) {
   }
 
   const count = bars.length;
-  const slotW = CHART_W / count;
+  const slotW = chartW / count;
   const barWidth = Math.max(2, Math.min(slotW * 0.7, 12));
 
   const yTicks = [
@@ -104,11 +118,10 @@ export function ActivityChart({ logs }: ActivityChartProps) {
           <LegendSwatch color="var(--color-danger)" label="Failed" shape="dot" />
         </div>
       </div>
-      <div className="dsh-activity-chart-wrap">
+      <div className="dsh-activity-chart-wrap" ref={wrapRef}>
         <svg
           className="dsh-activity-svg"
-          viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
-          preserveAspectRatio="none"
+          viewBox={`0 0 ${viewWidth} ${VIEW_HEIGHT}`}
           role="img"
           aria-label="Request activity timeline"
         >
@@ -121,7 +134,7 @@ export function ActivityChart({ logs }: ActivityChartProps) {
                   className="dsh-activity-gridline"
                   x1={PAD_LEFT}
                   y1={y}
-                  x2={VIEW_WIDTH - PAD_RIGHT}
+                  x2={viewWidth - PAD_RIGHT}
                   y2={y}
                 />
                 <text
@@ -211,7 +224,7 @@ export function ActivityChart({ logs }: ActivityChartProps) {
         </svg>
 
         {hover && bars[hover.index] && (
-          <ActivityTooltip log={bars[hover.index]} x={hover.x} y={hover.y} />
+          <ActivityTooltip log={bars[hover.index]} x={hover.x} y={hover.y} viewWidth={viewWidth} />
         )}
       </div>
     </div>

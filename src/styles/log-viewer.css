@@ -69,39 +69,48 @@
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  margin-bottom: var(--space-4);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-3) var(--space-4);
   background: var(--color-surface-elevated);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  font-size: var(--text-xs);
-  color: var(--color-text-secondary);
+  margin-bottom: var(--space-3);
+  font-size: var(--text-sm);
 }
 
 .log-summary-stat {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-1);
+  color: var(--color-text-secondary);
 }
 
 .log-summary-stat-value {
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
   color: var(--color-text);
+  font-variant-numeric: tabular-nums;
 }
 
-.log-summary-stat-value.success-color {
+.success-color {
   color: var(--color-success);
-}
-
-.log-summary-stat-value.danger-color {
-  color: var(--color-danger);
 }
 
 .log-summary-stat-divider {
   width: 1px;
-  height: 14px;
+  height: 16px;
   background: var(--color-border);
+}
+
+/* Empty state icon container (Lucide icon centered in muted circle) */
+.log-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto var(--space-3);
+  border-radius: 50%;
+  background: var(--color-surface-hover);
+  color: var(--color-text-muted);
 }
 
 /* Color-coded table rows */
@@ -126,6 +135,15 @@
 
 .log-table tr.log-row-failure:hover td {
   background: var(--color-danger-soft);
+}
+
+/* Failure row left accent */
+.log-table .log-row-failure td {
+  position: relative;
+}
+
+.log-table .log-row-failure td:first-child {
+  box-shadow: inset 2px 0 0 var(--color-danger);
 }
 
 /* Relative time helper text */

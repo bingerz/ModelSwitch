@@ -11,6 +11,7 @@ import { McpServersPanel } from "./components/mcp/McpServersPanel";
 import { VirtualKeysPanel } from "./components/VirtualKeysPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { MockBadge } from "./components/MockBadge";
 import { QuotaProvider } from "./hooks/useQuota";
 
 type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "logs" | "cost" | "quota" | "settings";
@@ -32,9 +33,9 @@ const TAB_GROUPS: { title: string; tabs: { id: TabId; label: string }[] }[] = [
   {
     title: "Monitoring",
     tabs: [
-      { id: "logs", label: "Logs" },
       { id: "cost", label: "Cost Analytics" },
       { id: "quota", label: "Provider Quota" },
+      { id: "logs", label: "Logs" },
     ],
   },
   {
@@ -144,6 +145,7 @@ function AppInner() {
         </main>
       </div>
       <StatusBar />
+      <MockBadge />
     </div>
   );
 }

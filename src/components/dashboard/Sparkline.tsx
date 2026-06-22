@@ -43,7 +43,7 @@ export function Sparkline({
           stroke="currentColor"
           strokeWidth="1"
           strokeDasharray="4 4"
-          opacity="0.25"
+          opacity="0.4"
           vectorEffect="non-scaling-stroke"
         />
       </svg>

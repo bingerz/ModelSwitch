@@ -408,3 +408,13 @@ export const api = {
   gatewayInfo: () => request<GatewayInfo>("/api/gateway/info"),
   providerBudgets: () => request<ProviderBudgetEntry[]>("/api/provider-budgets"),
 };
+
+// ─── Mock mode ──────────────────────────────────────────
+// When mock mode is enabled, replace api methods with mock implementations.
+// This allows zero changes to consumer code — all existing imports of { api }
+// automatically pick up mock data.
+import { isMockMode, mockApi } from "./mock";
+
+if (isMockMode()) {
+  Object.assign(api, mockApi);
+}

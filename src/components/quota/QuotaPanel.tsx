@@ -4,6 +4,10 @@ import { formatBalance, formatTokens, type FilterMode, type TimeWindow } from ".
 import { QuotaCard } from "./QuotaCard";
 import { PendingCard } from "./PendingCard";
 import { UsageChart } from "./UsageChart";
+import { Wallet, CheckCircle, AlertTriangle, TrendingDown, BarChart3 } from "lucide-react";
+import { StatTile } from "../ui/StatTile";
+import { SectionHeader } from "../ui/SectionHeader";
+import { EmptyState } from "../ui/EmptyState";
 
 export function QuotaPanel() {
   const {
@@ -86,40 +90,42 @@ export function QuotaPanel() {
 
   return (
     <section>
-      <div className="panel-header">
-        <h2 className="panel-title">Token Quota</h2>
-        <button
-          className="btn"
-          onClick={handleRefresh}
-          disabled={refreshing}
-        >
-          {refreshing ? "Refreshing..." : "Refresh"}
-        </button>
-      </div>
+      <SectionHeader
+        title="Token Quota"
+        icon={Wallet}
+        onRefresh={handleRefresh}
+        refreshing={refreshing}
+      />
 
       {/* Summary cards */}
       <div className="quota-summary-grid">
-        <div className="stat-card">
-          <div className="stat-value">
-            {formatBalance(totalBalance, "$0")}
-          </div>
-          <div className="stat-label">Total Balance</div>
-        </div>
-        <div className="stat-card stat-success">
-          <div className="stat-value">{channelsWithData}/{totalChannels}</div>
-          <div className="stat-label">Channels with Data</div>
-        </div>
+        <StatTile
+          icon={Wallet}
+          value={formatBalance(totalBalance, "$0")}
+          label="Total Balance"
+          accent="green"
+        />
+        <StatTile
+          icon={CheckCircle}
+          value={`${channelsWithData}/${totalChannels}`}
+          label="Channels with Data"
+          accent="blue"
+        />
         {errorCount > 0 && (
-          <div className="stat-card stat-danger">
-            <div className="stat-value">{errorCount}</div>
-            <div className="stat-label">Errors</div>
-          </div>
+          <StatTile
+            icon={AlertTriangle}
+            value={errorCount}
+            label="Errors"
+            accent="red"
+          />
         )}
         {lowBalanceCount > 0 && (
-          <div className="stat-card stat-danger">
-            <div className="stat-value">{lowBalanceCount}</div>
-            <div className="stat-label">Low Balance (&lt;20%)</div>
-          </div>
+          <StatTile
+            icon={TrendingDown}
+            value={lowBalanceCount}
+            label="Low Balance (<20%)"
+            accent="amber"
+          />
         )}
       </div>
 
@@ -163,18 +169,19 @@ export function QuotaPanel() {
           ))}
         </div>
       ) : (
-        <div className="quota-empty">
-          <div className="quota-empty-icon">📊</div>
-          <p>
-            {totalChannels === 0
+        <EmptyState
+          icon={BarChart3}
+          title="No quota data"
+          description={
+            totalChannels === 0
               ? "No channels configured yet. Add channels in the Channels tab to start monitoring quota."
               : filter === "error"
                 ? "No channels with errors."
                 : filter === "usage"
                   ? "No token usage data yet. Usage will appear once channels start processing requests."
-                  : "No quota data matching this filter. Quota information will appear here once channels start reporting balance, rate-limit, or usage data."}
-          </p>
-        </div>
+                  : "No quota data matching this filter. Quota information will appear here once channels start reporting balance, rate-limit, or usage data."
+          }
+        />
       )}
     </section>
   );

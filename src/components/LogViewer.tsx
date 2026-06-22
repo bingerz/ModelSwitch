@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ClipboardList, Search } from "lucide-react";
 import { api, type DispatchLog } from "../lib/api";
 import "../styles/log-viewer.css";
 
@@ -9,7 +10,10 @@ function formatRelativeTime(iso: string): string {
   if (diffMs < 60_000) return "Just now";
   const diffMin = Math.floor(diffMs / 60_000);
   if (diffMin < 60) return `${diffMin}m ago`;
-  return "";
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  return `${diffDay}d ago`;
 }
 
 function matchesSearch(log: DispatchLog, query: string): boolean {
@@ -19,6 +23,13 @@ function matchesSearch(log: DispatchLog, query: string): boolean {
     log.request_model.toLowerCase().includes(q) ||
     log.channel_name.toLowerCase().includes(q)
   );
+}
+
+function latencyColor(ms: number): string {
+  if (ms < 500) return "var(--color-success)";
+  if (ms < 1500) return "var(--color-warning)";
+  if (ms < 3000) return "#f97316"; // orange
+  return "var(--color-danger)";
 }
 
 export function LogViewer() {
@@ -141,7 +152,9 @@ export function LogViewer() {
 
       {hasNoData && (
         <div className="empty-state">
-          <div className="empty-state-icon">📋</div>
+          <div className="log-empty-icon">
+            <ClipboardList size={32} />
+          </div>
           <div className="empty-state-title">No dispatch logs yet</div>
           <div className="empty-state-description">
             Dispatch logs will appear here once the gateway starts routing
@@ -152,7 +165,9 @@ export function LogViewer() {
 
       {hasNoResults && (
         <div className="empty-state">
-          <div className="empty-state-icon">🔍</div>
+          <div className="log-empty-icon">
+            <Search size={32} />
+          </div>
           <div className="empty-state-title">No matching logs</div>
           <div className="empty-state-description">
             Try adjusting your filters or search query.
@@ -195,7 +210,9 @@ export function LogViewer() {
                     <td>{log.channel_name}</td>
                     <td>{log.retry_count}</td>
                     <td>{log.trigger_reason || "-"}</td>
-                    <td className="mono">{log.latency_ms}ms</td>
+                    <td className="mono" style={{ color: latencyColor(log.latency_ms) }}>
+                      {log.latency_ms}ms
+                    </td>
                     <td className="mono">
                       {log.input_tokens != null || log.output_tokens != null
                         ? `${log.input_tokens ?? 0}/${log.output_tokens ?? 0}`

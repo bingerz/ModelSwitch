@@ -1,16 +1,14 @@
 import { useEffect, useState, useCallback } from "react";
+import { Settings, Server, Database, RotateCcw, Wallet, FlaskConical } from "lucide-react";
+import { SectionHeader } from "./ui/SectionHeader";
+import { ProgressBar } from "./ui/ProgressBar";
 import { api, type CacheStats, type GatewayInfo, type ProviderBudgetEntry } from "../lib/api";
+import { isMockMode, setMockMode } from "../lib/mock";
 import { useToast } from "./Toast";
 
 /** Format cents to dollar display */
 function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
-}
-
-/** Format budget utilization percentage */
-function utilization(spentCents: number, budgetCents: number | null): string {
-  if (budgetCents == null || budgetCents === 0) return "—";
-  return `${((spentCents / budgetCents) * 100).toFixed(1)}%`;
 }
 
 export function SettingsPanel() {
@@ -75,15 +73,37 @@ export function SettingsPanel() {
 
   return (
     <section>
-      <div className="panel-header">
-        <h2 className="panel-title">Settings</h2>
-        <button className="btn btn-sm" onClick={refresh}>Refresh</button>
+      <SectionHeader title="Settings" icon={Settings} onRefresh={refresh} refreshing={false} />
+
+      {/* Demo Mode */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">
+          <FlaskConical size={14} style={{ display: "inline", marginRight: "var(--space-2)", verticalAlign: "middle" }} />
+          Demo Mode
+        </h3>
+        <p className="settings-hint">
+          Uses simulated data for all API calls. Reloads the page when toggled.
+        </p>
+        <div className="settings-actions">
+          <label style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", cursor: "pointer", fontSize: "var(--text-sm)" }}>
+            <input
+              type="checkbox"
+              checked={isMockMode()}
+              onChange={(e) => setMockMode(e.target.checked)}
+              style={{ width: 16, height: 16, cursor: "pointer" }}
+            />
+            Enable Demo Mode
+          </label>
+        </div>
       </div>
 
       {/* Gateway Info */}
       {gatewayInfo && (
         <div className="settings-section">
-          <h3 className="settings-section-title">Gateway Info</h3>
+          <h3 className="settings-section-title">
+            <Server size={14} style={{ display: "inline", marginRight: "var(--space-2)", verticalAlign: "middle" }} />
+            Gateway Info
+          </h3>
           <div className="settings-stats-grid">
             <div className="settings-stat">
               <span className="settings-stat-label">Version</span>
@@ -118,7 +138,10 @@ export function SettingsPanel() {
       {/* Cache Management */}
       {cacheStats && (
         <div className="settings-section">
-          <h3 className="settings-section-title">Cache Management</h3>
+          <h3 className="settings-section-title">
+            <Database size={14} style={{ display: "inline", marginRight: "var(--space-2)", verticalAlign: "middle" }} />
+            Cache Management
+          </h3>
           <div className="settings-stats-grid">
             <div className="settings-stat">
               <span className="settings-stat-label">Mode</span>
@@ -135,6 +158,13 @@ export function SettingsPanel() {
                   {cacheStats.hit_rate_percent}%
                 </span>
               </span>
+              <div style={{ marginTop: "4px", maxWidth: "100px" }}>
+                <ProgressBar
+                  value={cacheStats.hit_rate_percent}
+                  height={4}
+                  color={cacheStats.hit_rate_percent > 30 ? "var(--color-success)" : "var(--color-text-muted)"}
+                />
+              </div>
             </div>
             <div className="settings-stat">
               <span className="settings-stat-label">Hits / Misses</span>
@@ -161,7 +191,10 @@ export function SettingsPanel() {
 
       {/* Config Reload */}
       <div className="settings-section">
-        <h3 className="settings-section-title">Configuration</h3>
+        <h3 className="settings-section-title">
+          <RotateCcw size={14} style={{ display: "inline", marginRight: "var(--space-2)", verticalAlign: "middle" }} />
+          Configuration
+        </h3>
         <p className="settings-hint">
           Manually trigger a hot-reload of <code className="settings-code">config.toml</code>.
           Channels, rate limits, payload rules, and MCP servers will be updated.
@@ -180,7 +213,10 @@ export function SettingsPanel() {
       {/* Provider Budgets */}
       {budgets.length > 0 && (
         <div className="settings-section">
-          <h3 className="settings-section-title">Provider Budgets</h3>
+          <h3 className="settings-section-title">
+            <Wallet size={14} style={{ display: "inline", marginRight: "var(--space-2)", verticalAlign: "middle" }} />
+            Provider Budgets
+          </h3>
           <div className="settings-table-wrapper">
             <table className="settings-table">
               <thead>
@@ -201,18 +237,36 @@ export function SettingsPanel() {
                     <td className="mono">
                       {b.daily_budget_cents != null ? formatCents(b.daily_budget_cents) : "∞"}
                       {b.daily_budget_cents != null && (
-                        <span className="settings-util">
-                          {" "}({utilization(b.spend.today.cents, b.daily_budget_cents)})
-                        </span>
+                        <div style={{ marginTop: "4px", maxWidth: "120px" }}>
+                          <ProgressBar
+                            value={b.spend.today.cents}
+                            max={b.daily_budget_cents}
+                            thresholds={[
+                              { upto: 50, color: "var(--color-success)" },
+                              { upto: 80, color: "var(--color-warning)" },
+                              { upto: 100, color: "var(--color-danger)" },
+                            ]}
+                            height={4}
+                          />
+                        </div>
                       )}
                     </td>
                     <td className="mono">{formatCents(b.spend.this_month.cents)}</td>
                     <td className="mono">
                       {b.monthly_budget_cents != null ? formatCents(b.monthly_budget_cents) : "∞"}
                       {b.monthly_budget_cents != null && (
-                        <span className="settings-util">
-                          {" "}({utilization(b.spend.this_month.cents, b.monthly_budget_cents)})
-                        </span>
+                        <div style={{ marginTop: "4px", maxWidth: "120px" }}>
+                          <ProgressBar
+                            value={b.spend.this_month.cents}
+                            max={b.monthly_budget_cents}
+                            thresholds={[
+                              { upto: 50, color: "var(--color-success)" },
+                              { upto: 80, color: "var(--color-warning)" },
+                              { upto: 100, color: "var(--color-danger)" },
+                            ]}
+                            height={4}
+                          />
+                        </div>
                       )}
                     </td>
                     <td className="mono">{formatCents(b.spend.total_cents)}</td>

@@ -14,15 +14,17 @@ export function ActivityTooltip({
   log,
   x,
   y,
+  viewWidth = VIEW_WIDTH,
 }: {
   log: DispatchLog;
   x: number;
   y: number;
+  viewWidth?: number;
 }) {
   const tokens = (log.input_tokens ?? 0) + (log.output_tokens ?? 0);
   const time = new Date(log.timestamp).toLocaleTimeString();
   // Convert SVG coords to percentage for responsive positioning.
-  const leftPct = (x / VIEW_WIDTH) * 100;
+  const leftPct = (x / viewWidth) * 100;
   const topPct = (y / VIEW_HEIGHT) * 100;
 
   return (

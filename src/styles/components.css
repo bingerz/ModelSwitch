@@ -396,6 +396,20 @@
   letter-spacing: 0.05em;
 }
 
+.log-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.log-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--color-surface);
+  backdrop-filter: blur(8px);
+}
+
 .log-table td {
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--color-border);
@@ -485,12 +499,6 @@
 .text-success { color: var(--color-success); }
 .text-danger { color: var(--color-danger); }
 
-/* ─── Dashboard ─── */
-.dashboard-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: var(--space-4);
-}
 
 .stat-card {
   background: var(--color-surface-elevated);
@@ -739,6 +747,52 @@
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
   color: var(--color-text-secondary);
+}
+
+.cost-model-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.cost-model-bar-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 200px) 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+
+.cost-model-name {
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cost-model-bar-track {
+  height: 6px;
+  background: var(--color-surface-hover);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.cost-model-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--color-accent);
+  transition: width var(--duration-normal) var(--ease);
+}
+
+.cost-model-count {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .api-format-card-badge {
