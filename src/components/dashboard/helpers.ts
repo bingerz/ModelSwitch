@@ -156,34 +156,9 @@ export function buildUsageByChannelMap(
   return map;
 }
 
-/** 1234 -> "1.2k", 1234567 -> "1.2M", 123 -> "123". */
-export function formatNumber(n: number): string {
-  const abs = Math.abs(n);
-  if (abs < 1000) return Math.round(n).toString();
-  if (abs < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
-  return `${(n / 1_000_000).toFixed(1)}M`;
-}
-
-/** "$1.23", "$1.2k", "$0". */
-export function formatCost(n: number): string {
-  const abs = Math.abs(n);
-  if (abs < 1000) return `$${n.toFixed(2)}`;
-  if (abs < 1_000_000) return `$${(n / 1000).toFixed(1)}k`;
-  return `$${(n / 1_000_000).toFixed(1)}M`;
-}
-
-/** Tokens use k/M notation. */
-export function formatTokens(n: number): string {
-  return formatNumber(n);
-}
-
-/** Color for latency values (returns CSS var or hex). */
-export function latencyColor(ms: number): string {
-  if (ms < 500) return "var(--color-success)";
-  if (ms < 2000) return "var(--color-warning)";
-  if (ms < 5000) return "#f97316";
-  return "var(--color-danger)";
-}
+// Formatting helpers are centralized in lib/format.ts.
+// Re-exported here for backward compatibility with existing imports from "./helpers".
+export { formatNumber, formatCost, formatTokens, latencyColor, formatRelativeTime } from "../../lib/format";
 
 /** Build an SVG polyline path scaled to width x height. */
 export function computeSparkPoints(
@@ -217,18 +192,6 @@ export function computeSparkArea(
   const line = computeSparkPoints(values, width, height);
   if (!line) return "";
   return `${line} L ${width} ${height} L 0 ${height} Z`;
-}
-
-/** Relative time label, refreshed by caller. */
-export function formatRelativeTime(from: Date, now: Date = new Date()): string {
-  const diff = Math.max(0, now.getTime() - from.getTime());
-  if (diff < 1000) return "just now";
-  const sec = Math.floor(diff / 1000);
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  return `${hr}h ago`;
 }
 
 const SPARK_HOUR_MS = 3600_000;

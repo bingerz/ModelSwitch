@@ -181,8 +181,6 @@ pub(super) enum FailureReason {
     ConnectionError,
     NoCredential,
     Timeout,
-    #[allow(dead_code)]
-    ModelFallback,
     ContextOverflow,
     AllExhausted,
     ClientError(u16),
@@ -196,7 +194,6 @@ impl FailureReason {
             Self::ConnectionError => "connection_error".into(),
             Self::Timeout => "ttft_timeout".into(),
             Self::NoCredential => "no_credential".into(),
-            Self::ModelFallback => "model_fallback".into(),
             Self::ContextOverflow => "context_overflow".into(),
             Self::AllExhausted => "all_exhausted".into(),
             Self::ClientError(code) => code.to_string(),

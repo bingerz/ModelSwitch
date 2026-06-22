@@ -1,20 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ClipboardList, Search } from "lucide-react";
 import { api, type DispatchLog } from "../lib/api";
+import { formatRelativeTime, latencyColor } from "../lib/format";
 import "../styles/log-viewer.css";
 
 type FilterValue = "all" | "success" | "failed";
-
-function formatRelativeTime(iso: string): string {
-  const diffMs = Date.now() - new Date(iso).getTime();
-  if (diffMs < 60_000) return "Just now";
-  const diffMin = Math.floor(diffMs / 60_000);
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
-  const diffDay = Math.floor(diffHr / 24);
-  return `${diffDay}d ago`;
-}
 
 function matchesSearch(log: DispatchLog, query: string): boolean {
   if (!query) return true;
@@ -23,13 +13,6 @@ function matchesSearch(log: DispatchLog, query: string): boolean {
     log.request_model.toLowerCase().includes(q) ||
     log.channel_name.toLowerCase().includes(q)
   );
-}
-
-function latencyColor(ms: number): string {
-  if (ms < 500) return "var(--color-success)";
-  if (ms < 1500) return "var(--color-warning)";
-  if (ms < 3000) return "#f97316"; // orange
-  return "var(--color-danger)";
 }
 
 export function LogViewer() {

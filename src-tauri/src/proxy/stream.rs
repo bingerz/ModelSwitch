@@ -215,7 +215,7 @@ pub fn sse_stream_response_with_telemetry(
         .header("Connection", "keep-alive")
         .header("X-Accel-Buffering", "no")
         .body(body)
-        .unwrap();
+        .expect("valid HTTP response construction");
 
     (response, output_buffer, stream_done)
 }
@@ -226,7 +226,7 @@ pub fn json_response(status: StatusCode, body: String) -> Response {
         .status(status)
         .header("Content-Type", "application/json")
         .body(Body::from(body))
-        .unwrap()
+        .expect("valid HTTP response construction")
 }
 
 /// Create an SSE response containing a single JSON chunk followed by [DONE].
@@ -239,7 +239,7 @@ pub fn sse_single_chunk_response(status: StatusCode, body_json: &str) -> Respons
         .header("Cache-Control", "no-cache")
         .header("Connection", "keep-alive")
         .body(Body::from(sse_body))
-        .unwrap()
+        .expect("valid HTTP response construction")
 }
 
 /// Create the "all channels rate limited" error response.
@@ -266,7 +266,7 @@ pub fn sse_stream_response_with_cached(cached_body: &str) -> Response {
         .header("Connection", "keep-alive")
         .header("X-Accel-Buffering", "no")
         .body(Body::from(cached_body.to_string()))
-        .unwrap()
+        .expect("valid HTTP response construction")
 }
 
 /// Wrap a byte stream with keepalive SSE comments.
@@ -320,79 +320,9 @@ pub fn keepalive_stream(
     tokio_stream::wrappers::ReceiverStream::new(rx)
 }
 
-/// Check if an SSE data line contains an error indicator.
-/// Returns Some(reason) if an error is detected, None otherwise.
-#[allow(dead_code)]
-pub fn detect_sse_error(data: &str) -> Option<String> {
-    let trimmed = data.trim();
-    if trimmed.is_empty() || trimmed == "[DONE]" {
-        return None;
-    }
-
-    // Strip "data: " prefix if present
-    let json_str = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
-
-    // Quick check for "error" key before full JSON parse
-    if !json_str.contains("\"error\"") {
-        return None;
-    }
-
-    // Try to parse and extract error info
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
-        if let Some(error) = v.get("error") {
-            let msg = error
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("unknown error");
-            return Some(msg.to_string());
-        }
-    }
-
-    None
-}
-
-/// Build an SSE error event payload for mid-stream errors.
-#[allow(dead_code)]
-pub fn sse_error_event(message: &str) -> Bytes {
-    let escaped = message.replace('"', "\\\"");
-    Bytes::from(format!(
-        "event: modelswitch_error\ndata: {{\"error\": \"{}\"}}\n\n",
-        escaped
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn detect_openai_error() {
-        let data = r#"data: {"id":"chatcmpl-123","error":{"message":"Rate limit exceeded","type":"rate_limit_error","code":"rate_limit_exceeded"}}"#;
-        assert_eq!(
-            detect_sse_error(data),
-            Some("Rate limit exceeded".to_string())
-        );
-    }
-
-    #[test]
-    fn detect_anthropic_error() {
-        let data =
-            r#"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
-        assert_eq!(detect_sse_error(data), Some("Overloaded".to_string()));
-    }
-
-    #[test]
-    fn no_error_in_normal_chunk() {
-        let data = r#"data: {"id":"chatcmpl-123","choices":[{"delta":{"content":"Hello"}}]}"#;
-        assert_eq!(detect_sse_error(data), None);
-    }
-
-    #[test]
-    fn no_error_in_done() {
-        assert_eq!(detect_sse_error("[DONE]"), None);
-        assert_eq!(detect_sse_error(""), None);
-        assert_eq!(detect_sse_error("data: "), None);
-    }
 
     #[tokio::test]
     async fn raw_sse_accumulates_all_chunks() {

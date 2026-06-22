@@ -128,7 +128,6 @@ export const mockApi: typeof api = {
 
   deleteChannel: async (_id) => {
     await simDelay();
-    return new Response("{}");
   },
 
   pingChannel: async (_id) => {
@@ -211,7 +210,6 @@ export const mockApi: typeof api = {
 
     deleteServer: async (_id) => {
       await simDelay();
-      return new Response("{}");
     },
 
     startServer: async (_id) => {
@@ -283,7 +281,6 @@ export const mockApi: typeof api = {
 
     delete: async (_id) => {
       await simDelay();
-      return new Response("{}");
     },
   },
 

@@ -528,7 +528,7 @@ pub async fn start_gateway(
     state: Arc<AppState>,
     host: &str,
     port: u16,
-    _drain_timeout_secs: u64,
+    drain_timeout_secs: u64,
     shutdown_notify: Option<Arc<Notify>>,
     bind_notify: Option<oneshot::Sender<Result<(), String>>>,
 ) {
@@ -578,8 +578,16 @@ pub async fn start_gateway(
         };
     let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_fut);
 
-    if let Err(e) = server.await {
-        tracing::error!("Gateway error: {e}");
+    match tokio::time::timeout(std::time::Duration::from_secs(drain_timeout_secs), server).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            tracing::error!("Gateway error: {e}");
+        }
+        Err(_elapsed) => {
+            tracing::warn!(
+                "Graceful drain timed out after {drain_timeout_secs}s — forcing shutdown"
+            );
+        }
     }
     tracing::info!("Gateway server exited");
 

@@ -7,6 +7,7 @@ import {
   type CreateVirtualKeyData,
   type UpdateVirtualKeyData,
 } from "../lib/api";
+import { formatCents } from "../lib/format";
 import { useToast } from "./Toast";
 import { StatTile } from "./ui/StatTile";
 import { SectionHeader } from "./ui/SectionHeader";
@@ -14,10 +15,6 @@ import { EmptyState } from "./ui/EmptyState";
 import "../styles/pages-enhanced.css";
 
 // ─── Formatting Helpers ─────────────────────────────────
-
-function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
-}
 
 function formatDate(iso: string): string {
   try {

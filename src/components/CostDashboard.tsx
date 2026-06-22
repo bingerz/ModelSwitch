@@ -1,16 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { BarChart3, DollarSign, TrendingUp, Coins, Bot, Layers, Cpu } from "lucide-react";
 import { api, type CostStats, PRIORITY_TIERS } from "../lib/api";
+import { formatNumber } from "../lib/format";
 import { StatTile } from "./ui/StatTile";
 import { SectionHeader } from "./ui/SectionHeader";
 import { EmptyState } from "./ui/EmptyState";
 import "../styles/pages-enhanced.css";
-
-function formatNumber(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
 
 export function CostDashboard() {
   const [stats, setStats] = useState<CostStats | null>(null);

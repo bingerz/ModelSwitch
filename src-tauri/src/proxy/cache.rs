@@ -78,7 +78,11 @@ impl RequestCache {
     pub fn cache_key(model: &str, body: &serde_json::Value) -> u128 {
         let material = canonical_key_material(model, body);
         let hash = blake3::hash(material.as_bytes());
-        u128::from_be_bytes(hash.as_bytes()[..16].try_into().unwrap())
+        u128::from_be_bytes(
+            hash.as_bytes()[..16]
+                .try_into()
+                .expect("valid cache key length"),
+        )
     }
 
     /// Compute both the hash key and the canonical key material.
@@ -87,7 +91,11 @@ impl RequestCache {
     pub fn compute_key(model: &str, body: &serde_json::Value) -> (u128, String) {
         let material = canonical_key_material(model, body);
         let hash = blake3::hash(material.as_bytes());
-        let key = u128::from_be_bytes(hash.as_bytes()[..16].try_into().unwrap());
+        let key = u128::from_be_bytes(
+            hash.as_bytes()[..16]
+                .try_into()
+                .expect("valid cache key length"),
+        );
         (key, material)
     }
 

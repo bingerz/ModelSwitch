@@ -20,11 +20,21 @@ pub async fn request_id_middleware(request: Request<Body>, next: Next) -> Respon
     let header_name = HeaderName::from_static(REQUEST_ID_HEADER);
     request
         .headers_mut()
-        .insert(header_name.clone(), request_id.parse().unwrap());
+        .insert(
+            header_name.clone(),
+            request_id
+                .parse()
+                .expect("valid ASCII header value"),
+        );
 
     let mut response = next.run(request).await;
     response
         .headers_mut()
-        .insert(header_name, request_id.parse().unwrap());
+        .insert(
+            header_name,
+            request_id
+                .parse()
+                .expect("valid ASCII header value"),
+        );
     response
 }

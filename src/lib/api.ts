@@ -327,11 +327,7 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
-  deleteChannel: async (id: string) => {
-    const res = await fetch(`${API_BASE}/api/channels/${id}`, { method: "DELETE" });
-    if (!res.ok) throw new Error(`API error: ${res.status}`);
-    return res;
-  },
+  deleteChannel: (id: string) => request<void>(`/api/channels/${id}`, { method: "DELETE" }),
   pingChannel: (id: string) =>
     request<{ success: boolean; latency_ms: number }>(`/api/channels/${id}/ping`, {
       method: "POST",
@@ -365,11 +361,7 @@ export const api = {
         method: "PUT",
         body: JSON.stringify(data),
       }),
-    deleteServer: async (id: string) => {
-      const res = await fetch(`${API_BASE}/api/mcp/servers/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error(`API error: ${res.status}`);
-      return res;
-    },
+    deleteServer: (id: string) => request<void>(`/api/mcp/servers/${id}`, { method: "DELETE" }),
     startServer: (id: string) =>
       request<{ ok: boolean }>(`/api/mcp/servers/${id}/start`, { method: "POST" }),
     stopServer: (id: string) =>
@@ -390,11 +382,7 @@ export const api = {
         method: "PUT",
         body: JSON.stringify(data),
       }),
-    delete: async (id: string) => {
-      const res = await fetch(`${API_BASE}/api/virtual-keys/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error(`API error: ${res.status}`);
-      return res;
-    },
+    delete: (id: string) => request<void>(`/api/virtual-keys/${id}`, { method: "DELETE" }),
   },
   cacheStats: () => request<CacheStats>("/api/cache/stats"),
   flushCache: () =>

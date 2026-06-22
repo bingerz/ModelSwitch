@@ -57,26 +57,26 @@ static BUILTIN_PATTERNS: LazyLock<Vec<CompiledPattern>> = LazyLock::new(|| {
     vec![
         CompiledPattern {
             // AWS Access Key ID
-            regex: Regex::new(r"AKIA[0-9A-Z]{16}").unwrap(),
+            regex: Regex::new(r"AKIA[0-9A-Z]{16}").expect("valid regex pattern"),
             replacement: "[REDACTED:AWS_KEY]".to_string(),
             name: "aws_access_key",
         },
         CompiledPattern {
             // AWS Secret Access Key (40 char base64 following the key name)
             regex: Regex::new(r#"(?i)aws_secret_access_key["'\s:=]+([A-Za-z0-9/+=]{40})"#)
-                .unwrap(),
+                .expect("valid regex pattern"),
             replacement: "[REDACTED:AWS_SECRET]".to_string(),
             name: "aws_secret_key",
         },
         CompiledPattern {
             // Stripe live secret key
-            regex: Regex::new(r"sk_live_[0-9a-zA-Z]{24,}").unwrap(),
+            regex: Regex::new(r"sk_live_[0-9a-zA-Z]{24,}").expect("valid regex pattern"),
             replacement: "[REDACTED:STRIPE_KEY]".to_string(),
             name: "stripe_live_key",
         },
         CompiledPattern {
             // Stripe restricted key
-            regex: Regex::new(r"rk_live_[0-9a-zA-Z]{24,}").unwrap(),
+            regex: Regex::new(r"rk_live_[0-9a-zA-Z]{24,}").expect("valid regex pattern"),
             replacement: "[REDACTED:STRIPE_KEY]".to_string(),
             name: "stripe_restricted_key",
         },
@@ -85,14 +85,14 @@ static BUILTIN_PATTERNS: LazyLock<Vec<CompiledPattern>> = LazyLock::new(|| {
             regex: Regex::new(
                 r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |)PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH |PGP |)PRIVATE KEY-----",
             )
-            .unwrap(),
+            .expect("valid regex pattern"),
             replacement: "[REDACTED:PRIVATE_KEY]".to_string(),
             name: "private_key_block",
         },
         CompiledPattern {
             // Just the header line (handles truncated blocks)
             regex: Regex::new(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |)PRIVATE KEY-----")
-                .unwrap(),
+                .expect("valid regex pattern"),
             replacement: "[REDACTED:PRIVATE_KEY]".to_string(),
             name: "private_key_header",
         },
@@ -101,20 +101,21 @@ static BUILTIN_PATTERNS: LazyLock<Vec<CompiledPattern>> = LazyLock::new(|| {
             regex: Regex::new(
                 r"(?i)(postgresql|postgres|mysql|mongodb|redis)://[^:\s]+:([^@\s]+)@",
             )
-            .unwrap(),
+            .expect("valid regex pattern"),
             // Keep the scheme visible for debugging but hide credentials
             replacement: "${1}://[REDACTED_USER]:[REDACTED_PASSWORD]@".to_string(),
             name: "db_connection_string",
         },
         CompiledPattern {
             // GitHub classic personal access token
-            regex: Regex::new(r"ghp_[A-Za-z0-9]{36}").unwrap(),
+            regex: Regex::new(r"ghp_[A-Za-z0-9]{36}").expect("valid regex pattern"),
             replacement: "[REDACTED:GITHUB_TOKEN]".to_string(),
             name: "github_pat",
         },
         CompiledPattern {
             // Slack bot token
-            regex: Regex::new(r"xoxb-[0-9]{10,13}-[0-9]{10,13}-[A-Za-z0-9]{24}").unwrap(),
+            regex: Regex::new(r"xoxb-[0-9]{10,13}-[0-9]{10,13}-[A-Za-z0-9]{24}")
+                .expect("valid regex pattern"),
             replacement: "[REDACTED:SLACK_TOKEN]".to_string(),
             name: "slack_bot_token",
         },
@@ -124,7 +125,7 @@ static BUILTIN_PATTERNS: LazyLock<Vec<CompiledPattern>> = LazyLock::new(|| {
             regex: Regex::new(
                 r#"(?i)(api[_-]?key|secret[_-]?key|access[_-]?token|private[_-]?key|password|passwd|pwd)["'\s]*[:=]["'\s]*[A-Za-z0-9+/=_-]{20,}"#,
             )
-            .unwrap(),
+            .expect("valid regex pattern"),
             replacement: "[REDACTED:SECRET]".to_string(),
             name: "generic_api_key",
         },

@@ -3,13 +3,9 @@ import { Settings, Server, Database, RotateCcw, Wallet, FlaskConical } from "luc
 import { SectionHeader } from "./ui/SectionHeader";
 import { ProgressBar } from "./ui/ProgressBar";
 import { api, type CacheStats, type GatewayInfo, type ProviderBudgetEntry } from "../lib/api";
+import { formatCents } from "../lib/format";
 import { isMockMode, setMockMode } from "../lib/mock";
 import { useToast } from "./Toast";
-
-/** Format cents to dollar display */
-function formatCents(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
-}
 
 export function SettingsPanel() {
   const toast = useToast();

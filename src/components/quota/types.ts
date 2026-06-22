@@ -1,6 +1,8 @@
 // Shared types, constants, and pure helpers for the quota panel.
 // Kept in a `.ts` file so siblings can import without pulling JSX.
 
+import { formatTokens as formatTokensValue } from "../../lib/format";
+
 export type FilterMode = "all" | "balance" | "rate_limit" | "usage" | "error" | "low";
 
 export type TimeWindow = 24 | 168; // hours
@@ -47,9 +49,7 @@ export function sourceColor(source: string): string {
 
 export function formatTokens(value: number | null, fallback = "—"): string {
   if (value == null) return fallback;
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
-  return value.toLocaleString();
+  return formatTokensValue(value);
 }
 
 export function balanceColor(balance: number, limit: number | null): string {
