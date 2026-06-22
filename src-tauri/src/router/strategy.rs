@@ -4,6 +4,31 @@ use crate::router::active_requests::ActiveRequests;
 use crate::router::latency_tracker::LatencyTracker;
 use rand::Rng;
 
+/// Type-safe enumeration of all supported routing strategies.
+/// Serializes as snake_case to maintain TOML config compatibility.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingStrategyType {
+    #[default]
+    WeightedRandom,
+    Latency,
+    LeastBusy,
+    Usage,
+    LowestCost,
+}
+
+impl std::fmt::Display for RoutingStrategyType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WeightedRandom => write!(f, "weighted_random"),
+            Self::Latency => write!(f, "latency"),
+            Self::LeastBusy => write!(f, "least_busy"),
+            Self::Usage => write!(f, "usage"),
+            Self::LowestCost => write!(f, "lowest_cost"),
+        }
+    }
+}
+
 /// Strategy for selecting a channel from a list of candidates.
 pub trait RoutingStrategy: Send + Sync {
     fn select(&self, candidates: &[Channel]) -> Option<Channel>;

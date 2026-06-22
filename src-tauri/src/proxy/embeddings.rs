@@ -109,7 +109,7 @@ pub async fn handle_embeddings(
     let channel = match router::select_channel(
         channels,
         &resolved_model,
-        &state.gateway.routing_strategy,
+        state.gateway.routing_strategy,
         &ctx,
         None,
     )

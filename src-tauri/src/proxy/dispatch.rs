@@ -118,7 +118,7 @@ async fn select_channel_for_attempt(
     affinity_channel: Option<Uuid>,
     channels: &crate::channel::SharedChannels,
     current_model: &str,
-    routing_strategy: &str,
+    routing_strategy: crate::router::RoutingStrategyType,
     ctx: &RoutingContext<'_>,
     account_group: Option<&str>,
 ) -> Option<Channel> {
@@ -319,7 +319,7 @@ pub(crate) async fn dispatch(
                 affinity_channel,
                 &channels,
                 current_model,
-                &state.gateway.routing_strategy,
+                state.gateway.routing_strategy,
                 &RoutingContext {
                     active_requests: &state.router.active_requests,
                     rate_limiter: &state.limits.rate_limiter,
@@ -548,8 +548,15 @@ mod tests {
         let rate_limiter = Arc::new(RateLimiter::new(None));
         let latency_tracker = Arc::new(LatencyTracker::new());
         let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
-        let result =
-            select_channel_for_attempt(None, &channels, "gpt-4", "weighted", &ctx, None).await;
+        let result = select_channel_for_attempt(
+            None,
+            &channels,
+            "gpt-4",
+            crate::router::RoutingStrategyType::WeightedRandom,
+            &ctx,
+            None,
+        )
+        .await;
         assert!(result.is_none());
     }
 
@@ -564,8 +571,15 @@ mod tests {
         let rate_limiter = Arc::new(RateLimiter::new(None));
         let latency_tracker = Arc::new(LatencyTracker::new());
         let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
-        let result =
-            select_channel_for_attempt(None, &channels, "gpt-4", "weighted", &ctx, None).await;
+        let result = select_channel_for_attempt(
+            None,
+            &channels,
+            "gpt-4",
+            crate::router::RoutingStrategyType::WeightedRandom,
+            &ctx,
+            None,
+        )
+        .await;
         assert!(result.is_some());
     }
 
@@ -584,7 +598,7 @@ mod tests {
             Some(channel_id),
             &channels,
             "gpt-4",
-            "weighted",
+            crate::router::RoutingStrategyType::WeightedRandom,
             &ctx,
             None,
         )
@@ -630,7 +644,7 @@ mod tests {
                 None,
                 &channels,
                 "gpt-4",
-                "weighted",
+                crate::router::RoutingStrategyType::WeightedRandom,
                 &ctx,
                 Some("production"),
             )
@@ -664,8 +678,15 @@ mod tests {
         // No account_group filter — both channels should be reachable.
         let mut seen_ids = std::collections::HashSet::new();
         for _ in 0..20 {
-            if let Some(ch) =
-                select_channel_for_attempt(None, &channels, "gpt-4", "weighted", &ctx, None).await
+            if let Some(ch) = select_channel_for_attempt(
+                None,
+                &channels,
+                "gpt-4",
+                crate::router::RoutingStrategyType::WeightedRandom,
+                &ctx,
+                None,
+            )
+            .await
             {
                 seen_ids.insert(ch.id);
             }
@@ -702,7 +723,7 @@ mod tests {
             None,
             &channels,
             "gpt-4",
-            "weighted",
+            crate::router::RoutingStrategyType::WeightedRandom,
             &ctx,
             Some("production"),
         )

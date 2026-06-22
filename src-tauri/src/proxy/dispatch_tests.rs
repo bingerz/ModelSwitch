@@ -183,7 +183,7 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
             model_fallbacks: HashMap::new(),
             context_window_fallbacks: HashMap::new(),
             model_aliases: HashMap::new(),
-            routing_strategy: "weighted_random".to_string(),
+            routing_strategy: crate::router::RoutingStrategyType::WeightedRandom,
             retry_base_ms: config.gateway.retry_base_ms,
             retry_max_ms: config.gateway.retry_max_ms,
             model_retry_overrides: HashMap::new(),

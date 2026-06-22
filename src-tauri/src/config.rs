@@ -83,7 +83,7 @@ pub struct GatewayConfig {
     #[serde(default)]
     pub model_aliases: HashMap<String, String>,
     #[serde(default = "default_routing_strategy")]
-    pub routing_strategy: String,
+    pub routing_strategy: crate::router::RoutingStrategyType,
     #[serde(default = "default_health_check_interval_secs")]
     pub health_check_interval_secs: u64,
     #[serde(default = "default_health_check_enabled")]
@@ -317,8 +317,8 @@ fn default_priority() -> u8 {
 fn default_weight() -> u32 {
     100
 }
-fn default_routing_strategy() -> String {
-    "weighted_random".to_string()
+fn default_routing_strategy() -> crate::router::RoutingStrategyType {
+    crate::router::RoutingStrategyType::WeightedRandom
 }
 fn default_health_check_interval_secs() -> u64 {
     60

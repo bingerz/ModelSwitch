@@ -15,6 +15,8 @@ use strategy::{
     UsageBasedStrategy, WeightedRandomStrategy,
 };
 
+pub use strategy::RoutingStrategyType;
+
 /// Context references needed by the routing layer.
 /// Bundled into a struct to keep `select_channel` signatures manageable.
 pub struct RoutingContext<'a> {
@@ -24,14 +26,13 @@ pub struct RoutingContext<'a> {
 }
 
 /// Select a healthy channel using the specified routing strategy.
-/// Falls back to weighted_random for unknown strategy names.
 ///
 /// When `account_group` is `Some(tag)`, only channels whose `account_group`
 /// matches the tag or is `None` (universal) are considered.
 pub async fn select_channel(
     channels: SharedChannels,
     requested_model: &str,
-    routing_strategy: &str,
+    routing_strategy: RoutingStrategyType,
     ctx: &RoutingContext<'_>,
     account_group: Option<&str>,
 ) -> Option<Channel> {
@@ -90,13 +91,17 @@ pub async fn select_channel(
     });
 
     let strategy: Box<dyn RoutingStrategy> = match routing_strategy {
-        "latency" => Box::new(LatencyBasedStrategy::new(Arc::clone(ctx.latency_tracker))),
-        "least_busy" => Box::new(LeastBusyStrategy::new(std::sync::Arc::clone(
-            ctx.active_requests,
-        ))),
-        "usage" => Box::new(UsageBasedStrategy::new(Arc::clone(ctx.rate_limiter))),
-        "lowest_cost" => Box::new(LowestCostStrategy),
-        _ => Box::new(WeightedRandomStrategy),
+        RoutingStrategyType::Latency => {
+            Box::new(LatencyBasedStrategy::new(Arc::clone(ctx.latency_tracker)))
+        }
+        RoutingStrategyType::LeastBusy => Box::new(LeastBusyStrategy::new(
+            std::sync::Arc::clone(ctx.active_requests),
+        )),
+        RoutingStrategyType::Usage => {
+            Box::new(UsageBasedStrategy::new(Arc::clone(ctx.rate_limiter)))
+        }
+        RoutingStrategyType::LowestCost => Box::new(LowestCostStrategy),
+        RoutingStrategyType::WeightedRandom => Box::new(WeightedRandomStrategy),
     };
 
     let mut current_priority = 0u8;

@@ -28,7 +28,7 @@ pub struct GatewayParams {
     pub model_fallbacks: HashMap<String, Vec<String>>,
     pub context_window_fallbacks: HashMap<String, Vec<String>>,
     pub model_aliases: HashMap<String, String>,
-    pub routing_strategy: String,
+    pub routing_strategy: crate::router::RoutingStrategyType,
     pub retry_base_ms: u64,
     pub retry_max_ms: u64,
     pub model_retry_overrides: HashMap<String, crate::config::ModelRetryConfig>,

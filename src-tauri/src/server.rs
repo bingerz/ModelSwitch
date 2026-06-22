@@ -49,7 +49,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     let model_fallbacks = config.gateway.model_fallbacks.clone();
     let context_window_fallbacks = config.gateway.context_window_fallbacks.clone();
     let model_aliases = config.gateway.model_aliases.clone();
-    let routing_strategy = config.gateway.routing_strategy.clone();
+    let routing_strategy = config.gateway.routing_strategy;
 
     // Initialize channel manager and logger
     let credential_store = create_credential_store();
