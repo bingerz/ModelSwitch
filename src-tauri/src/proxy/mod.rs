@@ -15,6 +15,7 @@ mod dispatch;
 pub(crate) mod provider;
 mod request_meta;
 mod response;
+mod token_counter;
 mod usage;
 
 #[cfg(test)]
@@ -96,45 +97,15 @@ pub(crate) fn validate_chat_request(body: &Value) -> Result<(), Response> {
     Ok(())
 }
 
-/// Estimate token count from request body for cost calculation.
-/// Uses a rough heuristic: ~4 chars per token for English, reads max_tokens if present.
+/// Estimate token count from request body for rate limiting and cost calculation.
+/// Uses accurate BPE tokenization for OpenAI models, falls back to character heuristic.
 fn estimate_tokens(body: &Value, _is_stream: bool) -> u64 {
+    let model = body.get("model").and_then(|m| m.as_str()).unwrap_or("");
+    let input_tokens = token_counter::count_input_tokens(model, body);
     let output_tokens = body
         .get("max_tokens")
         .and_then(|v| v.as_u64())
         .unwrap_or(4096);
-
-    let input_chars = body
-        .get("messages")
-        .and_then(|m| {
-            m.as_array().map(|arr| {
-                arr.iter()
-                    .filter_map(|msg| {
-                        msg.get("content").map(|c| {
-                            if let Some(s) = c.as_str() {
-                                s.len()
-                            } else {
-                                c.as_array()
-                                    .map(|blocks| {
-                                        blocks
-                                            .iter()
-                                            .filter_map(|b| {
-                                                b.get("text")
-                                                    .and_then(|t| t.as_str())
-                                                    .map(|t| t.len())
-                                            })
-                                            .sum::<usize>()
-                                    })
-                                    .unwrap_or(0)
-                            }
-                        })
-                    })
-                    .sum::<usize>()
-            })
-        })
-        .unwrap_or(0);
-    let input_tokens = (input_chars as u64) / 4;
-
     input_tokens + output_tokens
 }
 
@@ -222,7 +193,7 @@ mod tests {
             "messages": []
         });
         let tokens = estimate_tokens(&body, false);
-        // 0 input chars, default max_tokens = 4096
+        // 0 messages → 0 input tokens, default max_tokens = 4096
         assert_eq!(tokens, 4096);
     }
 
@@ -233,7 +204,7 @@ mod tests {
             "messages": [{"role": "user", "content": "hello world test"}]
         });
         let tokens = estimate_tokens(&body, false);
-        // "hello world test" = 16 chars / 4 = 4 input tokens + 4096 default = 4100
+        // 3 content words + 1 role word = 4 tokens + 3 msg overhead = 7 input + 4096 default
         assert!(tokens > 0);
     }
 
@@ -245,8 +216,8 @@ mod tests {
             "max_tokens": 100
         });
         let tokens = estimate_tokens(&body, false);
-        // "hi" = 2 chars / 4 = 0 input tokens + 100 max_tokens = 100
-        assert_eq!(tokens, 100);
+        // "hi" = 1 word + "user" role = 1 word = 2 tokens + 3 msg overhead = 5 input + 100 = 105
+        assert_eq!(tokens, 105);
     }
 
     #[test]
@@ -264,7 +235,7 @@ mod tests {
             ]
         });
         let tokens = estimate_tokens(&body, false);
-        // "hello world" (11) + "foo bar baz" (11) = 22 chars / 4 = 5 input tokens + 4096 = 4101
+        // 5 content words + 1 role word = 6 tokens + 3 msg overhead = 9 input + 4096
         assert!(tokens > 4096);
     }
 
@@ -275,7 +246,7 @@ mod tests {
             "messages": [{"role": "user", "content": "test"}]
         });
         let tokens = estimate_tokens(&body, false);
-        // "test" = 4 chars / 4 = 1 input token + 4096 default max_tokens = 4097
-        assert_eq!(tokens, 4097);
+        // "test" = 1 word + "user" role = 1 word = 2 tokens + 3 msg overhead = 5 input + 4096 = 4101
+        assert_eq!(tokens, 4101);
     }
 }
