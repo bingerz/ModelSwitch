@@ -227,16 +227,18 @@ function AppInner() {
               {t("common.logout")}
             </button>
           )}
-          <button
-            className="theme-toggle"
-            onClick={toggleLang}
-            title={t("common.switchLang")}
-          >
-            <span className="theme-toggle-icon">{lang === "en" ? "EN" : "中"}</span>
-          </button>
-          <button className="theme-toggle" onClick={toggleTheme} title={t("settings.toggleTheme", { mode: theme === "dark" ? t("settings.light") : t("settings.dark") })}>
-            <span className="theme-toggle-icon">{theme === "dark" ? "☀" : "☾"}</span>
-          </button>
+          <div className="sidebar-footer">
+            <button
+              className="theme-toggle"
+              onClick={toggleLang}
+              title={t("common.switchLang")}
+            >
+              <span className="theme-toggle-icon">{lang === "en" ? "EN" : "中"}</span>
+            </button>
+            <button className="theme-toggle" onClick={toggleTheme} title={t("settings.toggleTheme", { mode: theme === "dark" ? t("settings.light") : t("settings.dark") })}>
+              <span className="theme-toggle-icon">{theme === "dark" ? "☀" : "☾"}</span>
+            </button>
+          </div>
         </nav>
         <main className="main">
           {activeTab === "dashboard" && <StatusDashboard />}
