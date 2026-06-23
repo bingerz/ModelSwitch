@@ -216,10 +216,7 @@ mod tests {
         let create_result = create_virtual_key(State(state.clone()), Json(req))
             .await
             .unwrap();
-        let id_str = create_result.0.data["id"]
-            .as_str()
-            .unwrap()
-            .to_string();
+        let id_str = create_result.0.data["id"].as_str().unwrap().to_string();
         let id: Uuid = id_str.parse().unwrap();
 
         let delete_response = delete_virtual_key(State(state.clone()), Path(id)).await;

@@ -78,11 +78,7 @@ pub fn sse_stream_response_with_telemetry(
     translate_gemini: bool,
     model: String,
     first_byte_timeout: Option<std::time::Duration>,
-) -> (
-    Response,
-    Arc<Mutex<BytesMut>>,
-    Arc<Notify>,
-) {
+) -> (Response, Arc<Mutex<BytesMut>>, Arc<Notify>) {
     use tokio::sync::mpsc;
 
     let output_buffer: Arc<Mutex<BytesMut>> = Arc::new(Mutex::new(BytesMut::new()));
@@ -181,8 +177,9 @@ pub fn sse_stream_response_with_telemetry(
                 // Accumulate output bytes for telemetry + cache (zero-parse hot path).
                 // Single mutex lock + byte append, no SSE parsing on the hot path.
                 {
-                    let mut buf =
-                        output_buffer_clone.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut buf = output_buffer_clone
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
                     buf.extend_from_slice(&output_bytes);
                     if buf.len() > MAX_OUTPUT_BUFFER_BYTES {
                         let keep_from = buf.len() / 2;

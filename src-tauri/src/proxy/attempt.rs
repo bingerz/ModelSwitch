@@ -503,8 +503,7 @@ mod tests {
 
     #[test]
     fn detects_openai_reduce_messages_message() {
-        let body =
-            r#"{"error":{"message":"Please reduce the length of the messages."}}"#;
+        let body = r#"{"error":{"message":"Please reduce the length of the messages."}}"#;
         assert!(is_context_window_error(StatusCode::BAD_REQUEST, body));
     }
 
@@ -541,7 +540,10 @@ mod tests {
     #[test]
     fn rejects_429_rate_limit() {
         let body = r#"{"error":{"message":"Rate limited"}}"#;
-        assert!(!is_context_window_error(StatusCode::TOO_MANY_REQUESTS, body));
+        assert!(!is_context_window_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            body
+        ));
     }
 
     #[test]

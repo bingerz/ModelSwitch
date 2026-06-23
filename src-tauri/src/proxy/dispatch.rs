@@ -544,10 +544,7 @@ mod tests {
     }
 
     fn make_shared_channels(channels: Vec<Channel>) -> SharedChannels {
-        let map: std::collections::HashMap<
-            uuid::Uuid,
-            Arc<std::sync::RwLock<Channel>>,
-        > = channels
+        let map: std::collections::HashMap<uuid::Uuid, Arc<std::sync::RwLock<Channel>>> = channels
             .into_iter()
             .map(|c| (c.id, Arc::new(std::sync::RwLock::new(c))))
             .collect();
@@ -721,9 +718,11 @@ mod tests {
         mm.insert("gpt-4".to_string(), "gpt-4".to_string());
 
         // Only a staging channel exists — requesting production should fail.
-        let channels: SharedChannels = make_shared_channels(vec![
-            make_test_channel_with_group(staging_id, mm, Some("staging")),
-        ]);
+        let channels: SharedChannels = make_shared_channels(vec![make_test_channel_with_group(
+            staging_id,
+            mm,
+            Some("staging"),
+        )]);
 
         let active_requests = Arc::new(ActiveRequests::new());
         let rate_limiter = Arc::new(RateLimiter::new(None));

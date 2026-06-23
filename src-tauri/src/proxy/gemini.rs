@@ -1,6 +1,6 @@
 use crate::proxy::dispatch;
-use crate::proxy::AppState;
 use crate::proxy::provider::GeminiAdaptor;
+use crate::proxy::AppState;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;

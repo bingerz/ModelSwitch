@@ -280,5 +280,4 @@ impl From<&ChannelConfig> for Channel {
 /// updates, and other per-channel writes do not block routing reads of other
 /// channels. The inner std lock is safe because no `.await` is held while the
 /// guard is live.
-pub type SharedChannels =
-    Arc<tokio::sync::RwLock<HashMap<Uuid, Arc<std::sync::RwLock<Channel>>>>>;
+pub type SharedChannels = Arc<tokio::sync::RwLock<HashMap<Uuid, Arc<std::sync::RwLock<Channel>>>>>;

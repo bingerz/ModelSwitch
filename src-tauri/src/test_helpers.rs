@@ -22,7 +22,7 @@ use crate::proxy::cache::{CacheMode, InFlightRequests, RequestCache};
 use crate::proxy::payload_rules::ChannelPayloadRules;
 use crate::proxy::rate_limiter::RateLimiter;
 use crate::proxy::{
-    AppState, BillingState, CacheState, ProxyParams, LimitsState, McpState, RouterState,
+    AppState, BillingState, CacheState, LimitsState, McpState, ProxyParams, RouterState,
     SecurityState,
 };
 use crate::quota::QuotaStore;
@@ -31,12 +31,7 @@ use crate::router::affinity::SessionAffinity;
 use crate::virtual_key::VirtualKeyStore;
 
 /// Build a `ChannelConfig` pointing at the given base URL.
-pub(crate) fn channel_config(
-    id: &str,
-    name: &str,
-    base_url: &str,
-    priority: u8,
-) -> ChannelConfig {
+pub(crate) fn channel_config(id: &str, name: &str, base_url: &str, priority: u8) -> ChannelConfig {
     ChannelConfig {
         id: id.to_string(),
         name: name.to_string(),

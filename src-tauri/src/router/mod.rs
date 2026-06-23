@@ -99,9 +99,9 @@ pub async fn select_channel(
         RoutingStrategyType::Latency => {
             Box::new(LatencyBasedStrategy::new(Arc::clone(ctx.latency_tracker)))
         }
-        RoutingStrategyType::LeastBusy => Box::new(LeastBusyStrategy::new(
-            std::sync::Arc::clone(ctx.active_requests),
-        )),
+        RoutingStrategyType::LeastBusy => Box::new(LeastBusyStrategy::new(std::sync::Arc::clone(
+            ctx.active_requests,
+        ))),
         RoutingStrategyType::Usage => {
             Box::new(UsageBasedStrategy::new(Arc::clone(ctx.rate_limiter)))
         }

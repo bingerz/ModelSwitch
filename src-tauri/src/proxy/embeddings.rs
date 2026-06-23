@@ -6,8 +6,8 @@
 //! forwards the request to the upstream `/v1/embeddings` endpoint and
 //! returns the response.
 
-use crate::proxy::AppState;
 use crate::proxy::stream::json_response;
+use crate::proxy::AppState;
 use crate::proxy::SKIP_HEADERS;
 use crate::router::{self, RoutingContext};
 use axum::extract::State;
@@ -201,10 +201,7 @@ pub async fn handle_embeddings(
     let mut upstream_body = body;
     if model_needs_change {
         if let Some(obj) = upstream_body.as_object_mut() {
-            obj.insert(
-                "model".to_string(),
-                Value::String(upstream_model.clone()),
-            );
+            obj.insert("model".to_string(), Value::String(upstream_model.clone()));
         }
     }
 
@@ -227,8 +224,7 @@ pub async fn handle_embeddings(
 
     // Apply provider-specific auth. Embeddings are OpenAI-compatible, so we
     // use Bearer auth for all providers except web-session channels.
-    let is_web_session =
-        channel.credential.cred_type == crate::channel::CredentialType::WebSession;
+    let is_web_session = channel.credential.cred_type == crate::channel::CredentialType::WebSession;
     req_builder = if is_web_session {
         req_builder
             .header("Cookie", &api_key)
@@ -289,7 +285,11 @@ pub async fn handle_embeddings(
     // Active-request decrement handled by `_active_guard` drop at function end.
 
     // Record metrics
-    let status_label = if status.is_success() { "success" } else { "error" };
+    let status_label = if status.is_success() {
+        "success"
+    } else {
+        "error"
+    };
     crate::metrics::requests_total()
         .with_label_values(&[&provider_label, &resolved_model, status_label])
         .inc();

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::{Mutex, RwLock};
 use std::sync::Arc;
+use std::sync::{Mutex, RwLock};
 use std::time::Instant;
 use uuid::Uuid;
 
