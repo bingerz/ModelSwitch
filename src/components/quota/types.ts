@@ -25,13 +25,13 @@ export function formatBalance(value: number | null, fallback = "—"): string {
   return `$${value.toFixed(2)}`;
 }
 
-export function sourceLabel(source: string): string {
+export function sourceLabelKey(source: string): string {
   switch (source) {
-    case "http_api": return "API";
-    case "openai_compat": return "NewAPI";
-    case "response_header": return "Rate-Limit";
-    case "webview": return "WebView";
-    case "jsonpath": return "Custom";
+    case "http_api": return "quota.sourceApi";
+    case "openai_compat": return "quota.sourceNewApi";
+    case "response_header": return "quota.sourceRateLimit";
+    case "webview": return "quota.sourceWebview";
+    case "jsonpath": return "quota.sourceCustom";
     default: return source;
   }
 }
@@ -60,13 +60,10 @@ export function balanceColor(balance: number, limit: number | null): string {
   return "var(--color-success)";
 }
 
-export function strategyHint(source: string): string | null {
+export function strategyHintKey(source: string): string | null {
   switch (source) {
-    case "response_header":
-      return "Rate-limit data will appear automatically when this channel proxies requests.";
-    case "webview":
-      return "Click \"WebView Scrape\" to fetch balance data from the provider console.";
-    default:
-      return null;
+    case "response_header": return "quota.hintResponseHeader";
+    case "webview": return "quota.hintWebview";
+    default: return null;
   }
 }

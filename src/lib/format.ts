@@ -31,13 +31,15 @@ export function formatTokens(n: number): string {
 export function formatRelativeTime(input: Date | string): string {
   const from = input instanceof Date ? input : new Date(input);
   const diff = Math.max(0, Date.now() - from.getTime());
-  if (diff < 60_000) return "Just now";
+  const lang = typeof document !== "undefined" ? document.documentElement.lang || navigator.language || "en" : "en";
+  const rtf = new Intl.RelativeTimeFormat(lang, { numeric: "auto" });
+  if (diff < 60_000) return rtf.format(0, "second");  // "just now" / "刚刚"
   const min = Math.floor(diff / 60_000);
-  if (min < 60) return `${min}m ago`;
+  if (min < 60) return rtf.format(-min, "minute");
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
+  if (hr < 24) return rtf.format(-hr, "hour");
   const day = Math.floor(hr / 24);
-  return `${day}d ago`;
+  return rtf.format(-day, "day");
 }
 
 /**

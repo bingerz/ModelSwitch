@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { useTranslation } from "react-i18next";
 import { computeSparkArea, computeSparkPoints } from "./helpers";
 
 export interface SparklineProps {
@@ -22,6 +23,7 @@ export function Sparkline({
   fillOpacity = 0.15,
   strokeWidth = 1.5,
 }: SparklineProps) {
+  const { t } = useTranslation();
   const rawId = useId();
   // useId returns characters that are invalid in SVG ids in some edge cases;
   // sanitize to alphanumeric.
@@ -59,7 +61,7 @@ export function Sparkline({
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="none"
       role="img"
-      aria-label="Trend sparkline"
+      aria-label={t("common.trendSparkline")}
     >
       <defs>
         <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">

@@ -9,6 +9,7 @@ export function StatusBar() {
   const [gw, setGw] = useState<GwStatus | null>(null);
   const [stats, setStats] = useState<DispatchStats | null>(null);
   const [busy, setBusy] = useState(false);
+  const [networkError, setNetworkError] = useState(false);
   const { totalBalance, channelsWithData, lowBalanceCount } = useQuota();
 
   const pollStatus = useCallback(async () => {
@@ -33,6 +34,7 @@ export function StatusBar() {
       // Web mode: gateway is already serving the page. Poll /health.
       try {
         const res = await fetch(`${API_BASE}/health`);
+        setNetworkError(false);
         setGw({
           running: res.ok,
           host: window.location.hostname,
@@ -46,6 +48,7 @@ export function StatusBar() {
           }
         }
       } catch {
+        setNetworkError(true);
         setGw((prev) => prev ?? { running: false, host: "", port: 0 });
       }
     }
@@ -80,6 +83,13 @@ export function StatusBar() {
         <span className={`status-bar-indicator ${running ? "" : "status-bar-indicator-off"}`} />
         <span>{isTauri ? `${t("status.gateway")}: ${addr}` : t("status.webConsole")}</span>
       </div>
+      {networkError && !isTauri && (
+        <div className="status-bar-error">
+          <span className="status-bar-error-dot" />
+          <span>{t("status.connectionLost")}</span>
+          <span className="status-bar-reconnecting">{t("status.reconnecting")}</span>
+        </div>
+      )}
       {isTauri && (
         <div className="status-bar-center">
           <button

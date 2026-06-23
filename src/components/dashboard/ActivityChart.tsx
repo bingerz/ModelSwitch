@@ -125,7 +125,7 @@ export function ActivityChart({ logs }: ActivityChartProps) {
           className="dsh-activity-svg"
           viewBox={`0 0 ${viewWidth} ${VIEW_HEIGHT}`}
           role="img"
-          aria-label="Request activity timeline"
+          aria-label={t("dashboard.activityTimeline")}
         >
           {/* Y gridlines + labels */}
           {yTicks.map((tick) => {

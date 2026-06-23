@@ -94,3 +94,143 @@
   overflow-y: auto;
   padding: var(--space-8);
 }
+
+/* ─── Hamburger Toggle (mobile only) ─── */
+
+.hamburger-toggle {
+  display: none;
+  position: fixed;
+  top: var(--space-2);
+  right: var(--space-2);
+  z-index: 1100;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-elevated);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--duration-fast) var(--ease);
+}
+
+.hamburger-toggle:hover {
+  background: var(--color-surface-hover);
+}
+
+.hamburger-icon,
+.hamburger-icon::before,
+.hamburger-icon::after {
+  display: block;
+  width: 18px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--color-text);
+  transition: transform var(--duration-fast) var(--ease),
+    opacity var(--duration-fast) var(--ease);
+}
+
+.hamburger-icon {
+  position: relative;
+}
+
+.hamburger-icon::before,
+.hamburger-icon::after {
+  content: '';
+  position: absolute;
+  left: 0;
+}
+
+.hamburger-icon::before {
+  top: -6px;
+}
+
+.hamburger-icon::after {
+  top: 6px;
+}
+
+.hamburger-icon-open {
+  background: transparent;
+}
+
+.hamburger-icon-open::before {
+  transform: rotate(45deg);
+  top: 0;
+}
+
+.hamburger-icon-open::after {
+  transform: rotate(-45deg);
+  top: 0;
+}
+
+/* ─── Sidebar Backdrop (mobile) ─── */
+
+.sidebar-backdrop {
+  display: none;
+}
+
+/* ─── Responsive Layout (below 768px) ─── */
+
+@media (max-width: 767px) {
+  .hamburger-toggle {
+    display: flex;
+  }
+
+  .layout {
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  .layout-body {
+    flex-direction: column;
+    padding-top: 44px;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 260px;
+    min-width: 260px;
+    z-index: 1050;
+    transform: translateX(-100%);
+    transition: transform var(--duration-normal) var(--ease);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.3);
+    overflow-y: auto;
+  }
+
+  .sidebar-open {
+    transform: translateX(0);
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.5);
+  }
+
+  .main {
+    padding: var(--space-3);
+    overflow-y: auto;
+  }
+
+  .status-bar {
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    font-size: 11px;
+  }
+
+  .status-bar-left,
+  .status-bar-center,
+  .status-bar-right {
+    flex-wrap: wrap;
+    gap: var(--space-1);
+  }
+}

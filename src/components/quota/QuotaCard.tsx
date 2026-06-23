@@ -7,8 +7,8 @@ import {
   formatBalance,
   formatTokens,
   sourceColor,
-  sourceLabel,
-  strategyHint,
+  sourceLabelKey,
+  strategyHintKey,
 } from "./types";
 
 /** Providers that support WebView quota scraping */
@@ -231,7 +231,7 @@ export function QuotaCard({ q, onScrape }: { q: QuotaInfo; onScrape?: (info: Quo
   const hasUsage = q.usage != null && q.usage > 0;
   const hasTokenUsage = q.total_input_tokens != null || q.total_output_tokens != null;
   const hasGroups = q.groups.length > 0;
-  const hint = strategyHint(q.source);
+  const hintKey = strategyHintKey(q.source);
 
   const showProviderData =
     hasBalance || hasUsage || hasGroups || hasRateLimit || q.items.length > 0;
@@ -242,7 +242,7 @@ export function QuotaCard({ q, onScrape }: { q: QuotaInfo; onScrape?: (info: Quo
         <div className="quota-card-title">
           <strong>{q.channel_name}</strong>
           <span className="quota-source-badge" style={{ color: sourceColor(q.source) }}>
-            {sourceLabel(q.source)}
+            {t(sourceLabelKey(q.source))}
           </span>
         </div>
         <span className="quota-provider">{q.provider}</span>
@@ -265,8 +265,8 @@ export function QuotaCard({ q, onScrape }: { q: QuotaInfo; onScrape?: (info: Quo
 
       {hasError && <div className="quota-error">{q.error}</div>}
 
-      {!hasError && !hasBalance && !hasTokenUsage && hint && (
-        <div className="quota-hint">{hint}</div>
+      {!hasError && !hasBalance && !hasTokenUsage && hintKey && (
+        <div className="quota-hint">{t(hintKey)}</div>
       )}
 
       {hasTokenUsage && <ProxyStatisticsSection q={q} />}

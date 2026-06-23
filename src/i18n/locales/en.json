@@ -9,6 +9,7 @@
     "confirm": "Confirm",
     "confirmDelete": "Confirm Delete?",
     "confirmQuestion": "Confirm?",
+    "logoutConfirm": "Are you sure you want to log out?",
     "loading": "Loading...",
     "noData": "No data",
     "error": "Error",
@@ -71,7 +72,11 @@
     "envVars_one": "{{count}} env var",
     "envVars_other": "{{count}} env vars",
     "modelsCount_one": "{{count}} model",
-    "modelsCount_other": "{{count}} models"
+    "modelsCount_other": "{{count}} models",
+    "switchLang": "Switch language",
+    "toggleMenu": "Toggle menu",
+    "trendSparkline": "Trend sparkline",
+    "reqShort": "req"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -104,7 +109,9 @@
     "startGateway": "Start gateway",
     "stopGateway": "Stop gateway",
     "restartGateway": "Restart gateway",
-    "webConsole": "Web Console"
+    "webConsole": "Web Console",
+    "connectionLost": "Connection lost",
+    "reconnecting": "Reconnecting..."
   },
   "channels": {
     "title": "Channels",
@@ -355,7 +362,14 @@
     "tokensAcrossRequests": "{{tokens}} tokens across {{requests}} requests",
     "tokensAcrossRequestsCost": "{{tokens}} tokens across {{requests}} requests · {{cost}} est. cost",
     "rateLimitHint": "Rate-limit data will appear automatically when this channel proxies requests.",
-    "webviewHint": "Click \"WebView Scrape\" to fetch balance data from the provider console."
+    "webviewHint": "Click \"WebView Scrape\" to fetch balance data from the provider console.",
+    "sourceApi": "API",
+    "sourceNewApi": "NewAPI",
+    "sourceRateLimit": "Rate-Limit",
+    "sourceWebview": "WebView",
+    "sourceCustom": "Custom",
+    "hintResponseHeader": "Rate-limit data will appear automatically when this channel proxies requests.",
+    "hintWebview": "Click \"WebView Scrape\" to fetch balance data from the provider console."
   },
   "dashboard": {
     "title": "Status Dashboard",
@@ -406,7 +420,8 @@
     "avgLatency": "Avg Latency",
     "estCost24h": "Est. Cost (24h)",
     "tokensLabel": "{{count}} tokens",
-    "errRate": "{{rate}}% err"
+    "errRate": "{{rate}}% err",
+    "activityTimeline": "Request activity timeline"
   },
   "logs": {
     "title": "Dispatch Logs",

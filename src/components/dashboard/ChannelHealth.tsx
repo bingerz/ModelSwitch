@@ -104,7 +104,7 @@ export function ChannelHealth({
               </span>
               <span className="dsh-health-provider">{ch.provider}</span>
               <span className="dsh-health-stats">
-                {formatNumber(reqs)} req &middot; {Math.round(ch.avg_latency_ms)}ms
+                {formatNumber(reqs)} {t("common.reqShort")} &middot; {Math.round(ch.avg_latency_ms)}ms
                 {errPct > 0 && (
                   <span
                     className="dsh-health-err"

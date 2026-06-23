@@ -66,6 +66,7 @@ function AppInner() {
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
   const [lang, setLang] = useState<"en" | "zh">(getInitialLang);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [authed, setAuthed] = useState(() => {
     if (isTauri) return true;
     return !!localStorage.getItem("admin_token");
@@ -86,6 +87,23 @@ function AppInner() {
     i18n.changeLanguage(next);
     localStorage.setItem("lang", next);
   };
+
+  // Web mode keyboard shortcuts: Cmd/Ctrl+1..8 to switch tabs
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key >= "1" && e.key <= "8") {
+        e.preventDefault();
+        const tabs: TabId[] = ["dashboard", "channels", "virtualKeys", "mcp", "logs", "cost", "quota", "settings"];
+        const idx = parseInt(e.key, 10) - 1;
+        if (tabs[idx]) {
+          setActiveTab(tabs[idx]);
+          setMenuOpen(false);
+        }
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // On mount: check if gateway is running, auto-start if not
   useEffect(() => {
@@ -141,8 +159,19 @@ function AppInner() {
 
   return (
     <div className="layout">
+      <button
+        className="hamburger-toggle"
+        onClick={() => setMenuOpen((o) => !o)}
+        aria-label={t("common.toggleMenu")}
+        aria-expanded={menuOpen}
+      >
+        <span className={`hamburger-icon ${menuOpen ? "hamburger-icon-open" : ""}`} />
+      </button>
+      {menuOpen && (
+        <div className="sidebar-backdrop" onClick={() => setMenuOpen(false)} />
+      )}
       <div className="layout-body">
-        <nav className="sidebar">
+        <nav className={`sidebar ${menuOpen ? "sidebar-open" : ""}`}>
           <div className="sidebar-brand">ModelSwitch</div>
           <div className="sidebar-nav">
             {TAB_GROUPS.map((group) => (
@@ -152,7 +181,10 @@ function AppInner() {
                   <button
                     key={tab.id}
                     className={`nav-item ${activeTab === tab.id ? "active" : ""}`}
-                    onClick={() => setActiveTab(tab.id)}
+                    onClick={() => {
+                      setActiveTab(tab.id);
+                      setMenuOpen(false);
+                    }}
                   >
                     {tab.label}
                   </button>
@@ -164,8 +196,10 @@ function AppInner() {
             <button
               className="nav-item logout-button"
               onClick={() => {
-                localStorage.removeItem("admin_token");
-                window.location.reload();
+                if (confirm(t("common.logoutConfirm"))) {
+                  localStorage.removeItem("admin_token");
+                  window.location.reload();
+                }
               }}
             >
               {t("common.logout")}
@@ -174,7 +208,7 @@ function AppInner() {
           <button
             className="theme-toggle"
             onClick={toggleLang}
-            title={lang === "en" ? "Switch to Chinese" : "Switch to English"}
+            title={t("common.switchLang")}
           >
             <span className="theme-toggle-icon">{lang === "en" ? "EN" : "中"}</span>
           </button>

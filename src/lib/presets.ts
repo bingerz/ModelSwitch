@@ -38,13 +38,6 @@ export interface ProviderPreset {
   quotaEndpoint?: string;
 }
 
-export const CATEGORY_LABELS: Record<PresetCategory, string> = {
-  official: "Official",
-  cn_official: "CN Domestic",
-  aggregator: "Aggregators",
-  cloud_provider: "Cloud Providers",
-  third_party: "Third-party Relay",
-};
 
 export const PROVIDER_PRESETS: ProviderPreset[] = [
   // ─── Official ───
