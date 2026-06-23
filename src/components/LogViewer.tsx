@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ClipboardList, Search } from "lucide-react";
 import { api, type DispatchLog } from "../lib/api";
 import { formatRelativeTime, latencyColor } from "../lib/format";
@@ -16,6 +17,7 @@ function matchesSearch(log: DispatchLog, query: string): boolean {
 }
 
 export function LogViewer() {
+  const { t } = useTranslation();
   const [logs, setLogs] = useState<DispatchLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterValue>("all");
@@ -63,21 +65,21 @@ export function LogViewer() {
             visibleLogs.reduce((sum, l) => sum + l.latency_ms, 0) / total,
           )
         : 0;
-    return { total, successRate, avgLatency };
+    return { total, successes, successRate, avgLatency };
   }, [visibleLogs]);
 
   // Determine which empty state to show
   const hasNoData = !loading && logs.length === 0;
   const hasNoResults = !loading && logs.length > 0 && visibleLogs.length === 0;
 
-  if (loading) return <div className="panel-loading">Loading logs...</div>;
+  if (loading) return <div className="panel-loading">{t("logs.loading")}</div>;
 
   return (
     <section>
       <div className="panel-header">
-        <h2 className="panel-title">Dispatch Logs</h2>
+        <h2 className="panel-title">{t("logs.title")}</h2>
         <button className="btn btn-sm" onClick={fetchLogs}>
-          Refresh
+          {t("common.refresh")}
         </button>
       </div>
 
@@ -86,25 +88,25 @@ export function LogViewer() {
           className={`log-filter-btn${filter === "all" ? " active" : ""}`}
           onClick={() => setFilter("all")}
         >
-          All<span className="badge">({totalCount})</span>
+          {t("common.all")}<span className="badge">({totalCount})</span>
         </button>
         <button
           className={`log-filter-btn${filter === "success" ? " active" : ""}`}
           onClick={() => setFilter("success")}
         >
-          Success<span className="badge">({successCount})</span>
+          {t("common.success")}<span className="badge">({successCount})</span>
         </button>
         <button
           className={`log-filter-btn${filter === "failed" ? " active" : ""}`}
           onClick={() => setFilter("failed")}
         >
-          Failed<span className="badge">({failedCount})</span>
+          {t("common.failed")}<span className="badge">({failedCount})</span>
         </button>
 
         <input
           className="log-search-input"
           type="text"
-          placeholder="Search model or channel..."
+          placeholder={t("logs.searchPlaceholder")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -113,19 +115,19 @@ export function LogViewer() {
       {logs.length > 0 && (
         <div className="log-summary-stats">
           <span className="log-summary-stat">
-            Requests:{" "}
+            {t("logs.requestsLabel")}{" "}
             <span className="log-summary-stat-value">{summary.total}</span>
           </span>
           <div className="log-summary-stat-divider" />
           <span className="log-summary-stat">
-            Success rate:{" "}
+            {t("logs.successRateLabel")}{" "}
             <span className="log-summary-stat-value success-color">
               {summary.successRate.toFixed(1)}%
             </span>
           </span>
           <div className="log-summary-stat-divider" />
           <span className="log-summary-stat">
-            Avg latency:{" "}
+            {t("logs.avgLatencyLabel")}{" "}
             <span className="log-summary-stat-value">
               {summary.avgLatency}ms
             </span>
@@ -138,10 +140,9 @@ export function LogViewer() {
           <div className="log-empty-icon">
             <ClipboardList size={32} />
           </div>
-          <div className="empty-state-title">No dispatch logs yet</div>
+          <div className="empty-state-title">{t("logs.empty")}</div>
           <div className="empty-state-description">
-            Dispatch logs will appear here once the gateway starts routing
-            requests to your channels.
+            {t("logs.emptyHint")}
           </div>
         </div>
       )}
@@ -151,9 +152,9 @@ export function LogViewer() {
           <div className="log-empty-icon">
             <Search size={32} />
           </div>
-          <div className="empty-state-title">No matching logs</div>
+          <div className="empty-state-title">{t("logs.noResults")}</div>
           <div className="empty-state-description">
-            Try adjusting your filters or search query.
+            {t("logs.noResultsHint")}
           </div>
         </div>
       )}
@@ -163,14 +164,14 @@ export function LogViewer() {
           <table className="log-table">
             <thead>
               <tr>
-                <th>Time</th>
-                <th>Model</th>
-                <th>Channel</th>
-                <th>Retries</th>
-                <th>Reason</th>
-                <th>Latency</th>
-                <th>Tokens</th>
-                <th>Status</th>
+                <th>{t("logs.timestamp")}</th>
+                <th>{t("logs.model")}</th>
+                <th>{t("logs.channel")}</th>
+                <th>{t("logs.retries")}</th>
+                <th>{t("logs.reason")}</th>
+                <th>{t("logs.latency")}</th>
+                <th>{t("logs.tokens")}</th>
+                <th>{t("common.status")}</th>
               </tr>
             </thead>
             <tbody>
@@ -205,7 +206,7 @@ export function LogViewer() {
                       <span
                         className={`log-status ${log.success ? "success" : "failure"}`}
                       >
-                        {log.success ? "OK" : "FAIL"}
+                        {log.success ? t("common.ok") : t("common.fail")}
                       </span>
                     </td>
                   </tr>

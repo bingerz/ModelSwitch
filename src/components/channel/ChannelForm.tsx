@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   api,
   validateChannelForm,
   invokeTauri,
 } from "../../lib/api";
+import { isTauri } from "../../lib/runtime";
 import { useToast } from "../Toast";
 import { type ProviderPreset, type ApiFormat } from "../../lib/presets";
 import { PresetSelector, getAvailableFormats } from "./PresetSelector";
 import { FormFields } from "./FormFields";
 
 export function ChannelForm({ onSave }: { onSave: () => void }) {
+  const { t } = useTranslation();
   const toast = useToast();
   const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
   const [activePreset, setActivePreset] = useState<ProviderPreset | null>(null);
@@ -63,7 +66,7 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
     try {
       await invokeTauri("open_login_webview", { provider });
     } catch (e) {
-      toast.error(`WebView login failed: ${e}`);
+      toast.error(t("channels.webViewLoginFailed", { error: String(e) }));
       setLoginInProgress(false);
     }
   };
@@ -123,11 +126,11 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
       return;
     }
     if (costPerToken && parseFloat(costPerToken) <= 0) {
-      setError("Cost per token must be a positive number");
+      setError(t("channels.costPositive"));
       return;
     }
     if (!credentialValue.trim() && credentialType === "api_key") {
-      setError("API key is required");
+      setError(t("channels.apiKeyRequired"));
       return;
     }
     setSubmitting(true);
@@ -148,10 +151,10 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
         rpm_limit: rpmLimit ? parseInt(rpmLimit, 10) : null,
         tpm_limit: tpmLimit ? parseInt(tpmLimit, 10) : null,
       });
-      toast.success("Channel created");
+      toast.success(t("channels.created"));
       onSave();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to create channel";
+      const msg = err instanceof Error ? err.message : t("channels.createFailed");
       setError(msg);
       toast.error(msg);
     } finally {
@@ -161,11 +164,11 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
 
   return (
     <form className="channel-form" onSubmit={handleSubmit}>
-      <h3 className="form-title">Add Channel</h3>
+      <h3 className="form-title">{t("channels.createChannel")}</h3>
 
       <PresetSelector selected={selectedPreset} onSelect={handlePresetSelect} />
 
-      <div className="form-divider"><span>Or configure manually</span></div>
+      <div className="form-divider"><span>{t("channels.orConfigureManually")}</span></div>
 
       <FormFields
         name={name} setName={setName}
@@ -186,8 +189,8 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
         apiKeyUrl={activePreset?.apiKeyUrl}
         defaultModel={activePreset?.defaultModel}
         showCredential={true}
-        onWebViewLogin={handleWebViewLogin}
-        loginInProgress={loginInProgress}
+        onWebViewLogin={isTauri ? handleWebViewLogin : undefined}
+        loginInProgress={isTauri ? loginInProgress : false}
         presetLocked={selectedPreset !== null}
         apiFormat={apiFormat}
         apiFormats={activePreset ? getAvailableFormats(activePreset) : ["openai"]}
@@ -195,7 +198,7 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
       />
       {error && <div className="form-error">{error}</div>}
       <button type="submit" className="btn btn-primary" disabled={submitting}>
-        {submitting ? "Creating..." : "Create Channel"}
+        {submitting ? t("channels.creating") : t("channels.createChannel")}
       </button>
     </form>
   );

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, type Channel, PRIORITY_TIERS } from "../../lib/api";
 import { useQuota } from "../../hooks/useQuota";
 import type { QuotaInfo } from "../../lib/api";
@@ -8,6 +9,7 @@ import { ChannelForm } from "./ChannelForm";
 import { EditChannelForm } from "./EditChannelForm";
 
 export function ChannelPanel() {
+  const { t } = useTranslation();
   const toast = useToast();
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -30,19 +32,19 @@ export function ChannelPanel() {
     setConfirmDeleteId(null);
     try {
       await api.deleteChannel(id);
-      toast.success("Channel deleted");
+      toast.success(t("channels.deleted"));
       refresh();
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to delete channel");
+      toast.error(err instanceof Error ? err.message : t("channels.deleteFailed"));
     }
   };
 
   const handlePing = async (id: string) => {
     try {
       const result = await api.pingChannel(id);
-      toast.success(result.success ? `Ping OK (${result.latency_ms}ms)` : "Ping failed");
+      toast.success(result.success ? t("channels.pingOk", { latency: result.latency_ms }) : t("channels.pingFailed"));
     } catch {
-      toast.error("Ping error");
+      toast.error(t("channels.pingError"));
     }
   };
 
@@ -61,7 +63,7 @@ export function ChannelPanel() {
       });
       refresh();
     } catch {
-      toast.error("Failed to toggle channel");
+      toast.error(t("channels.toggleFailed"));
       refresh();
     }
   };
@@ -93,7 +95,7 @@ export function ChannelPanel() {
     setDragId(null);
   };
 
-  if (loading) return <div className="panel-loading">Loading channels...</div>;
+  if (loading) return <div className="panel-loading">{t("channels.loadingChannels")}</div>;
 
   // Apply search and status filters
   const filteredChannels = channels.filter((ch) => {
@@ -131,9 +133,9 @@ export function ChannelPanel() {
   return (
     <section>
       <div className="panel-header">
-        <h2 className="panel-title">Channels</h2>
+        <h2 className="panel-title">{t("channels.title")}</h2>
         <button className="btn btn-primary" onClick={() => setShowAddForm(!showAddForm)}>
-          {showAddForm ? "Cancel" : "+ Add Channel"}
+          {showAddForm ? t("common.cancel") : t("channels.create")}
         </button>
       </div>
 
@@ -151,7 +153,7 @@ export function ChannelPanel() {
           <input
             type="text"
             className="channel-search-input"
-            placeholder="Search channels..."
+            placeholder={t("channels.searchPlaceholder")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -159,9 +161,9 @@ export function ChannelPanel() {
             <button
               className="channel-search-clear"
               onClick={() => setSearchQuery("")}
-              title="Clear search"
+              title={t("common.clear")}
             >
-              ×
+              {"\u00D7"}
             </button>
           )}
         </div>
@@ -170,23 +172,23 @@ export function ChannelPanel() {
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
         >
-          <option value="all">All Status</option>
-          <option value="healthy">Healthy</option>
-          <option value="circuit_open">Circuit Open</option>
-          <option value="disabled">Disabled</option>
+          <option value="all">{t("channels.allStatus")}</option>
+          <option value="healthy">{t("channels.healthy")}</option>
+          <option value="circuit_open">{t("channels.circuitOpen")}</option>
+          <option value="disabled">{t("channels.disabled")}</option>
         </select>
       </div>
       {(searchQuery || statusFilter !== "all") && (
         <p className="filter-results-count">
-          Showing {showingChannels} of {totalChannels} channels
+          {t("channels.showingCount", { shown: showingChannels, total: totalChannels })}
         </p>
       )}
 
       <div className="tiers-container">
         {allPriorities.map((priority) => {
           const meta = PRIORITY_TIERS[priority] || {
-            label: `Priority ${priority}`,
-            desc: "",
+            label: t(`channels.priority${priority}Label`),
+            desc: t(`channels.priority${priority}Desc`),
           };
           const channelsInPriority = priorities.get(priority) || [];
           return (
@@ -206,7 +208,7 @@ export function ChannelPanel() {
                 <span className="tier-count">{channelsInPriority.length}</span>
               </div>
               {channelsInPriority.length === 0 ? (
-                <div className="tier-empty">Drop a channel here</div>
+                <div className="tier-empty">{t("channels.dropChannelHere")}</div>
               ) : (
                 <div className="tier-channels">
                   {channelsInPriority.map((ch) => {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, type Channel, type DispatchLog, type DispatchStats, type UsageHistory } from "../../lib/api";
 import { useQuota } from "../../hooks/useQuota";
 import "../../styles/status-dashboard.css";
@@ -24,6 +25,7 @@ import {
 const LOG_LIMIT = 50;
 
 export function StatusDashboard() {
+  const { t } = useTranslation();
   const [channels, setChannels] = useState<Channel[]>([]);
   const [stats, setStats] = useState<DispatchStats | null>(null);
   const [logs, setLogs] = useState<DispatchLog[]>([]);
@@ -58,12 +60,12 @@ export function StatusDashboard() {
       // Only show error if we previously had data (connection lost).
       // During initial gateway startup, keep showing the loading spinner.
       if (!loadingRef.current) {
-        setError("Connection lost — retrying...");
+        setError(t("dashboard.connectionLost"));
       }
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,11 +129,11 @@ export function StatusDashboard() {
     return (
       <section>
         <div className="panel-header">
-          <h2 className="panel-title">Status Dashboard</h2>
+          <h2 className="panel-title">{t("dashboard.title")}</h2>
         </div>
         <div className="dsh-loading">
           <div className="dsh-loading-spinner" />
-          <span className="dsh-loading-text">Connecting to gateway...</span>
+          <span className="dsh-loading-text">{t("dashboard.connecting")}</span>
         </div>
       </section>
     );
@@ -141,7 +143,7 @@ export function StatusDashboard() {
     return (
       <section>
         <div className="panel-header">
-          <h2 className="panel-title">Status Dashboard</h2>
+          <h2 className="panel-title">{t("dashboard.title")}</h2>
         </div>
         <div className="dsh-error">
           <span className="dsh-error-icon">
@@ -149,7 +151,7 @@ export function StatusDashboard() {
           </span>
           <div className="dsh-error-text">{error}</div>
           <button className="dsh-error-btn" onClick={fetchData}>
-            Retry
+            {t("common.retry")}
           </button>
         </div>
       </section>
@@ -164,17 +166,17 @@ export function StatusDashboard() {
   return (
     <section className="dsh-root">
       <div className="dsh-header">
-        <h2 className="dsh-title">Status Dashboard</h2>
+        <h2 className="dsh-title">{t("dashboard.title")}</h2>
         <div className="dsh-header-actions">
           <LiveBadge lastUpdated={lastUpdated} />
           <button
             className="dsh-refresh-btn"
             onClick={handleRefresh}
             disabled={refreshing}
-            title="Refresh now"
+            title={t("common.refreshNow")}
           >
             <RefreshCw size={14} className={refreshing ? "dsh-spin" : ""} />
-            <span>Refresh</span>
+            <span>{t("common.refresh")}</span>
           </button>
         </div>
       </div>
@@ -185,11 +187,11 @@ export function StatusDashboard() {
           <StatCard
             icon={Zap}
             value={stats ? formatNumber(stats.total_requests) : "0"}
-            label="Total Requests"
+            label={t("dashboard.totalRequests")}
             accent="blue"
             size="mega"
             sparkline={requestSpark}
-            subtitle={`${healthyCount} healthy · ${circuitOpenCount + disabledCount} broken`}
+            subtitle={`${t("common.healthyCount", { count: healthyCount })} \u00B7 ${t("common.brokenCount", { count: circuitOpenCount + disabledCount })}`}
           />
         </div>
         <div className="dsh-quota-cell">

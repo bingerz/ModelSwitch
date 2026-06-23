@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import { useTranslation } from "react-i18next";
 import { Sparkline } from "./Sparkline";
 import { CircleCheck, CircleX, DollarSign, Timer } from "./icons";
 import { formatNumber } from "./helpers";
@@ -29,19 +30,20 @@ export function PerformanceCard({
   successes, failures, avgLatencyMs, totalCost, totalTokens,
   successSpark, failureSpark, latencySpark, costSpark,
 }: PerformanceCardProps) {
+  const { t } = useTranslation();
   const quadrants: Quadrant[] = [
-    { icon: CircleCheck, value: formatNumber(successes), label: "Successes", accent: "green", spark: successSpark },
-    { icon: CircleX, value: formatNumber(failures), label: "Failures", accent: "red", spark: failureSpark },
-    { icon: Timer, value: avgLatencyMs != null ? `${Math.round(avgLatencyMs)}ms` : "—", label: "Avg Latency", accent: "amber", spark: latencySpark },
-    { icon: DollarSign, value: `$${totalCost.toFixed(2)}`, label: "Est. Cost (24h)", accent: "blue", spark: costSpark },
+    { icon: CircleCheck, value: formatNumber(successes), label: t("dashboard.successes"), accent: "green", spark: successSpark },
+    { icon: CircleX, value: formatNumber(failures), label: t("dashboard.failures"), accent: "red", spark: failureSpark },
+    { icon: Timer, value: avgLatencyMs != null ? `${Math.round(avgLatencyMs)}ms` : "\u2014", label: t("dashboard.avgLatency"), accent: "amber", spark: latencySpark },
+    { icon: DollarSign, value: `$${totalCost.toFixed(2)}`, label: t("dashboard.estCost24h"), accent: "blue", spark: costSpark },
   ];
 
   return (
     <div className="dsh-card dsh-performance-card">
       <div className="dsh-card-title-row">
-        <span className="dsh-card-title">24h Performance</span>
+        <span className="dsh-card-title">{t("dashboard.performance24h")}</span>
         <span className="dsh-performance-tokens">
-          {formatNumber(totalTokens)} tokens
+          {t("dashboard.tokensLabel", { count: formatNumber(totalTokens) })}
         </span>
       </div>
       <div className="dsh-performance-grid">

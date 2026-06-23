@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api } from "../../lib/api";
 import { useToast } from "../Toast";
 import type { CreateMcpServerData } from "./types";
@@ -9,6 +10,7 @@ export interface McpServerFormProps {
 }
 
 export function McpServerForm({ onSave }: McpServerFormProps) {
+  const { t } = useTranslation();
   const toast = useToast();
   const [id, setId] = useState("");
   const [name, setName] = useState("");
@@ -25,9 +27,9 @@ export function McpServerForm({ onSave }: McpServerFormProps) {
     e.preventDefault();
     setError(null);
 
-    if (!id.trim()) return setError("ID is required");
-    if (!name.trim()) return setError("Name is required");
-    if (!command.trim()) return setError("Command is required");
+    if (!id.trim()) return setError(t("mcp.idRequired"));
+    if (!name.trim()) return setError(t("mcp.nameRequired"));
+    if (!command.trim()) return setError(t("mcp.commandRequired"));
 
     const data: CreateMcpServerData = {
       id: id.trim(),
@@ -43,10 +45,10 @@ export function McpServerForm({ onSave }: McpServerFormProps) {
     setSubmitting(true);
     try {
       await api.mcp.createServer(data);
-      toast.success("Server created");
+      toast.success(t("mcp.created"));
       onSave();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to create server";
+      const msg = err instanceof Error ? err.message : t("mcp.createFailed");
       setError(msg);
       toast.error(msg);
     } finally {
@@ -56,45 +58,45 @@ export function McpServerForm({ onSave }: McpServerFormProps) {
 
   return (
     <form className="channel-form" onSubmit={handleSubmit}>
-      <h3 className="form-title">Add MCP Server</h3>
+      <h3 className="form-title">{t("mcp.addTitle")}</h3>
       <div className="form-grid">
         <label className="form-field">
-          <span>ID</span>
+          <span>{t("mcp.id")}</span>
           <input
             value={id}
             onChange={(e) => setId(e.target.value)}
-            placeholder="e.g. filesystem"
+            placeholder={t("mcp.idPlaceholder")}
             required
           />
         </label>
         <label className="form-field">
-          <span>Name</span>
+          <span>{t("common.name")}</span>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Filesystem Server"
+            placeholder={t("mcp.namePlaceholder")}
             required
           />
         </label>
         <label className="form-field">
-          <span>Command</span>
+          <span>{t("mcp.command")}</span>
           <input
             value={command}
             onChange={(e) => setCommand(e.target.value)}
-            placeholder="e.g. npx"
+            placeholder={t("mcp.commandPlaceholder")}
             required
           />
         </label>
         <label className="form-field">
-          <span>Arguments</span>
+          <span>{t("mcp.args")}</span>
           <input
             value={args}
             onChange={(e) => setArgs(e.target.value)}
-            placeholder="e.g. -y @modelcontextprotocol/server-filesystem /tmp"
+            placeholder={t("mcp.argsPlaceholder")}
           />
         </label>
         <label className="form-field span-2">
-          <span>Environment Variables (one KEY=VALUE per line)</span>
+          <span>{t("mcp.env")}</span>
           <textarea
             value={env}
             onChange={(e) => setEnv(e.target.value)}
@@ -115,7 +117,7 @@ export function McpServerForm({ onSave }: McpServerFormProps) {
           />
         </label>
         <label className="form-field">
-          <span>Working Directory</span>
+          <span>{t("mcp.workingDirectory")}</span>
           <input
             value={cwd}
             onChange={(e) => setCwd(e.target.value)}
@@ -129,7 +131,7 @@ export function McpServerForm({ onSave }: McpServerFormProps) {
               checked={enabled}
               onChange={(e) => setEnabled(e.target.checked)}
             />
-            <span>Enabled</span>
+            <span>{t("common.enabled")}</span>
           </label>
           <label style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", cursor: "pointer" }}>
             <input
@@ -137,13 +139,13 @@ export function McpServerForm({ onSave }: McpServerFormProps) {
               checked={exposeTools}
               onChange={(e) => setExposeTools(e.target.checked)}
             />
-            <span>Expose Tools</span>
+            <span>{t("mcp.exposeTools")}</span>
           </label>
         </div>
       </div>
       {error && <div className="form-error">{error}</div>}
       <button type="submit" className="btn btn-primary" disabled={submitting}>
-        {submitting ? "Creating..." : "Create Server"}
+        {submitting ? t("mcp.creating") : t("mcp.createServer")}
       </button>
     </form>
   );

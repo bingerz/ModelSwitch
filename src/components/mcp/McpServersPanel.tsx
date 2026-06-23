@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api } from "../../lib/api";
 import { useToast } from "../Toast";
 import "../../styles/pages-enhanced.css";
@@ -9,6 +10,7 @@ import { McpServerForm } from "./McpServerForm";
 import { McpServerEditForm } from "./McpServerEditForm";
 
 export function McpServersPanel() {
+  const { t } = useTranslation();
   const toast = useToast();
   const [servers, setServers] = useState<McpServer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -24,7 +26,7 @@ export function McpServersPanel() {
       const list = await api.mcp.listServers();
       setServers(list);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to load MCP servers");
+      toast.error(err instanceof Error ? err.message : t("mcp.loadFailed"));
     } finally {
       setLoading(false);
     }
@@ -38,10 +40,10 @@ export function McpServersPanel() {
     setActionLoading(id);
     try {
       await api.mcp.startServer(id);
-      toast.success("Server started");
+      toast.success(t("mcp.started"));
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to start server");
+      toast.error(err instanceof Error ? err.message : t("mcp.startFailed"));
     } finally {
       setActionLoading(null);
     }
@@ -51,10 +53,10 @@ export function McpServersPanel() {
     setActionLoading(id);
     try {
       await api.mcp.stopServer(id);
-      toast.success("Server stopped");
+      toast.success(t("mcp.stoppedToast"));
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to stop server");
+      toast.error(err instanceof Error ? err.message : t("mcp.stopFailed"));
     } finally {
       setActionLoading(null);
     }
@@ -69,10 +71,10 @@ export function McpServersPanel() {
     setActionLoading(id);
     try {
       await api.mcp.deleteServer(id);
-      toast.success("Server deleted");
+      toast.success(t("mcp.deleted"));
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to delete server");
+      toast.error(err instanceof Error ? err.message : t("mcp.deleteFailed"));
     } finally {
       setActionLoading(null);
     }
@@ -93,7 +95,7 @@ export function McpServersPanel() {
       const tools = await api.mcp.listServerTools(id);
       setToolsCache((prev) => ({ ...prev, [id]: tools }));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to list tools");
+      toast.error(err instanceof Error ? err.message : t("mcp.listToolsFailed"));
       setToolsCache((prev) => ({ ...prev, [id]: [] }));
     }
   };
@@ -102,7 +104,7 @@ export function McpServersPanel() {
     return (
       <div className="panel-loading-enhanced">
         <div className="spinner" />
-        <span>Loading MCP servers...</span>
+        <span>{t("mcp.loading")}</span>
       </div>
     );
   }
@@ -110,9 +112,9 @@ export function McpServersPanel() {
   return (
     <section>
       <div className="panel-header">
-        <h2 className="panel-title">MCP Servers</h2>
+        <h2 className="panel-title">{t("mcp.title")}</h2>
         <button className="btn btn-primary" onClick={() => setShowAddForm(!showAddForm)}>
-          {showAddForm ? "Cancel" : "+ Add Server"}
+          {showAddForm ? t("common.cancel") : t("mcp.create")}
         </button>
       </div>
 
@@ -128,9 +130,9 @@ export function McpServersPanel() {
       {servers.length === 0 && !showAddForm ? (
         <div className="empty-state">
           <div className="empty-state-icon">🔌</div>
-          <div className="empty-state-title">No MCP servers configured</div>
+          <div className="empty-state-title">{t("mcp.empty")}</div>
           <div className="empty-state-description">
-            Add an MCP server to enable tool injection for LLM requests. Supports stdio-based servers with custom commands and environment variables.
+            {t("mcp.emptyHint")}
           </div>
         </div>
       ) : (

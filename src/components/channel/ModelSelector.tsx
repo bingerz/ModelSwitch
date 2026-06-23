@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 export function ModelSelector({
   availableModels,
@@ -11,6 +12,7 @@ export function ModelSelector({
   onModelMappingChange: (mapping: Record<string, string>) => void;
   defaultModel?: string;
 }) {
+  const { t } = useTranslation();
   const [customModel, setCustomModel] = useState("");
 
   const toggleModel = (model: string) => {
@@ -46,7 +48,7 @@ export function ModelSelector({
               <span>
                 {model}
                 {defaultModel && model === defaultModel && (
-                  <span className="model-default-indicator">default</span>
+                  <span className="model-default-indicator">{t("channels.defaultModel")}</span>
                 )}
               </span>
             </label>
@@ -55,14 +57,14 @@ export function ModelSelector({
       )}
       {availableModels.length === 0 && selectedModels.length === 0 && (
         <p className="model-hint">
-          Select a preset above, or add custom model IDs below.
+          {t("channels.selectModelsHint")}
         </p>
       )}
       <div className="model-custom-row">
         <input
           value={customModel}
           onChange={(e) => setCustomModel(e.target.value)}
-          placeholder="Add custom model ID"
+          placeholder={t("channels.addCustomModel")}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
@@ -71,7 +73,7 @@ export function ModelSelector({
           }}
         />
         <button type="button" className="btn btn-sm" onClick={addCustomModel}>
-          Add
+          {t("common.add")}
         </button>
       </div>
       {selectedModels.length > 0 && (
@@ -83,9 +85,9 @@ export function ModelSelector({
                 type="button"
                 className="model-tag-remove"
                 onClick={() => toggleModel(model)}
-                title={`Remove ${model}`}
+                title={t("common.remove") + " " + model}
               >
-                ×
+                {"\u00D7"}
               </button>
             </span>
           ))}

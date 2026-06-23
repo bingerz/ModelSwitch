@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api } from "../../lib/api";
 import { useToast } from "../Toast";
 import type { McpServer, UpdateMcpServerData } from "./types";
@@ -15,6 +16,7 @@ export function McpServerEditForm({
   onSave,
   onCancel,
 }: McpServerEditFormProps) {
+  const { t } = useTranslation();
   const toast = useToast();
   const [name, setName] = useState(server.name);
   const [command, setCommand] = useState(server.command);
@@ -30,8 +32,8 @@ export function McpServerEditForm({
     e.preventDefault();
     setError(null);
 
-    if (!name.trim()) return setError("Name is required");
-    if (!command.trim()) return setError("Command is required");
+    if (!name.trim()) return setError(t("mcp.nameRequired"));
+    if (!command.trim()) return setError(t("mcp.commandRequired"));
 
     const data: UpdateMcpServerData = {
       name: name.trim(),
@@ -46,10 +48,10 @@ export function McpServerEditForm({
     setSubmitting(true);
     try {
       await api.mcp.updateServer(server.id, data);
-      toast.success("Server updated");
+      toast.success(t("mcp.updated"));
       onSave();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to update server";
+      const msg = err instanceof Error ? err.message : t("mcp.updateFailed");
       setError(msg);
       toast.error(msg);
     } finally {
@@ -59,26 +61,26 @@ export function McpServerEditForm({
 
   return (
     <form className="channel-form" onSubmit={handleSubmit}>
-      <h3 className="form-title">Edit Server: {server.id}</h3>
+      <h3 className="form-title">{t("mcp.edit", { id: server.id })}</h3>
       <div className="form-grid">
         <label className="form-field">
-          <span>Name</span>
+          <span>{t("common.name")}</span>
           <input value={name} onChange={(e) => setName(e.target.value)} required />
         </label>
         <label className="form-field">
-          <span>Command</span>
+          <span>{t("mcp.command")}</span>
           <input value={command} onChange={(e) => setCommand(e.target.value)} required />
         </label>
         <label className="form-field span-2">
-          <span>Arguments</span>
+          <span>{t("mcp.args")}</span>
           <input
             value={args}
             onChange={(e) => setArgs(e.target.value)}
-            placeholder="space-separated arguments"
+            placeholder={t("mcp.argsSpaceSeparated")}
           />
         </label>
         <label className="form-field span-2">
-          <span>Environment Variables (one KEY=VALUE per line)</span>
+          <span>{t("mcp.env")}</span>
           <textarea
             value={env}
             onChange={(e) => setEnv(e.target.value)}
@@ -98,7 +100,7 @@ export function McpServerEditForm({
           />
         </label>
         <label className="form-field">
-          <span>Working Directory</span>
+          <span>{t("mcp.workingDirectory")}</span>
           <input value={cwd} onChange={(e) => setCwd(e.target.value)} />
         </label>
         <div className="form-field" style={{ flexDirection: "row", gap: "var(--space-4)", alignItems: "center" }}>
@@ -108,7 +110,7 @@ export function McpServerEditForm({
               checked={enabled}
               onChange={(e) => setEnabled(e.target.checked)}
             />
-            <span>Enabled</span>
+            <span>{t("common.enabled")}</span>
           </label>
           <label style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", cursor: "pointer" }}>
             <input
@@ -116,17 +118,17 @@ export function McpServerEditForm({
               checked={exposeTools}
               onChange={(e) => setExposeTools(e.target.checked)}
             />
-            <span>Expose Tools</span>
+            <span>{t("mcp.exposeTools")}</span>
           </label>
         </div>
       </div>
       {error && <div className="form-error">{error}</div>}
       <div style={{ display: "flex", gap: "var(--space-2)" }}>
         <button type="submit" className="btn btn-primary" disabled={submitting}>
-          {submitting ? "Saving..." : "Save"}
+          {submitting ? t("common.saving") : t("common.save")}
         </button>
         <button type="button" className="btn" onClick={onCancel} disabled={submitting}>
-          Cancel
+          {t("common.cancel")}
         </button>
       </div>
     </form>

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { Settings, Server, Database, RotateCcw, Wallet, FlaskConical } from "lucide-react";
 import { SectionHeader } from "./ui/SectionHeader";
 import { ProgressBar } from "./ui/ProgressBar";
@@ -8,6 +9,7 @@ import { isMockMode, setMockMode } from "../lib/mock";
 import { useToast } from "./Toast";
 
 export function SettingsPanel() {
+  const { t } = useTranslation();
   const toast = useToast();
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
   const [gatewayInfo, setGatewayInfo] = useState<GatewayInfo | null>(null);
@@ -43,10 +45,10 @@ export function SettingsPanel() {
     setFlushing(true);
     try {
       await api.flushCache();
-      toast.success("Cache flushed");
+      toast.success(t("settings.cacheFlushed"));
       refresh();
     } catch {
-      toast.error("Failed to flush cache");
+      toast.error(t("settings.cacheFlushFailed"));
     } finally {
       setFlushing(false);
     }
@@ -56,29 +58,29 @@ export function SettingsPanel() {
     setReloading(true);
     try {
       const result = await api.reloadConfig();
-      toast.success(`Config reloaded: ${result.created} created, ${result.updated} updated, ${result.removed} removed`);
+      toast.success(t("settings.reloadSuccess", { created: result.created, updated: result.updated, removed: result.removed }));
       refresh();
     } catch {
-      toast.error("Failed to reload config");
+      toast.error(t("settings.reloadFailed"));
     } finally {
       setReloading(false);
     }
   };
 
-  if (loading) return <div className="panel-loading">Loading settings...</div>;
+  if (loading) return <div className="panel-loading">{t("settings.loading")}</div>;
 
   return (
     <section>
-      <SectionHeader title="Settings" icon={Settings} onRefresh={refresh} refreshing={false} />
+      <SectionHeader title={t("settings.title")} icon={Settings} onRefresh={refresh} refreshing={false} />
 
       {/* Demo Mode */}
       <div className="settings-section">
         <h3 className="settings-section-title">
           <FlaskConical size={14} style={{ display: "inline", marginRight: "var(--space-2)", verticalAlign: "middle" }} />
-          Demo Mode
+          {t("settings.demoMode")}
         </h3>
         <p className="settings-hint">
-          Uses simulated data for all API calls. Reloads the page when toggled.
+          {t("settings.demoModeHint")}
         </p>
         <div className="settings-actions">
           <label style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", cursor: "pointer", fontSize: "var(--text-sm)" }}>
@@ -88,7 +90,7 @@ export function SettingsPanel() {
               onChange={(e) => setMockMode(e.target.checked)}
               style={{ width: 16, height: 16, cursor: "pointer" }}
             />
-            Enable Demo Mode
+            {t("settings.enableDemoMode")}
           </label>
         </div>
       </div>
@@ -98,33 +100,33 @@ export function SettingsPanel() {
         <div className="settings-section">
           <h3 className="settings-section-title">
             <Server size={14} style={{ display: "inline", marginRight: "var(--space-2)", verticalAlign: "middle" }} />
-            Gateway Info
+            {t("settings.gatewayInfo")}
           </h3>
           <div className="settings-stats-grid">
             <div className="settings-stat">
-              <span className="settings-stat-label">Version</span>
+              <span className="settings-stat-label">{t("dashboard.version")}</span>
               <span className="settings-stat-value mono">v{gatewayInfo.version}</span>
             </div>
             <div className="settings-stat">
-              <span className="settings-stat-label">Uptime</span>
+              <span className="settings-stat-label">{t("dashboard.uptime")}</span>
               <span className="settings-stat-value">{gatewayInfo.uptime_formatted}</span>
             </div>
             <div className="settings-stat">
-              <span className="settings-stat-label">Channels</span>
+              <span className="settings-stat-label">{t("dashboard.activeChannels")}</span>
               <span className="settings-stat-value">
-                {gatewayInfo.healthy_channels} / {gatewayInfo.total_channels} healthy
+                {t("settings.channelsHealthy", { healthy: gatewayInfo.healthy_channels, total: gatewayInfo.total_channels })}
               </span>
             </div>
             <div className="settings-stat">
-              <span className="settings-stat-label">Active Requests</span>
+              <span className="settings-stat-label">{t("dashboard.activeRequests")}</span>
               <span className="settings-stat-value mono">{gatewayInfo.active_requests}</span>
             </div>
             <div className="settings-stat">
-              <span className="settings-stat-label">Routing Strategy</span>
+              <span className="settings-stat-label">{t("dashboard.routingStrategy")}</span>
               <span className="settings-stat-value">{gatewayInfo.routing_strategy}</span>
             </div>
             <div className="settings-stat">
-              <span className="settings-stat-label">Max Retries</span>
+              <span className="settings-stat-label">{t("dashboard.maxRetries")}</span>
               <span className="settings-stat-value mono">{gatewayInfo.max_retries}</span>
             </div>
           </div>
@@ -136,19 +138,19 @@ export function SettingsPanel() {
         <div className="settings-section">
           <h3 className="settings-section-title">
             <Database size={14} style={{ display: "inline", marginRight: "var(--space-2)", verticalAlign: "middle" }} />
-            Cache Management
+            {t("settings.cacheManagement")}
           </h3>
           <div className="settings-stats-grid">
             <div className="settings-stat">
-              <span className="settings-stat-label">Mode</span>
+              <span className="settings-stat-label">{t("common.mode")}</span>
               <span className="settings-stat-value">{cacheStats.mode}</span>
             </div>
             <div className="settings-stat">
-              <span className="settings-stat-label">Entries</span>
+              <span className="settings-stat-label">{t("settings.entries")}</span>
               <span className="settings-stat-value mono">{cacheStats.entries}</span>
             </div>
             <div className="settings-stat">
-              <span className="settings-stat-label">Hit Rate</span>
+              <span className="settings-stat-label">{t("settings.hitRate")}</span>
               <span className="settings-stat-value mono">
                 <span style={{ color: cacheStats.hit_rate_percent > 30 ? "var(--color-success)" : "var(--color-text-secondary)" }}>
                   {cacheStats.hit_rate_percent}%
@@ -163,13 +165,13 @@ export function SettingsPanel() {
               </div>
             </div>
             <div className="settings-stat">
-              <span className="settings-stat-label">Hits / Misses</span>
+              <span className="settings-stat-label">{t("settings.hitsMisses")}</span>
               <span className="settings-stat-value mono">
                 {cacheStats.hits} / {cacheStats.misses}
               </span>
             </div>
             <div className="settings-stat">
-              <span className="settings-stat-label">Evictions</span>
+              <span className="settings-stat-label">{t("settings.evictions")}</span>
               <span className="settings-stat-value mono">{cacheStats.evictions}</span>
             </div>
           </div>
@@ -179,7 +181,7 @@ export function SettingsPanel() {
               onClick={handleFlushCache}
               disabled={flushing || cacheStats.entries === 0}
             >
-              {flushing ? "Flushing..." : "Flush Cache"}
+              {flushing ? t("settings.flushing") : t("settings.flushCache")}
             </button>
           </div>
         </div>
@@ -189,11 +191,10 @@ export function SettingsPanel() {
       <div className="settings-section">
         <h3 className="settings-section-title">
           <RotateCcw size={14} style={{ display: "inline", marginRight: "var(--space-2)", verticalAlign: "middle" }} />
-          Configuration
+          {t("settings.config")}
         </h3>
         <p className="settings-hint">
-          Manually trigger a hot-reload of <code className="settings-code">config.toml</code>.
-          Channels, rate limits, payload rules, and MCP servers will be updated.
+          {t("settings.configHint")}
         </p>
         <div className="settings-actions">
           <button
@@ -201,7 +202,7 @@ export function SettingsPanel() {
             onClick={handleReloadConfig}
             disabled={reloading}
           >
-            {reloading ? "Reloading..." : "Reload Config"}
+            {reloading ? t("settings.reloading") : t("settings.reloadConfig")}
           </button>
         </div>
       </div>
@@ -211,18 +212,18 @@ export function SettingsPanel() {
         <div className="settings-section">
           <h3 className="settings-section-title">
             <Wallet size={14} style={{ display: "inline", marginRight: "var(--space-2)", verticalAlign: "middle" }} />
-            Provider Budgets
+            {t("settings.providerBudgets")}
           </h3>
           <div className="settings-table-wrapper">
             <table className="settings-table">
               <thead>
                 <tr>
-                  <th>Provider</th>
-                  <th>Today</th>
-                  <th>Daily Budget</th>
-                  <th>This Month</th>
-                  <th>Monthly Budget</th>
-                  <th>Total</th>
+                  <th>{t("common.provider")}</th>
+                  <th>{t("settings.today")}</th>
+                  <th>{t("settings.dailyBudget")}</th>
+                  <th>{t("settings.thisMonthColumn")}</th>
+                  <th>{t("settings.monthlyBudget")}</th>
+                  <th>{t("settings.total")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -231,7 +232,7 @@ export function SettingsPanel() {
                     <td className="mono">{b.provider}</td>
                     <td className="mono">{formatCents(b.spend.today.cents)}</td>
                     <td className="mono">
-                      {b.daily_budget_cents != null ? formatCents(b.daily_budget_cents) : "∞"}
+                      {b.daily_budget_cents != null ? formatCents(b.daily_budget_cents) : "\u221e"}
                       {b.daily_budget_cents != null && (
                         <div style={{ marginTop: "4px", maxWidth: "120px" }}>
                           <ProgressBar
@@ -249,7 +250,7 @@ export function SettingsPanel() {
                     </td>
                     <td className="mono">{formatCents(b.spend.this_month.cents)}</td>
                     <td className="mono">
-                      {b.monthly_budget_cents != null ? formatCents(b.monthly_budget_cents) : "∞"}
+                      {b.monthly_budget_cents != null ? formatCents(b.monthly_budget_cents) : "\u221e"}
                       {b.monthly_budget_cents != null && (
                         <div style={{ marginTop: "4px", maxWidth: "120px" }}>
                           <ProgressBar

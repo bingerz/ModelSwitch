@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { formatRelativeTime } from "./helpers";
 
 export interface LiveBadgeProps {
@@ -11,6 +12,7 @@ export interface LiveBadgeProps {
  * parent to poll faster.
  */
 export function LiveBadge({ lastUpdated }: LiveBadgeProps) {
+  const { t } = useTranslation();
   const [, setTick] = useState(0);
 
   useEffect(() => {
@@ -21,7 +23,7 @@ export function LiveBadge({ lastUpdated }: LiveBadgeProps) {
   return (
     <span className="dsh-live-badge" title={lastUpdated.toLocaleTimeString()}>
       <span className="dsh-live-dot" aria-hidden="true" />
-      <span className="dsh-live-label">Live</span>
+      <span className="dsh-live-label">{t("common.live")}</span>
       <span className="dsh-live-relative">{formatRelativeTime(lastUpdated)}</span>
     </span>
   );

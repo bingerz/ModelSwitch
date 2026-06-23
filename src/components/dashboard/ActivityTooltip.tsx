@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { DispatchLog } from "../../lib/api";
 import { formatCost, formatNumber, latencyColor } from "./helpers";
 
@@ -21,6 +22,7 @@ export function ActivityTooltip({
   y: number;
   viewWidth?: number;
 }) {
+  const { t } = useTranslation();
   const tokens = (log.input_tokens ?? 0) + (log.output_tokens ?? 0);
   const time = new Date(log.timestamp).toLocaleTimeString();
   // Convert SVG coords to percentage for responsive positioning.
@@ -40,11 +42,11 @@ export function ActivityTooltip({
         {log.channel_name}
       </div>
       <div className="dsh-activity-tooltip-row">
-        <span className="dsh-activity-tooltip-k">model</span>
+        <span className="dsh-activity-tooltip-k">{t("logs.tooltipModel")}</span>
         <span className="dsh-activity-tooltip-v">{log.request_model}</span>
       </div>
       <div className="dsh-activity-tooltip-row">
-        <span className="dsh-activity-tooltip-k">latency</span>
+        <span className="dsh-activity-tooltip-k">{t("logs.tooltipLatency")}</span>
         <span
           className="dsh-activity-tooltip-v"
           style={{ color: latencyColor(log.latency_ms) }}
@@ -53,26 +55,26 @@ export function ActivityTooltip({
         </span>
       </div>
       <div className="dsh-activity-tooltip-row">
-        <span className="dsh-activity-tooltip-k">status</span>
+        <span className="dsh-activity-tooltip-k">{t("logs.tooltipStatus")}</span>
         <span
           className="dsh-activity-tooltip-v"
           style={{
             color: log.success ? "var(--color-success)" : "var(--color-danger)",
           }}
         >
-          {log.success ? "success" : "failed"}
+          {log.success ? t("common.success") : t("common.failed")}
         </span>
       </div>
       <div className="dsh-activity-tooltip-row">
-        <span className="dsh-activity-tooltip-k">retries</span>
+        <span className="dsh-activity-tooltip-k">{t("logs.tooltipRetries")}</span>
         <span className="dsh-activity-tooltip-v">{log.retry_count}</span>
       </div>
       <div className="dsh-activity-tooltip-row">
-        <span className="dsh-activity-tooltip-k">tokens</span>
+        <span className="dsh-activity-tooltip-k">{t("logs.tooltipTokens")}</span>
         <span className="dsh-activity-tooltip-v">{formatNumber(tokens)}</span>
       </div>
       <div className="dsh-activity-tooltip-row">
-        <span className="dsh-activity-tooltip-k">cost</span>
+        <span className="dsh-activity-tooltip-k">{t("logs.tooltipCost")}</span>
         <span className="dsh-activity-tooltip-v">
           {formatCost(log.estimated_cost ?? 0)}
         </span>

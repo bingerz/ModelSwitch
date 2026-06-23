@@ -1,6 +1,8 @@
+import { useTranslation } from "react-i18next";
 import { isMockMode } from "../lib/mock";
 
 export function MockBadge() {
+  const { t } = useTranslation();
   if (!isMockMode()) return null;
   return (
     <div
@@ -20,7 +22,7 @@ export function MockBadge() {
         fontFamily: "ui-monospace, monospace",
       }}
     >
-      ● DEMO MODE
+      {"\u25CF"} {t("settings.demoBadge")}
     </div>
   );
 }

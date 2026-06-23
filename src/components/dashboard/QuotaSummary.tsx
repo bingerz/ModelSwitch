@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { DollarSign, CircleAlert, TriangleAlert } from "./icons";
 import { formatCost } from "./helpers";
 
@@ -16,6 +17,7 @@ export function QuotaSummary({
   lowBalance,
   errors,
 }: QuotaSummaryProps) {
+  const { t } = useTranslation();
   if (totalChannels === 0) return null;
 
   const tone = errors > 0 ? "error" : lowBalance > 0 ? "warn" : "healthy";
@@ -24,9 +26,9 @@ export function QuotaSummary({
   return (
     <div className={toneClass}>
       <div className="dsh-card-title-row">
-        <span className="dsh-card-title">Quota</span>
+        <span className="dsh-card-title">{t("dashboard.quotaTitle")}</span>
         <span className={`dsh-quota-tone-badge dsh-quota-tone-badge-${tone}`}>
-          {tone === "healthy" ? "Healthy" : tone === "warn" ? "Low" : "Errors"}
+          {tone === "healthy" ? t("dashboard.quotaHealthy") : tone === "warn" ? t("dashboard.quotaLow") : t("dashboard.quotaErrors")}
         </span>
       </div>
       <div className="dsh-quota-balance">
@@ -39,20 +41,20 @@ export function QuotaSummary({
       </div>
       <div className="dsh-quota-secondary">
         <span className="dsh-quota-secondary-item">
-          {channelsWithData}/{totalChannels} channels reporting
+          {t("quota.channelsReporting", { withData: channelsWithData, total: totalChannels })}
         </span>
         {lowBalance > 0 && (
           <span className="dsh-quota-warn">
-            <TriangleAlert size={12} /> {lowBalance} low balance
+            <TriangleAlert size={12} /> {t("quota.lowBalance", { count: lowBalance })}
           </span>
         )}
         {errors > 0 && (
           <span className="dsh-quota-error">
-            <CircleAlert size={12} /> {errors} errors
+            <CircleAlert size={12} /> {t("quota.errors", { count: errors })}
           </span>
         )}
       </div>
-      <p className="dsh-quota-hint">Detailed quotas on the Provider Quota tab.</p>
+      <p className="dsh-quota-hint">{t("dashboard.quotaHint")}</p>
     </div>
   );
 }

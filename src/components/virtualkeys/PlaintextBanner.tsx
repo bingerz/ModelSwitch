@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { CreateVirtualKeyResponse } from "../../lib/api";
 import { useToast } from "../Toast";
 
@@ -11,6 +12,7 @@ export function PlaintextBanner({
   response,
   onClose,
 }: PlaintextBannerProps) {
+  const { t } = useTranslation();
   const toast = useToast();
   const [copied, setCopied] = useState(false);
 
@@ -18,28 +20,28 @@ export function PlaintextBanner({
     try {
       await navigator.clipboard.writeText(response.plaintext);
       setCopied(true);
-      toast.success("Copied to clipboard");
+      toast.success(t("common.copiedToClipboard"));
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      toast.error("Failed to copy to clipboard");
+      toast.error(t("common.failed"));
     }
   };
 
   return (
     <div className="vk-plaintext-banner">
       <div className="vk-plaintext-header">
-        <strong>New key created: {response.key.name}</strong>
+        <strong>{t("virtualKeys.newKeyCreated", { name: response.key.name })}</strong>
         <button
           className="btn btn-sm"
           onClick={onClose}
-          aria-label="Dismiss"
-          title="Dismiss"
+          aria-label={t("common.dismiss")}
+          title={t("common.dismiss")}
         >
-          Close
+          {t("common.close")}
         </button>
       </div>
       <div className="vk-plaintext-warning">
-        This key will not be shown again. Copy it now and store it securely.
+        {t("virtualKeys.plaintextWarning")}
       </div>
       <div className="vk-plaintext-key-row">
         <code className="vk-plaintext-key mono">{response.plaintext}</code>
@@ -47,7 +49,7 @@ export function PlaintextBanner({
           className={`btn btn-sm ${copied ? "btn-primary" : ""}`}
           onClick={handleCopy}
         >
-          {copied ? "Copied" : "Copy"}
+          {copied ? t("common.copied") : t("common.copy")}
         </button>
       </div>
     </div>

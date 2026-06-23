@@ -1,7 +1,7 @@
+import { useTranslation } from "react-i18next";
 import {
   type ProviderPreset,
   type ApiFormat,
-  CATEGORY_LABELS,
   groupPresetsByCategory,
 } from "../../lib/presets";
 import { CATEGORY_ORDER } from "./types";
@@ -29,19 +29,20 @@ export function PresetSelector({
   selected: string | null;
   onSelect: (preset: ProviderPreset) => void;
 }) {
+  const { t } = useTranslation();
   const grouped = groupPresetsByCategory();
 
   return (
     <div className="preset-selector">
       <p className="preset-hint">
-        Select a provider preset to auto-fill, or enter manually below.
+        {t("channels.presetHint")}
       </p>
       {CATEGORY_ORDER.map((cat) => {
         const presets = grouped[cat];
         if (presets.length === 0) return null;
         return (
           <div key={cat} className="preset-section">
-            <div className="preset-section-title">{CATEGORY_LABELS[cat]}</div>
+            <div className="preset-section-title">{t(`presets.${cat}`)}</div>
             <div className="preset-grid">
               {presets.map((p) => (
                 <button

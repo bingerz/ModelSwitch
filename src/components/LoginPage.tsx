@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 export function LoginPage({ onSuccess }: { onSuccess: () => void }) {
+  const { t } = useTranslation();
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
 
@@ -14,19 +16,19 @@ export function LoginPage({ onSuccess }: { onSuccess: () => void }) {
       onSuccess();
     } catch {
       localStorage.removeItem("admin_token");
-      setError("Invalid token or gateway not reachable");
+      setError(t("login.error"));
     }
   };
 
   return (
     <div className="login-page">
       <div className="login-card">
-        <div className="login-brand">ModelSwitch</div>
-        <div className="login-subtitle">Web Console</div>
+        <div className="login-brand">{t("login.brand")}</div>
+        <div className="login-subtitle">{t("login.subtitle")}</div>
         <input
           className="login-input"
           type="password"
-          placeholder="Admin Token"
+          placeholder={t("login.tokenPlaceholder")}
           value={token}
           onChange={(e) => setToken(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleLogin()}
@@ -34,11 +36,10 @@ export function LoginPage({ onSuccess }: { onSuccess: () => void }) {
         />
         {error && <div className="login-error">{error}</div>}
         <button className="login-button" onClick={handleLogin}>
-          Login
+          {t("login.button")}
         </button>
         <div className="login-hint">
-          Enter the admin token from your gateway config.
-          Leave empty if no token is configured.
+          {t("login.hint")}
         </div>
       </div>
     </div>

@@ -1,8 +1,10 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { type UsageBucket } from "../../lib/api";
 import { CHANNEL_COLORS, formatTokens, type TimeWindow } from "./types";
 
 export function UsageChart({ buckets, window, onWindowChange }: { buckets: UsageBucket[]; window: TimeWindow; onWindowChange: (w: TimeWindow) => void }) {
+  const { t } = useTranslation();
   // Aggregate cache stats across all buckets
   const cacheStats = useMemo(() => {
     let hits = 0;
@@ -147,7 +149,7 @@ export function UsageChart({ buckets, window, onWindowChange }: { buckets: Usage
           ))}
         </div>
         <div className="usage-chart-empty">
-          No usage data in this period. Data will appear once channels process requests.
+          {t("quota.noUsageInPeriod")}
         </div>
       </div>
     );
@@ -178,12 +180,12 @@ export function UsageChart({ buckets, window, onWindowChange }: { buckets: Usage
 
             const tooltipLines: string[] = [`${hour.label}:00`];
             if (totalTokens > 0) {
-              tooltipLines.push(`Tokens: ${formatTokens(totalTokens)}`);
-              tooltipLines.push(`Requests: ${totalRequests}`);
-              if (totalCost > 0) tooltipLines.push(`Cost: $${totalCost.toFixed(4)}`);
+              tooltipLines.push(`${t("quota.tokens")}: ${formatTokens(totalTokens)}`);
+              tooltipLines.push(`${t("quota.requests")}: ${totalRequests}`);
+              if (totalCost > 0) tooltipLines.push(`${t("quota.estCost")}: $${totalCost.toFixed(4)}`);
               if (totalCacheHits > 0) {
                 const cacheTotal = totalCacheHits + segments.reduce((s, [, c]) => s + c.cacheMisses, 0);
-                tooltipLines.push(`Cache hit: ${((totalCacheHits / cacheTotal) * 100).toFixed(0)}%`);
+                tooltipLines.push(`${t("quota.cacheHit")}: ${((totalCacheHits / cacheTotal) * 100).toFixed(0)}%`);
               }
               if (segments.length > 1) {
                 tooltipLines.push("---");
@@ -192,7 +194,7 @@ export function UsageChart({ buckets, window, onWindowChange }: { buckets: Usage
                 }
               }
             } else {
-              tooltipLines.push("No data");
+              tooltipLines.push(t("common.noData"));
             }
 
             return (
@@ -206,7 +208,7 @@ export function UsageChart({ buckets, window, onWindowChange }: { buckets: Usage
                     const channelId = segKey.split(":")[0];
                     const segPct = totalTokens > 0 ? (seg.tokens / totalTokens) * 100 : 0;
                     const segCacheTotal = seg.cacheHits + seg.cacheMisses;
-                    const segTooltip = `${seg.name} (${seg.model}): ${formatTokens(seg.tokens)} tokens (${seg.requests} reqs)${segCacheTotal > 0 ? ` | Cache: ${((seg.cacheHits / segCacheTotal) * 100).toFixed(0)}% hit` : ""}`;
+                    const segTooltip = `${seg.name} (${seg.model}): ${formatTokens(seg.tokens)} ${t("quota.tokens")} (${seg.requests} reqs)${segCacheTotal > 0 ? ` | ${t("quota.cacheHit")}: ${((seg.cacheHits / segCacheTotal) * 100).toFixed(0)}% ${t("quota.hit")}` : ""}`;
                     return (
                       <div
                         key={segKey}
@@ -242,9 +244,9 @@ export function UsageChart({ buckets, window, onWindowChange }: { buckets: Usage
           )}
           {cacheStats.total > 0 && (
             <div className="usage-chart-cache-stats">
-              Cache: <span className="mono">{formatTokens(cacheStats.hits)}</span> hit / <span className="mono">{formatTokens(cacheStats.misses)}</span> miss
+              {t("quota.cacheHit")}: <span className="mono">{formatTokens(cacheStats.hits)}</span> {t("quota.hit")} / <span className="mono">{formatTokens(cacheStats.misses)}</span> {t("quota.miss")}
               {cacheStats.ratio != null && (
-                <span className="usage-chart-cache-pct"> ({(cacheStats.ratio * 100).toFixed(0)}% hit)</span>
+                <span className="usage-chart-cache-pct"> ({(cacheStats.ratio * 100).toFixed(0)}% {t("quota.hit")})</span>
               )}
             </div>
           )}

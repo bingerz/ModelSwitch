@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { ApiFormat } from "../../lib/presets";
 import { ModelSelector } from "./ModelSelector";
 
@@ -85,12 +86,20 @@ export function FormFields({
   apiFormats,
   onApiFormatChange,
 }: FormFieldsProps) {
+  const { t } = useTranslation();
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const formatLabel = (fmt: ApiFormat): string => {
+    if (fmt === "openai") return t("channels.openaiChat");
+    if (fmt === "anthropic") return t("channels.anthropic");
+    return t("channels.geminiFormat");
+  };
+
   return (
     <>
       <div className="form-grid">
         <label className="form-field">
-          <span>Name</span>
+          <span>{t("channels.name")}</span>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -98,33 +107,33 @@ export function FormFields({
           />
         </label>
         <label className="form-field">
-          <span>Provider{presetLocked ? " · preset" : ""}</span>
+          <span>{t("common.provider")}{presetLocked ? ` \u00B7 ${t("channels.presetLocked")}` : ""}</span>
           <select
             value={provider}
             onChange={(e) => setProvider(e.target.value)}
             disabled={presetLocked}
           >
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="deepseek">DeepSeek</option>
-            <option value="gemini">Gemini</option>
-            <option value="openrouter">OpenRouter</option>
-            <option value="custom">Custom</option>
+            <option value="openai">{t("channels.openai")}</option>
+            <option value="anthropic">{t("channels.anthropic")}</option>
+            <option value="deepseek">{t("channels.deepseek")}</option>
+            <option value="gemini">{t("channels.gemini")}</option>
+            <option value="openrouter">{t("channels.openrouter")}</option>
+            <option value="custom">{t("channels.custom")}</option>
           </select>
         </label>
         <label className="form-field">
-          <span>Priority</span>
+          <span>{t("common.priority")}</span>
           <select
             value={priority}
             onChange={(e) => setPriority(Number(e.target.value))}
           >
-            <option value={1}>Priority 1 · Free / Subscription</option>
-            <option value={2}>Priority 2 · Economy API</option>
-            <option value={3}>Priority 3 · Official API</option>
+            <option value={1}>{t("channels.priority1Free")}</option>
+            <option value={2}>{t("channels.priority2Economy")}</option>
+            <option value={3}>{t("channels.priority3Official")}</option>
           </select>
         </label>
         <label className="form-field">
-          <span>Weight</span>
+          <span>{t("common.weight")}</span>
           <input
             type="number"
             value={weight}
@@ -136,17 +145,17 @@ export function FormFields({
         {showCredential && (
           <>
             <label className="form-field">
-              <span>Credential Type</span>
+              <span>{t("channels.credentialType")}</span>
               <select
                 value={credentialType}
                 onChange={(e) => setCredentialType(e.target.value)}
               >
-                <option value="api_key">API Key</option>
-                <option value="web_session">Web Session</option>
+                <option value="api_key">{t("channels.credentialApiKey")}</option>
+                <option value="web_session">{t("channels.credentialWebSession")}</option>
               </select>
             </label>
             <label className="form-field">
-              <span>{credentialType === "api_key" ? "API Key" : "Cookie"}</span>
+              <span>{credentialType === "api_key" ? t("channels.apiKey") : t("channels.cookie")}</span>
               <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
                 <input
                   type="password"
@@ -155,8 +164,8 @@ export function FormFields({
                   placeholder={
                     credentialPlaceholder ||
                     (credentialType === "api_key"
-                      ? "Enter API key"
-                      : "Enter cookie")
+                      ? t("channels.enterApiKey")
+                      : t("channels.enterCookie"))
                   }
                   style={{ flex: 1 }}
                 />
@@ -166,9 +175,9 @@ export function FormFields({
                     target="_blank"
                     rel="noopener noreferrer"
                     className="btn btn-sm"
-                    title="Get API key"
+                    title={t("channels.apiKey")}
                   >
-                    Get Key
+                    {t("channels.getKey")}
                   </a>
                 )}
                 {credentialType === "web_session" && onWebViewLogin && (
@@ -177,9 +186,9 @@ export function FormFields({
                     className="btn btn-sm btn-primary"
                     onClick={onWebViewLogin}
                     disabled={loginInProgress}
-                    title="Open login window to extract cookies"
+                    title={t("channels.loginWebview")}
                   >
-                    {loginInProgress ? "Logging in..." : "Login"}
+                    {loginInProgress ? t("channels.loggingIn") : t("channels.login")}
                   </button>
                 )}
               </div>
@@ -188,7 +197,7 @@ export function FormFields({
         )}
         {apiFormats && onApiFormatChange && (
           <label className="form-field">
-            <span>API Format</span>
+            <span>{t("channels.apiFormat")}</span>
             <select
               value={apiFormat}
               onChange={(e) => onApiFormatChange(e.target.value as ApiFormat)}
@@ -196,18 +205,14 @@ export function FormFields({
             >
               {apiFormats.map((fmt) => (
                 <option key={fmt} value={fmt}>
-                  {fmt === "openai"
-                    ? "OpenAI Chat"
-                    : fmt === "anthropic"
-                      ? "Anthropic"
-                      : "Gemini"}
+                  {formatLabel(fmt)}
                 </option>
               ))}
             </select>
           </label>
         )}
         <label className="form-field">
-          <span>Base URL</span>
+          <span>{t("channels.baseUrl")}</span>
           <input
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
@@ -216,7 +221,7 @@ export function FormFields({
           />
         </label>
         <div className="form-field span-2">
-          <span>Models</span>
+          <span>{t("channels.models")}</span>
           <ModelSelector
             availableModels={presetModels}
             modelMapping={modelMapping}
@@ -232,69 +237,69 @@ export function FormFields({
           className="btn btn-sm btn-ghost"
           onClick={() => setShowAdvanced(!showAdvanced)}
         >
-          {showAdvanced ? "\u25BC" : "\u25B6"} Advanced Settings
+          {showAdvanced ? "\u25BC" : "\u25B6"} {t("common.advancedSettings")}
         </button>
       </div>
 
       {showAdvanced && (
         <div className="form-grid">
           <label className="form-field">
-            <span>Cost per 1K tokens ($)</span>
+            <span>{t("channels.costPerToken")}</span>
             <input
               type="number"
               step="0.0001"
               value={costPerToken}
               onChange={(e) => setCostPerToken(e.target.value)}
-              placeholder="e.g. 0.0015"
+              placeholder={t("channels.costPlaceholder")}
             />
           </label>
           <label className="form-field">
-            <span>Input cost per 1M tokens ($)</span>
+            <span>{t("channels.inputCostPerMtok")}</span>
             <input
               type="number"
               step="0.0001"
               value={inputCostPerMtok}
               onChange={(e) => setInputCostPerMtok(e.target.value)}
-              placeholder="e.g. 0.0015"
+              placeholder={t("channels.costPlaceholder")}
             />
           </label>
           <label className="form-field">
-            <span>Output cost per 1M tokens ($)</span>
+            <span>{t("channels.outputCostPerMtok")}</span>
             <input
               type="number"
               step="0.0001"
               value={outputCostPerMtok}
               onChange={(e) => setOutputCostPerMtok(e.target.value)}
-              placeholder="e.g. 0.0075"
+              placeholder={t("channels.costPlaceholder")}
             />
           </label>
           <label className="form-field">
-            <span>Cooldown (minutes)</span>
+            <span>{t("channels.cooldown")}</span>
             <input
               type="number"
               value={cooldownMinutes}
               onChange={(e) => setCooldownMinutes(e.target.value)}
-              placeholder="default (30)"
+              placeholder={t("channels.cooldownPlaceholder")}
               min={1}
             />
           </label>
           <label className="form-field">
-            <span>RPM Limit</span>
+            <span>{t("channels.rpmLimit")}</span>
             <input
               type="number"
               value={rpmLimit}
               onChange={(e) => setRpmLimit(e.target.value)}
-              placeholder="default (60)"
+              placeholder={t("channels.rpmPlaceholder")}
               min={1}
             />
           </label>
           <label className="form-field">
-            <span>TPM Limit</span>
+            <span>{t("channels.tpmLimit")}</span>
             <input
               type="number"
               value={tpmLimit}
               onChange={(e) => setTpmLimit(e.target.value)}
-              placeholder="no limit"
+              placeholder={t("channels.tpmPlaceholder")}
               min={1}
             />
           </label>

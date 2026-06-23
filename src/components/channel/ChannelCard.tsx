@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { Channel } from "../../lib/api";
 import type { QuotaInfo } from "../../lib/api";
 import { STATUS_DOT, type ChannelStatus } from "./types";
@@ -41,7 +42,9 @@ export function ChannelCard({
   onDragStart,
   onDragEnd,
 }: ChannelCardProps) {
+  const { t } = useTranslation();
   const statusKey = (ch.status as ChannelStatus) ?? "disabled";
+  const modelCount = Object.keys(ch.model_mapping).length;
 
   return (
     <div
@@ -65,13 +68,13 @@ export function ChannelCard({
           {ch.provider}
         </span>
         {!ch.enabled && (
-          <span className="channel-disabled-tag">Disabled</span>
+          <span className="channel-disabled-tag">{t("common.disabled")}</span>
         )}
         {ch.status === "circuit_open" && (
           <span className="channel-circuit-tag">
-            Circuit Open
+            {t("channels.circuitOpen")}
             {ch.circuit_open_until
-              ? ` · ${formatRecoveryTime(ch.circuit_open_until)}`
+              ? ` \u00B7 ${formatRecoveryTime(ch.circuit_open_until)}`
               : ""}
           </span>
         )}
@@ -83,10 +86,10 @@ export function ChannelCard({
         >
           {API_FORMAT_LABELS[providerToFormat(ch.provider)]}
         </span>
-        <span className="meta-tag">W:{ch.weight}</span>
-        {Object.keys(ch.model_mapping).length > 0 && (
+        <span className="meta-tag">{t("channels.weightShort", { weight: ch.weight })}</span>
+        {modelCount > 0 && (
           <span className="meta-tag">
-            {Object.keys(ch.model_mapping).length} models
+            {t("common.modelsCount", { count: modelCount })}
           </span>
         )}
         {ch.avg_latency_ms > 0 && (
@@ -98,16 +101,16 @@ export function ChannelCard({
       </div>
       <div className="channel-card-actions">
         <button className="btn btn-sm" onClick={onEdit}>
-          Edit
+          {t("common.edit")}
         </button>
         <button className="btn btn-sm" onClick={onToggle}>
-          {ch.enabled ? "Disable" : "Enable"}
+          {ch.enabled ? t("common.disable") : t("common.enable")}
         </button>
         <div className="channel-actions-overflow-wrapper">
           <button
             className="btn btn-sm btn-overflow"
             onClick={onToggleOverflow}
-            title="More actions"
+            title={t("common.moreActions")}
           >
             {"\u22EF"}
           </button>
@@ -125,14 +128,14 @@ export function ChannelCard({
                     onPing();
                   }}
                 >
-                  Ping
+                  {t("channels.ping")}
                 </button>
                 <button
                   className={`channel-overflow-item ${confirmDelete ? "danger-confirm" : "danger"}`}
                   onClick={onDelete}
                   onBlur={onCancelDelete}
                 >
-                  {confirmDelete ? "Confirm Delete?" : "Delete"}
+                  {confirmDelete ? t("common.confirmDelete") : t("common.delete")}
                 </button>
               </div>
             </>

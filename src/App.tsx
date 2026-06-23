@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { type GwStatus, invokeTauri, isTauri } from "./lib/api";
 import { ToastProvider, useToast } from "./components/Toast";
 import { LoginPage } from "./components/LoginPage";
@@ -11,39 +12,41 @@ import { QuotaPanel } from "./components/quota/QuotaPanel";
 import { McpServersPanel } from "./components/mcp/McpServersPanel";
 import { VirtualKeysPanel } from "./components/virtualkeys/VirtualKeysPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { ErrorBoundary } from "./components/ErrorBoundary";
+import ErrorBoundary from "./components/ErrorBoundary";
 import { MockBadge } from "./components/MockBadge";
 import { QuotaProvider } from "./hooks/useQuota";
 
 type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "logs" | "cost" | "quota" | "settings";
 type Theme = "light" | "dark";
 
-const TAB_GROUPS: { title: string; tabs: { id: TabId; label: string }[] }[] = [
-  {
-    title: "Overview",
-    tabs: [{ id: "dashboard", label: "Dashboard" }],
-  },
-  {
-    title: "Configuration",
-    tabs: [
-      { id: "channels", label: "Channels" },
-      { id: "virtualKeys", label: "Virtual Keys" },
-      { id: "mcp", label: "MCP" },
-    ],
-  },
-  {
-    title: "Monitoring",
-    tabs: [
-      { id: "cost", label: "Cost Analytics" },
-      { id: "quota", label: "Provider Quota" },
-      { id: "logs", label: "Logs" },
-    ],
-  },
-  {
-    title: "System",
-    tabs: [{ id: "settings", label: "Settings" }],
-  },
-];
+function getTabGroups(t: (key: string) => string): { title: string; tabs: { id: TabId; label: string }[] }[] {
+  return [
+    {
+      title: t("nav.overview"),
+      tabs: [{ id: "dashboard", label: t("nav.dashboard") }],
+    },
+    {
+      title: t("nav.configuration"),
+      tabs: [
+        { id: "channels", label: t("nav.channels") },
+        { id: "virtualKeys", label: t("nav.virtualKeys") },
+        { id: "mcp", label: t("nav.mcp") },
+      ],
+    },
+    {
+      title: t("nav.monitoring"),
+      tabs: [
+        { id: "cost", label: t("nav.cost") },
+        { id: "quota", label: t("nav.quota") },
+        { id: "logs", label: t("nav.logs") },
+      ],
+    },
+    {
+      title: t("nav.system"),
+      tabs: [{ id: "settings", label: t("nav.settings") }],
+    },
+  ];
+}
 
 function getInitialTheme(): Theme {
   const stored = localStorage.getItem("theme");
@@ -51,21 +54,38 @@ function getInitialTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 }
 
+function getInitialLang(): "en" | "zh" {
+  const stored = localStorage.getItem("lang");
+  if (stored === "en" || stored === "zh") return stored;
+  return navigator.language.startsWith("zh") ? "zh" : "en";
+}
+
 function AppInner() {
+  const { t, i18n } = useTranslation();
   const toast = useToast();
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [lang, setLang] = useState<"en" | "zh">(getInitialLang);
   const [authed, setAuthed] = useState(() => {
     if (isTauri) return true;
     return !!localStorage.getItem("admin_token");
   });
+
+  const TAB_GROUPS = getTabGroups(t);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("theme", theme);
   }, [theme]);
 
-  const toggleTheme = () => setTheme((t) => (t === "dark" ? "light" : "dark"));
+  const toggleTheme = () => setTheme((th) => (th === "dark" ? "light" : "dark"));
+
+  const toggleLang = () => {
+    const next = lang === "en" ? "zh" : "en";
+    setLang(next);
+    i18n.changeLanguage(next);
+    localStorage.setItem("lang", next);
+  };
 
   // On mount: check if gateway is running, auto-start if not
   useEffect(() => {
@@ -75,16 +95,16 @@ function AppInner() {
         const status: GwStatus = await invokeTauri("gateway_status");
         if (!status.running) {
           await invokeTauri("gateway_start");
-          toast.success("Gateway started");
+          toast.success(t("toast.gatewayStarted"));
         }
       } catch (e) {
         // Tauri API not available (browser dev mode) or gateway bind failed
         if (typeof e === "string" && e.includes("bind")) {
-          toast.error(`Gateway failed: ${e}`);
+          toast.error(t("toast.gatewayFailed", { error: e }));
         }
       }
     })();
-  }, [toast]);
+  }, [toast, t]);
 
   // Listen for window close-requested event from Rust
   // Gateway lifecycle is tied to the app — closing the app always stops the gateway.
@@ -148,10 +168,17 @@ function AppInner() {
                 window.location.reload();
               }}
             >
-              Logout
+              {t("common.logout")}
             </button>
           )}
-          <button className="theme-toggle" onClick={toggleTheme} title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}>
+          <button
+            className="theme-toggle"
+            onClick={toggleLang}
+            title={lang === "en" ? "Switch to Chinese" : "Switch to English"}
+          >
+            <span className="theme-toggle-icon">{lang === "en" ? "EN" : "中"}</span>
+          </button>
+          <button className="theme-toggle" onClick={toggleTheme} title={t("settings.toggleTheme", { mode: theme === "dark" ? t("settings.light") : t("settings.dark") })}>
             <span className="theme-toggle-icon">{theme === "dark" ? "☀" : "☾"}</span>
           </button>
         </nav>

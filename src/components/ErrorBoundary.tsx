@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { withTranslation, type WithTranslation } from "react-i18next";
 
-interface ErrorBoundaryProps {
+interface ErrorBoundaryProps extends WithTranslation {
   children: ReactNode;
 }
 
@@ -9,7 +10,7 @@ interface ErrorBoundaryState {
   error: Error | null;
 }
 
-export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, error: null };
@@ -26,19 +27,20 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   render() {
     if (this.state.hasError) {
+      const { t } = this.props;
       return (
         <div className="error-boundary-overlay">
           <div className="error-boundary-card">
             <div className="error-boundary-icon">!</div>
-            <h1 className="error-boundary-title">Something went wrong</h1>
+            <h1 className="error-boundary-title">{t("error.boundaryTitle")}</h1>
             <p className="error-boundary-message">
-              {this.state.error?.message ?? "An unexpected error occurred."}
+              {this.state.error?.message ?? t("error.boundaryMessage")}
             </p>
             <button
               className="btn btn-primary"
               onClick={() => window.location.reload()}
             >
-              Reload App
+              {t("error.reloadApp")}
             </button>
           </div>
         </div>
@@ -48,3 +50,5 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     return this.props.children;
   }
 }
+
+export default withTranslation()(ErrorBoundary);

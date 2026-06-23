@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api, type Channel, validateChannelForm } from "../../lib/api";
 import { useToast } from "../Toast";
 import { FormFields } from "./FormFields";
@@ -12,6 +13,7 @@ export function EditChannelForm({
   onSave: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation();
   const toast = useToast();
   const [name, setName] = useState(channel.name);
   const [provider, setProvider] = useState(channel.provider);
@@ -67,10 +69,10 @@ export function EditChannelForm({
         credential_type: credentialValue ? credentialType : undefined,
         credential_value: credentialValue || undefined,
       });
-      toast.success("Channel updated");
+      toast.success(t("channels.updated"));
       onSave();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to update channel";
+      const msg = err instanceof Error ? err.message : t("channels.updateFailed");
       setError(msg);
       toast.error(msg);
     } finally {
@@ -80,7 +82,7 @@ export function EditChannelForm({
 
   return (
     <form className="channel-form" onSubmit={handleSubmit}>
-      <h3 className="form-title">Edit Channel</h3>
+      <h3 className="form-title">{t("channels.edit")}</h3>
       <FormFields
         name={name} setName={setName}
         provider={provider} setProvider={setProvider}
@@ -98,15 +100,15 @@ export function EditChannelForm({
         presetModels={[]}
         modelMapping={modelMapping} setModelMapping={setModelMapping}
         showCredential={true}
-        credentialPlaceholder="Leave empty to keep current credential"
+        credentialPlaceholder={t("channels.keepCredentialEmpty")}
       />
       {error && <div className="form-error">{error}</div>}
       <div style={{ display: "flex", gap: "var(--space-2)" }}>
         <button type="submit" className="btn btn-primary" disabled={submitting}>
-          {submitting ? "Saving..." : "Save"}
+          {submitting ? t("common.saving") : t("common.save")}
         </button>
         <button type="button" className="btn" onClick={onCancel} disabled={submitting}>
-          Cancel
+          {t("common.cancel")}
         </button>
       </div>
     </form>

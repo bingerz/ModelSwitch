@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { McpServer, McpToolDetail } from "./types";
 import {
   STATUS_COLOR,
@@ -34,6 +35,7 @@ export function McpServerCard({
   onDelete,
   onToggleExpand,
 }: McpServerCardProps) {
+  const { t } = useTranslation();
   const sKey = statusKey(server.status);
   const isRunning = statusIsRunning(server.status);
   const errMsg = statusErrorMessage(server.status);
@@ -48,8 +50,8 @@ export function McpServerCard({
           />
           <strong>{server.name}</strong>
           <span className="meta-tag mono">{server.id}</span>
-          {!server.enabled && <span className="meta-tag">disabled</span>}
-          {!server.expose_tools && <span className="meta-tag">hidden tools</span>}
+          {!server.enabled && <span className="meta-tag">{t("common.disabled")}</span>}
+          {!server.expose_tools && <span className="meta-tag">{t("mcp.hiddenTools")}</span>}
         </div>
         <span className={`mcp-status-badge mcp-status-${sKey}`}>
           {statusLabel(server.status)}
@@ -77,28 +79,28 @@ export function McpServerCard({
             onClick={onStop}
             disabled={actionLoading}
           >
-            {actionLoading ? "Stopping..." : "Stop"}
+            {actionLoading ? t("mcp.stopping") : t("mcp.stop")}
           </button>
         ) : (
           <button
             className="btn btn-sm"
             onClick={onStart}
             disabled={actionLoading || !server.enabled}
-            title={!server.enabled ? "Enable the server first" : undefined}
+            title={!server.enabled ? t("mcp.enableFirst") : undefined}
           >
-            {actionLoading ? "Starting..." : "Start"}
+            {actionLoading ? t("mcp.starting") : t("mcp.start")}
           </button>
         )}
         <button
           className="btn btn-sm"
           onClick={onToggleExpand}
           disabled={!isRunning}
-          title={!isRunning ? "Start the server to view tools" : undefined}
+          title={!isRunning ? t("mcp.startToViewTools") : undefined}
         >
-          {expanded ? "Hide Tools" : "Tools"}
+          {expanded ? t("mcp.hideTools") : t("mcp.tools")}
         </button>
         <button className="btn btn-sm" onClick={onEdit}>
-          Edit
+          {t("common.edit")}
         </button>
         <button
           className={`btn btn-sm ${confirmDelete ? "btn-danger" : ""}`}
@@ -109,17 +111,17 @@ export function McpServerCard({
           }}
           disabled={actionLoading}
         >
-          {confirmDelete ? "Confirm?" : "Delete"}
+          {confirmDelete ? t("common.confirmQuestion") : t("common.delete")}
         </button>
       </div>
 
       {expanded && tools !== undefined && (
         <div className="mcp-tools-panel">
           <div className="mcp-tools-title">
-            Tools ({tools.length})
+            {t("mcp.toolsCount", { count: tools.length })}
           </div>
           {tools.length === 0 ? (
-            <div className="mcp-tools-empty">No tools available</div>
+            <div className="mcp-tools-empty">{t("mcp.noTools")}</div>
           ) : (
             <div className="mcp-tools-list">
               {tools.map((tool) => (

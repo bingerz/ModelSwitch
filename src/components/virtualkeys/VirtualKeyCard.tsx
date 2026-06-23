@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { VirtualKey } from "../../lib/api";
 import { formatCents } from "../../lib/format";
 import {
@@ -22,6 +23,7 @@ export function VirtualKeyCard({
   onDelete,
   onToggleEnabled,
 }: VirtualKeyCardProps) {
+  const { t } = useTranslation();
   const dailyBar = computeBudgetBar(vk.spend.today.cents, vk.daily_budget_cents);
   const monthlyBar = computeBudgetBar(
     vk.spend.this_month.cents,
@@ -45,7 +47,7 @@ export function VirtualKeyCard({
           <span
             className={`meta-tag ${vk.enabled ? "" : "channel-disabled-tag"}`}
           >
-            {vk.enabled ? "enabled" : "disabled"}
+            {vk.enabled ? t("virtualKeys.enabled") : t("virtualKeys.disabled")}
           </span>
         </div>
         <div className="vk-card-actions">
@@ -54,10 +56,10 @@ export function VirtualKeyCard({
             onClick={onToggleEnabled}
             disabled={actionLoading}
           >
-            {actionLoading ? "..." : vk.enabled ? "Disable" : "Enable"}
+            {actionLoading ? "..." : vk.enabled ? t("common.disable") : t("common.enable")}
           </button>
           <button className="btn btn-sm" onClick={onEdit} disabled={actionLoading}>
-            Edit
+            {t("common.edit")}
           </button>
           <button
             className={`btn btn-sm ${confirmDelete ? "btn-danger" : ""}`}
@@ -67,7 +69,7 @@ export function VirtualKeyCard({
             onClick={onDelete}
             disabled={actionLoading}
           >
-            {confirmDelete ? "Confirm?" : "Delete"}
+            {confirmDelete ? t("common.confirmQuestion") : t("common.delete")}
           </button>
         </div>
       </div>
@@ -75,7 +77,7 @@ export function VirtualKeyCard({
       <div className="vk-budget-grid">
         <div className="vk-budget-row">
           <div className="vk-budget-label">
-            <span className="vk-budget-window">Today</span>
+            <span className="vk-budget-window">{t("common.today")}</span>
             <span className="vk-budget-value">{dailyBar.label}</span>
           </div>
           <div className="vk-budget-bar">
@@ -92,7 +94,7 @@ export function VirtualKeyCard({
         <div className="vk-budget-row">
           <div className="vk-budget-label">
             <span className="vk-budget-window">
-              Month ({vk.spend.this_month.month})
+              {t("virtualKeys.monthLabel", { month: vk.spend.this_month.month })}
             </span>
             <span className="vk-budget-value">{monthlyBar.label}</span>
           </div>
@@ -109,8 +111,8 @@ export function VirtualKeyCard({
       </div>
 
       <div className="vk-card-footer">
-        <span className="meta-tag">Total: {formatCents(vk.spend.total_cents)}</span>
-        <span className="meta-tag">Created {formatDate(vk.created_at)}</span>
+        <span className="meta-tag">{t("virtualKeys.totalSpent", { amount: formatCents(vk.spend.total_cents) })}</span>
+        <span className="meta-tag">{t("virtualKeys.createdDate", { date: formatDate(vk.created_at) })}</span>
         <span className="meta-tag mono">{vk.id}</span>
       </div>
     </div>

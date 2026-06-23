@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { type QuotaInfo, invokeTauri } from "../../lib/api";
+import { isTauri } from "../../lib/runtime";
 import {
   balanceColor,
   formatBalance,
@@ -35,6 +37,7 @@ function SectionDivider({ label }: { label: string }) {
 // ─── Provider Data Section (balance, items, groups, rate limits) ───────
 
 function ProviderDataSection({ q }: { q: QuotaInfo }) {
+  const { t } = useTranslation();
   const hasBalance = q.balance != null;
   const hasUsage = q.usage != null && q.usage > 0;
   const hasGroups = q.groups.length > 0;
@@ -47,7 +50,7 @@ function ProviderDataSection({ q }: { q: QuotaInfo }) {
 
   return (
     <>
-      <SectionDivider label="Provider Data" />
+      <SectionDivider label={t("quota.providerData")} />
 
       {hasBalance && (
         <div className="quota-balance-section">
@@ -84,8 +87,9 @@ function ProviderDataSection({ q }: { q: QuotaInfo }) {
           )}
           {hasUsage && (
             <div className="quota-usage-text mono">
-              {formatBalance(q.usage)} used
-              {usagePct != null && ` (${usagePct.toFixed(0)}%)`}
+              {usagePct != null
+                ? t("quota.usedLabel", { amount: formatBalance(q.usage), pct: usagePct.toFixed(0) })
+                : t("quota.used", { amount: formatBalance(q.usage) })}
             </div>
           )}
         </div>
@@ -128,7 +132,7 @@ function ProviderDataSection({ q }: { q: QuotaInfo }) {
               </span>
               {g.resets_at && (
                 <span className="quota-group-resets">
-                  resets {new Date(g.resets_at).toLocaleTimeString()}
+                  {t("quota.resetsAt", { time: new Date(g.resets_at).toLocaleTimeString() })}
                 </span>
               )}
             </div>
@@ -140,7 +144,7 @@ function ProviderDataSection({ q }: { q: QuotaInfo }) {
         <div className="quota-ratelimit">
           {q.rate_limit_remaining_req != null && q.rate_limit_limit_req != null && (
             <span className="quota-rl-item">
-              <span className="quota-rl-label">RPM</span>
+              <span className="quota-rl-label">{t("quota.rpm")}</span>
               <span className="mono">
                 {q.rate_limit_remaining_req}/{q.rate_limit_limit_req}
               </span>
@@ -148,7 +152,7 @@ function ProviderDataSection({ q }: { q: QuotaInfo }) {
           )}
           {q.rate_limit_remaining_tok != null && q.rate_limit_limit_tok != null && (
             <span className="quota-rl-item">
-              <span className="quota-rl-label">TPM</span>
+              <span className="quota-rl-label">{t("quota.tpm")}</span>
               <span className="mono">
                 {(q.rate_limit_remaining_tok / 1000).toFixed(0)}k/
                 {(q.rate_limit_limit_tok / 1000).toFixed(0)}k
@@ -157,7 +161,7 @@ function ProviderDataSection({ q }: { q: QuotaInfo }) {
           )}
           {q.rate_limit_updated_at && (
             <span className="quota-rl-time">
-              updated {new Date(q.rate_limit_updated_at).toLocaleTimeString()}
+              {t("quota.updatedAt", { time: new Date(q.rate_limit_updated_at).toLocaleTimeString() })}
             </span>
           )}
         </div>
@@ -169,19 +173,20 @@ function ProviderDataSection({ q }: { q: QuotaInfo }) {
 // ─── Proxy Statistics Section (software-calculated token usage) ────────
 
 function ProxyStatisticsSection({ q }: { q: QuotaInfo }) {
+  const { t } = useTranslation();
   return (
     <>
-      <SectionDivider label="Proxy Statistics" />
+      <SectionDivider label={t("quota.proxyStatistics")} />
       <div className="quota-proxy-stats">
         <div className="quota-tokens-row">
-          <span className="quota-tokens-label">Total Tokens</span>
+          <span className="quota-tokens-label">{t("quota.totalTokens")}</span>
           <span className="quota-tokens-value">
             {formatTokens((q.total_input_tokens ?? 0) + (q.total_output_tokens ?? 0))}
           </span>
         </div>
         {q.total_requests_counted != null && (
           <div className="quota-tokens-row">
-            <span className="quota-tokens-label">Requests</span>
+            <span className="quota-tokens-label">{t("quota.requests")}</span>
             <span className="quota-tokens-value">
               {q.total_requests_counted.toLocaleString()}
             </span>
@@ -189,7 +194,7 @@ function ProxyStatisticsSection({ q }: { q: QuotaInfo }) {
         )}
         {q.total_estimated_cost != null && q.total_estimated_cost > 0 && (
           <div className="quota-tokens-row">
-            <span className="quota-tokens-label">Est. Cost</span>
+            <span className="quota-tokens-label">{t("quota.estCost")}</span>
             <span className="quota-tokens-value mono">
               {q.provider === "deepseek" ? "¥" : "$"}{q.total_estimated_cost.toFixed(2)}
             </span>
@@ -197,7 +202,7 @@ function ProxyStatisticsSection({ q }: { q: QuotaInfo }) {
         )}
         {(q.total_cache_hit_tokens != null || q.total_cache_miss_tokens != null) && (
           <div className="quota-tokens-row quota-tokens-row-sub">
-            <span className="quota-tokens-label">Cache Hit</span>
+            <span className="quota-tokens-label">{t("quota.cacheHit")}</span>
             <span className="quota-tokens-value">
               {formatTokens(q.total_cache_hit_tokens)}
               {q.total_cache_hit_tokens != null && (q.total_cache_hit_tokens + (q.total_cache_miss_tokens ?? 0)) > 0 && (
@@ -216,6 +221,7 @@ function ProxyStatisticsSection({ q }: { q: QuotaInfo }) {
 // ─── Main Card ─────────────────────────────────────────────────────────
 
 export function QuotaCard({ q, onScrape }: { q: QuotaInfo; onScrape?: (info: QuotaInfo) => void }) {
+  const { t } = useTranslation();
   const [scraping, setScraping] = useState(false);
   const canScrape = WEBVIEW_SCRAPE_PROVIDERS.has(q.provider);
   const hasError = q.error !== null;
@@ -240,7 +246,7 @@ export function QuotaCard({ q, onScrape }: { q: QuotaInfo; onScrape?: (info: Quo
           </span>
         </div>
         <span className="quota-provider">{q.provider}</span>
-        {canScrape && (
+        {isTauri && canScrape && (
           <button
             className="btn btn-sm"
             disabled={scraping}
@@ -250,9 +256,9 @@ export function QuotaCard({ q, onScrape }: { q: QuotaInfo; onScrape?: (info: Quo
               if (result && onScrape) onScrape(result);
               setScraping(false);
             }}
-            title="Scrape balance via WebView"
+            title={t("quota.scrapeTooltip")}
           >
-            {scraping ? "Scraping..." : "WebView Scrape"}
+            {scraping ? t("quota.scraping") : t("quota.scrapeWebview")}
           </button>
         )}
       </div>
@@ -268,17 +274,17 @@ export function QuotaCard({ q, onScrape }: { q: QuotaInfo; onScrape?: (info: Quo
       {showProviderData && <ProviderDataSection q={q} />}
 
       {!hasBalance && !hasRateLimit && !hasUsage && !hasGroups && !hasTokenUsage && !hasError && (
-        <div className="quota-no-data">No balance data available yet</div>
+        <div className="quota-no-data">{t("quota.noDataHint")}</div>
       )}
 
       {q.expires_at && (
         <div className="quota-expires">
-          Expires {new Date(q.expires_at).toLocaleDateString()}
+          {t("quota.expires", { date: new Date(q.expires_at).toLocaleDateString() })}
         </div>
       )}
 
       <div className="quota-updated">
-        Updated {new Date(q.updated_at).toLocaleTimeString()}
+        {t("quota.updatedLabel", { time: new Date(q.updated_at).toLocaleTimeString() })}
       </div>
     </div>
   );

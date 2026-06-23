@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { KeyRound, CheckCircle, DollarSign } from "lucide-react";
 import {
   api,
@@ -16,6 +17,7 @@ import { VirtualKeyCard } from "./VirtualKeyCard";
 import { VirtualKeyForm } from "./VirtualKeyForm";
 
 export function VirtualKeysPanel() {
+  const { t } = useTranslation();
   const toast = useToast();
   const [keys, setKeys] = useState<VirtualKey[]>([]);
   const [loading, setLoading] = useState(true);
@@ -32,7 +34,7 @@ export function VirtualKeysPanel() {
       setKeys(list);
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Failed to load virtual keys",
+        err instanceof Error ? err.message : t("virtualKeys.loadFailed"),
       );
     } finally {
       setLoading(false);
@@ -58,11 +60,11 @@ export function VirtualKeysPanel() {
     setActionLoading(id);
     try {
       await api.virtualKeys.delete(id);
-      toast.success("Virtual key deleted");
+      toast.success(t("virtualKeys.deleted"));
       await refresh();
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Failed to delete virtual key",
+        err instanceof Error ? err.message : t("virtualKeys.deleteFailed"),
       );
     } finally {
       setActionLoading(null);
@@ -73,11 +75,11 @@ export function VirtualKeysPanel() {
     setActionLoading(vk.id);
     try {
       await api.virtualKeys.update(vk.id, { enabled: !vk.enabled });
-      toast.success(vk.enabled ? "Key disabled" : "Key enabled");
+      toast.success(vk.enabled ? t("virtualKeys.keyDisabled") : t("virtualKeys.keyEnabled"));
       await refresh();
     } catch (err) {
       toast.error(
-        err instanceof Error ? err.message : "Failed to update key",
+        err instanceof Error ? err.message : t("virtualKeys.updateFailed"),
       );
     } finally {
       setActionLoading(null);
@@ -88,7 +90,7 @@ export function VirtualKeysPanel() {
     return (
       <div className="panel-loading-enhanced">
         <div className="spinner" />
-        <span>Loading virtual keys...</span>
+        <span>{t("virtualKeys.loading")}</span>
       </div>
     );
   }
@@ -96,14 +98,14 @@ export function VirtualKeysPanel() {
   return (
     <section className="vk-panel">
       <SectionHeader
-        title="Virtual Keys"
+        title={t("virtualKeys.title")}
         icon={KeyRound}
         action={
           <button
             className="btn btn-primary"
             onClick={() => setShowAddForm(!showAddForm)}
           >
-            {showAddForm ? "Cancel" : "+ Add Key"}
+            {showAddForm ? t("common.cancel") : t("virtualKeys.create")}
           </button>
         }
       />
@@ -136,19 +138,19 @@ export function VirtualKeysPanel() {
           <StatTile
             icon={KeyRound}
             value={keys.length}
-            label="Total Keys"
+            label={t("virtualKeys.totalKeys")}
             accent="blue"
           />
           <StatTile
             icon={CheckCircle}
             value={keys.filter((k) => k.enabled).length}
-            label="Active Keys"
+            label={t("virtualKeys.activeKeys")}
             accent="green"
           />
           <StatTile
             icon={DollarSign}
             value={formatCents(keys.reduce((sum, k) => sum + k.spend.this_month.cents, 0))}
-            label="Spend This Month"
+            label={t("virtualKeys.spendThisMonth")}
             accent="amber"
           />
         </div>
@@ -157,8 +159,8 @@ export function VirtualKeysPanel() {
       {keys.length === 0 && !showAddForm ? (
         <EmptyState
           icon={KeyRound}
-          title="No virtual keys configured"
-          description='Create virtual keys to distribute access with per-key budgets and rate limits. Click "Add Key" to get started.'
+          title={t("virtualKeys.empty")}
+          description={t("virtualKeys.emptyHint")}
         />
       ) : (
         <div className="vk-list">

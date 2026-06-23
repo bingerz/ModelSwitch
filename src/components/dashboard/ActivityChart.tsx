@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { DispatchLog } from "../../lib/api";
 import { latencyColor } from "./helpers";
 import { ActivityTooltip, LegendSwatch, VIEW_HEIGHT } from "./ActivityTooltip";
@@ -36,6 +37,7 @@ function formatAxisTime(ts: string, now: Date): string {
 }
 
 export function ActivityChart({ logs }: ActivityChartProps) {
+  const { t } = useTranslation();
   const [hover, setHover] = useState<HoverState | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [viewWidth, setViewWidth] = useState(760);
@@ -73,9 +75,9 @@ export function ActivityChart({ logs }: ActivityChartProps) {
         <span className="dsh-activity-empty-icon">
           <Inbox size={28} />
         </span>
-        <div className="dsh-activity-empty-title">No activity yet</div>
+        <div className="dsh-activity-empty-title">{t("dashboard.noActivity")}</div>
         <div className="dsh-activity-empty-desc">
-          Requests will appear here in real-time.
+          {t("dashboard.noActivityHint")}
         </div>
       </div>
     );
@@ -105,17 +107,17 @@ export function ActivityChart({ logs }: ActivityChartProps) {
     <div className="dsh-card dsh-activity-card">
       <div className="dsh-activity-header">
         <div className="dsh-activity-title-group">
-          <span className="dsh-activity-title">Recent Activity</span>
+          <span className="dsh-activity-title">{t("dashboard.recentActivity")}</span>
           <span className="dsh-activity-meta">
-            {successCount}/{count} success &middot; {failureCount} failed
+            {t("dashboard.successRate", { rate: successCount, count })} &middot; {t("dashboard.failedCount", { count: failureCount })}
           </span>
         </div>
         <div className="dsh-activity-legend">
-          <LegendSwatch color="var(--color-success)" label="< 500ms" />
-          <LegendSwatch color="var(--color-warning)" label="500ms-2s" />
-          <LegendSwatch color="#f97316" label="2s-5s" />
-          <LegendSwatch color="var(--color-danger)" label="> 5s" />
-          <LegendSwatch color="var(--color-danger)" label="Failed" shape="dot" />
+          <LegendSwatch color="var(--color-success)" label={t("logs.legendUnder500")} />
+          <LegendSwatch color="var(--color-warning)" label={t("logs.legend500to2s")} />
+          <LegendSwatch color="#f97316" label={t("logs.legend2to5s")} />
+          <LegendSwatch color="var(--color-danger)" label={t("logs.legendOver5s")} />
+          <LegendSwatch color="var(--color-danger)" label={t("common.failed")} shape="dot" />
         </div>
       </div>
       <div className="dsh-activity-chart-wrap" ref={wrapRef}>

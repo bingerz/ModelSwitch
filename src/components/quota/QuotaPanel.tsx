@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuota } from "../../hooks/useQuota";
 import { formatBalance, formatTokens, type FilterMode, type TimeWindow } from "./types";
 import { QuotaCard } from "./QuotaCard";
@@ -10,6 +11,7 @@ import { SectionHeader } from "../ui/SectionHeader";
 import { EmptyState } from "../ui/EmptyState";
 
 export function QuotaPanel() {
+  const { t } = useTranslation();
   const {
     quotas,
     channels,
@@ -65,24 +67,24 @@ export function QuotaPanel() {
   }), [quotas]);
 
   const filterOptions: { id: FilterMode; label: string }[] = [
-    { id: "all", label: `All (${quotas.length})` },
+    { id: "all", label: t("quota.all", { count: quotas.length }) },
     {
       id: "balance",
-      label: `Balance (${filterCounts.balance})`,
+      label: t("quota.balanceFilter", { count: filterCounts.balance }),
     },
     {
       id: "rate_limit",
-      label: `Rate-Limit (${filterCounts.rateLimit})`,
+      label: t("quota.rateLimitFilter", { count: filterCounts.rateLimit }),
     },
     {
       id: "usage",
-      label: `Usage (${filterCounts.usage})`,
+      label: t("quota.usageFilter", { count: filterCounts.usage }),
     },
     ...(errorCount > 0
-      ? [{ id: "error" as FilterMode, label: `Errors (${errorCount})` }]
+      ? [{ id: "error" as FilterMode, label: t("quota.errorsFilter", { count: errorCount }) }]
       : []),
     ...(lowBalanceCount > 0
-      ? [{ id: "low" as FilterMode, label: `Low (${lowBalanceCount})` }]
+      ? [{ id: "low" as FilterMode, label: t("quota.lowFilter", { count: lowBalanceCount }) }]
       : []),
   ];
 
@@ -91,7 +93,7 @@ export function QuotaPanel() {
   return (
     <section>
       <SectionHeader
-        title="Token Quota"
+        title={t("quota.title")}
         icon={Wallet}
         onRefresh={handleRefresh}
         refreshing={refreshing}
@@ -102,20 +104,20 @@ export function QuotaPanel() {
         <StatTile
           icon={Wallet}
           value={formatBalance(totalBalance, "$0")}
-          label="Total Balance"
+          label={t("quota.totalBalance")}
           accent="green"
         />
         <StatTile
           icon={CheckCircle}
           value={`${channelsWithData}/${totalChannels}`}
-          label="Channels with Data"
+          label={t("quota.channelsWithData")}
           accent="blue"
         />
         {errorCount > 0 && (
           <StatTile
             icon={AlertTriangle}
             value={errorCount}
-            label="Errors"
+            label={t("dashboard.quotaErrors")}
             accent="red"
           />
         )}
@@ -123,7 +125,7 @@ export function QuotaPanel() {
           <StatTile
             icon={TrendingDown}
             value={lowBalanceCount}
-            label="Low Balance (<20%)"
+            label={t("quota.lowBalance")}
             accent="amber"
           />
         )}
@@ -132,14 +134,18 @@ export function QuotaPanel() {
       {/* Usage history chart */}
       {usageHistory && (
         <div className="usage-chart-section">
-          <h3 className="usage-chart-title">Usage</h3>
+          <h3 className="usage-chart-title">{t("quota.usage")}</h3>
           <div className="usage-chart-summary">
-            <span className="mono">{formatTokens(usageHistory.total_input_tokens + usageHistory.total_output_tokens)}</span> tokens
-            {" across "}
-            <span className="mono">{usageHistory.total_requests}</span> requests
-            {usageHistory.total_cost > 0 && (
-              <>{" "}&middot; <span className="mono">${usageHistory.total_cost.toFixed(4)}</span> est. cost</>
-            )}
+            {usageHistory.total_cost > 0
+              ? t("quota.tokensAcrossRequestsCost", {
+                  tokens: formatTokens(usageHistory.total_input_tokens + usageHistory.total_output_tokens),
+                  requests: usageHistory.total_requests,
+                  cost: `$${usageHistory.total_cost.toFixed(4)}`,
+                })
+              : t("quota.tokensAcrossRequests", {
+                  tokens: formatTokens(usageHistory.total_input_tokens + usageHistory.total_output_tokens),
+                  requests: usageHistory.total_requests,
+                })}
           </div>
           <UsageChart buckets={usageHistory.buckets} window={usageWindow} onWindowChange={(w) => { setUsageWindow(w); fetchUsageHistory(w); }} />
         </div>
@@ -171,15 +177,15 @@ export function QuotaPanel() {
       ) : (
         <EmptyState
           icon={BarChart3}
-          title="No quota data"
+          title={t("quota.noData")}
           description={
             totalChannels === 0
-              ? "No channels configured yet. Add channels in the Channels tab to start monitoring quota."
+              ? t("quota.noChannels")
               : filter === "error"
-                ? "No channels with errors."
+                ? t("quota.noErrors")
                 : filter === "usage"
-                  ? "No token usage data yet. Usage will appear once channels start processing requests."
-                  : "No quota data matching this filter. Quota information will appear here once channels start reporting balance, rate-limit, or usage data."
+                  ? t("quota.noUsage")
+                  : t("quota.noMatching")
           }
         />
       )}

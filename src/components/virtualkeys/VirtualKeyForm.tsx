@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   api,
   type VirtualKey,
@@ -22,6 +23,7 @@ export function VirtualKeyForm({
   onSave,
   onCancel,
 }: VirtualKeyFormProps) {
+  const { t } = useTranslation();
   const toast = useToast();
   const [name, setName] = useState(existingKey?.name ?? "");
   const [dailyBudget, setDailyBudget] = useState(
@@ -38,7 +40,7 @@ export function VirtualKeyForm({
     setError(null);
 
     if (!name.trim()) {
-      setError("Name is required");
+      setError(t("virtualKeys.nameRequired"));
       return;
     }
 
@@ -46,11 +48,11 @@ export function VirtualKeyForm({
     const monthlyCents = dollarsToCents(monthlyBudget);
 
     if (dailyBudget.trim() !== "" && dailyCents === null) {
-      setError("Daily budget must be a non-negative number");
+      setError(t("virtualKeys.dailyBudgetInvalid"));
       return;
     }
     if (monthlyBudget.trim() !== "" && monthlyCents === null) {
-      setError("Monthly budget must be a non-negative number");
+      setError(t("virtualKeys.monthlyBudgetInvalid"));
       return;
     }
 
@@ -63,7 +65,7 @@ export function VirtualKeyForm({
           monthly_budget_cents: monthlyCents,
         };
         const response = await api.virtualKeys.create(payload);
-        toast.success("Virtual key created");
+        toast.success(t("virtualKeys.createdToast"));
         onSave(response);
       } else if (existingKey) {
         const payload: UpdateVirtualKeyData = {
@@ -72,12 +74,12 @@ export function VirtualKeyForm({
           monthly_budget_cents: monthlyCents,
         };
         await api.virtualKeys.update(existingKey.id, payload);
-        toast.success("Virtual key updated");
+        toast.success(t("virtualKeys.updatedToast"));
         onSave(null);
       }
     } catch (err) {
       const msg =
-        err instanceof Error ? err.message : "Failed to save virtual key";
+        err instanceof Error ? err.message : t("virtualKeys.saveFailed");
       setError(msg);
       toast.error(msg);
     } finally {
@@ -85,36 +87,36 @@ export function VirtualKeyForm({
     }
   };
 
-  const title = mode === "create" ? "Add Virtual Key" : `Edit: ${existingKey?.name}`;
+  const title = mode === "create" ? t("virtualKeys.addTitle") : t("virtualKeys.editTitle", { name: existingKey?.name });
 
   return (
     <form className="channel-form" onSubmit={handleSubmit}>
       <h3 className="form-title">{title}</h3>
       <div className="form-grid">
         <label className="form-field">
-          <span>Name</span>
+          <span>{t("virtualKeys.keyName")}</span>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Production App"
+            placeholder={t("virtualKeys.namePlaceholder")}
             required
           />
         </label>
         <label className="form-field">
-          <span>Daily Budget (USD, optional)</span>
+          <span>{t("virtualKeys.dailyBudget")}</span>
           <input
             value={dailyBudget}
             onChange={(e) => setDailyBudget(e.target.value)}
-            placeholder="e.g. 10.00"
+            placeholder={t("virtualKeys.dailyBudgetPlaceholder")}
             inputMode="decimal"
           />
         </label>
         <label className="form-field">
-          <span>Monthly Budget (USD, optional)</span>
+          <span>{t("virtualKeys.monthlyBudget")}</span>
           <input
             value={monthlyBudget}
             onChange={(e) => setMonthlyBudget(e.target.value)}
-            placeholder="e.g. 250.00"
+            placeholder={t("virtualKeys.monthlyBudgetPlaceholder")}
             inputMode="decimal"
           />
         </label>
@@ -123,10 +125,10 @@ export function VirtualKeyForm({
       <div style={{ display: "flex", gap: "var(--space-2)" }}>
         <button type="submit" className="btn btn-primary" disabled={submitting}>
           {submitting
-            ? "Saving..."
+            ? t("common.saving")
             : mode === "create"
-              ? "Create Key"
-              : "Save"}
+              ? t("virtualKeys.createKey")
+              : t("common.save")}
         </button>
         <button
           type="button"
@@ -134,7 +136,7 @@ export function VirtualKeyForm({
           onClick={onCancel}
           disabled={submitting}
         >
-          Cancel
+          {t("common.cancel")}
         </button>
       </div>
     </form>

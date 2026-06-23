@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import type { Channel, DispatchLog } from "../../lib/api";
 import { formatNumber } from "./helpers";
 import { Sparkline } from "./Sparkline";
@@ -40,6 +41,7 @@ export function ChannelHealth({
   channels, usageByChannel, logs,
   healthyCount, circuitOpenCount, disabledCount,
 }: ChannelHealthProps) {
+  const { t } = useTranslation();
   const sorted = useMemo(() => {
     return [...channels].sort((a, b) => {
       const pa = STATUS_PRIORITY[a.status] ?? 99;
@@ -52,11 +54,11 @@ export function ChannelHealth({
   if (channels.length === 0) {
     return (
       <div className="dsh-card dsh-health-card">
-        <div className="dsh-card-title">Channel Health</div>
+        <div className="dsh-card-title">{t("dashboard.channelHealth")}</div>
         <div className="dsh-activity-empty">
-          <div className="dsh-activity-empty-title">No channels</div>
+          <div className="dsh-activity-empty-title">{t("dashboard.noChannels")}</div>
           <div className="dsh-activity-empty-desc">
-            Add channels to see live health data.
+            {t("dashboard.noChannelsHint")}
           </div>
         </div>
       </div>
@@ -67,18 +69,18 @@ export function ChannelHealth({
     <div className="dsh-card dsh-health-card">
       <div className="dsh-card-title-row">
         <div className="dsh-health-title-group">
-          <span className="dsh-card-title">Channel Health</span>
+          <span className="dsh-card-title">{t("dashboard.channelHealth")}</span>
           <span className="dsh-card-count">{channels.length}</span>
         </div>
         <div className="dsh-health-pills">
           {healthyCount !== undefined && healthyCount > 0 && (
-            <span className="dsh-health-pill dsh-health-pill-success">{healthyCount} healthy</span>
+            <span className="dsh-health-pill dsh-health-pill-success">{t("common.healthyCount", { count: healthyCount })}</span>
           )}
           {circuitOpenCount !== undefined && circuitOpenCount > 0 && (
-            <span className="dsh-health-pill dsh-health-pill-danger">{circuitOpenCount} broken</span>
+            <span className="dsh-health-pill dsh-health-pill-danger">{t("common.brokenCount", { count: circuitOpenCount })}</span>
           )}
           {disabledCount !== undefined && disabledCount > 0 && (
-            <span className="dsh-health-pill dsh-health-pill-muted">{disabledCount} disabled</span>
+            <span className="dsh-health-pill dsh-health-pill-muted">{t("common.disabledCount", { count: disabledCount })}</span>
           )}
         </div>
       </div>
@@ -114,7 +116,7 @@ export function ChannelHealth({
                     }}
                   >
                     {" "}
-                    &middot; {errPct.toFixed(1)}% err
+                    &middot; {t("dashboard.errRate", { rate: errPct.toFixed(1) })}
                   </span>
                 )}
               </span>
