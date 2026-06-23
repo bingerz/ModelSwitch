@@ -123,12 +123,18 @@ async fn select_channel_for_attempt(
     account_group: Option<&str>,
 ) -> Option<Channel> {
     // Try affinity channel first if still valid.
-    // Check against the original channel list with inline account_group
+    // Check against the original channel map with inline account_group
     // filtering so we avoid cloning the entire channel list into a new
     // Vec + Arc<RwLock> on every request.
     if let Some(aff_id) = affinity_channel {
-        let guard = channels.read().await;
-        if let Some(ch) = guard.iter().find(|c| c.id == aff_id) {
+        // Clone the Arc under the read guard, then drop the guard before
+        // locking the inner channel. This keeps outer-lock hold time minimal.
+        let ch_arc = {
+            let guard = channels.read().await;
+            guard.get(&aff_id).map(Arc::clone)
+        };
+        if let Some(ch_arc) = ch_arc {
+            let ch = ch_arc.read().unwrap_or_else(|e| e.into_inner());
             let group_ok = account_group.is_none_or(|tag| {
                 ch.account_group.as_deref() == Some(tag) || ch.account_group.is_none()
             });
@@ -137,11 +143,9 @@ async fn select_channel_for_attempt(
             if group_ok && model_ok && ch.is_available() {
                 let mut c = ch.clone();
                 c.recover_if_expired();
-                drop(guard);
                 return Some(c);
             }
         }
-        drop(guard);
     }
 
     // Normal routing — pass account_group to select_channel for inline
@@ -539,9 +543,20 @@ mod tests {
         }
     }
 
+    fn make_shared_channels(channels: Vec<Channel>) -> SharedChannels {
+        let map: std::collections::HashMap<
+            uuid::Uuid,
+            Arc<std::sync::RwLock<Channel>>,
+        > = channels
+            .into_iter()
+            .map(|c| (c.id, Arc::new(std::sync::RwLock::new(c))))
+            .collect();
+        Arc::new(RwLock::new(map))
+    }
+
     #[tokio::test]
     async fn select_channel_returns_none_for_empty_channels() {
-        let channels: SharedChannels = Arc::new(RwLock::new(vec![]));
+        let channels: SharedChannels = Arc::new(RwLock::new(HashMap::new()));
         let active_requests = Arc::new(ActiveRequests::new());
         let rate_limiter = Arc::new(RateLimiter::new(None));
         let latency_tracker = Arc::new(LatencyTracker::new());
@@ -564,7 +579,7 @@ mod tests {
         let mut model_mapping = HashMap::new();
         model_mapping.insert("gpt-4".to_string(), "gpt-4".to_string());
         let channel = make_test_channel(channel_id, model_mapping);
-        let channels: SharedChannels = Arc::new(RwLock::new(vec![channel]));
+        let channels: SharedChannels = make_shared_channels(vec![channel]);
         let active_requests = Arc::new(ActiveRequests::new());
         let rate_limiter = Arc::new(RateLimiter::new(None));
         let latency_tracker = Arc::new(LatencyTracker::new());
@@ -587,7 +602,7 @@ mod tests {
         let mut model_mapping = HashMap::new();
         model_mapping.insert("gpt-4".to_string(), "gpt-4".to_string());
         let channel = make_test_channel(channel_id, model_mapping);
-        let channels: SharedChannels = Arc::new(RwLock::new(vec![channel]));
+        let channels: SharedChannels = make_shared_channels(vec![channel]);
         let active_requests = Arc::new(ActiveRequests::new());
         let rate_limiter = Arc::new(RateLimiter::new(None));
         let latency_tracker = Arc::new(LatencyTracker::new());
@@ -625,11 +640,11 @@ mod tests {
         let mut mm = HashMap::new();
         mm.insert("gpt-4".to_string(), "gpt-4".to_string());
 
-        let channels: SharedChannels = Arc::new(RwLock::new(vec![
+        let channels: SharedChannels = make_shared_channels(vec![
             make_test_channel_with_group(matching_id, mm.clone(), Some("production")),
             make_test_channel_with_group(ungrouped_id, mm.clone(), None),
             make_test_channel_with_group(other_id, mm, Some("staging")),
-        ]));
+        ]);
 
         let active_requests = Arc::new(ActiveRequests::new());
         let rate_limiter = Arc::new(RateLimiter::new(None));
@@ -663,10 +678,10 @@ mod tests {
         let mut mm = HashMap::new();
         mm.insert("gpt-4".to_string(), "gpt-4".to_string());
 
-        let channels: SharedChannels = Arc::new(RwLock::new(vec![
+        let channels: SharedChannels = make_shared_channels(vec![
             make_test_channel_with_group(prod_id, mm.clone(), Some("production")),
             make_test_channel_with_group(staging_id, mm, Some("staging")),
-        ]));
+        ]);
 
         let active_requests = Arc::new(ActiveRequests::new());
         let rate_limiter = Arc::new(RateLimiter::new(None));
@@ -706,11 +721,9 @@ mod tests {
         mm.insert("gpt-4".to_string(), "gpt-4".to_string());
 
         // Only a staging channel exists — requesting production should fail.
-        let channels: SharedChannels = Arc::new(RwLock::new(vec![make_test_channel_with_group(
-            staging_id,
-            mm,
-            Some("staging"),
-        )]));
+        let channels: SharedChannels = make_shared_channels(vec![
+            make_test_channel_with_group(staging_id, mm, Some("staging")),
+        ]);
 
         let active_requests = Arc::new(ActiveRequests::new());
         let rate_limiter = Arc::new(RateLimiter::new(None));

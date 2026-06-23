@@ -220,14 +220,29 @@ fn build_infra(
     let pool_size = config.gateway.http_pool_size.max(1);
     let http_pool = crate::http_pool::HttpPool::new(pool_size, || {
         reqwest::Client::builder()
+            // Overall request timeout (includes connect, write, read). Default 120s.
+            // This is a safety net — per-read and per-connect overrides are tighter.
             .timeout(std::time::Duration::from_secs(
                 config.gateway.http_timeout_secs,
             ))
+            // Connect timeout: 10s is generous enough for cloud LLM APIs without
+            // holding a connection slot too long on a dead upstream.
             .connect_timeout(std::time::Duration::from_secs(10))
+            // Per-read timeout: 300s (5 min) ensures a single stalled byte does not
+            // tie up a connection forever; the SSE stream-layer timeout (120s) fires
+            // first for streaming paths.
             .read_timeout(std::time::Duration::from_secs(300))
+            // Idle connections are kept alive for 90s before being closed by the
+            // client. Balances reconnection cost vs. holding idle resources.
             .pool_idle_timeout(std::time::Duration::from_secs(90))
+            // Keep up to 20 idle connections per host to absorb traffic bursts
+            // without reopening connections (reqwest default is pool_max_idle_per_host).
             .pool_max_idle_per_host(20)
+            // TCP keepalive at 60s to detect dead upstream connections early and
+            // avoid hanging requests on half-open sockets.
             .tcp_keepalive(std::time::Duration::from_secs(60))
+            // Disable Nagle's algorithm for reduced latency on small request
+            // payloads (chat completions are frequently sub-MTU).
             .tcp_nodelay(true)
     })
     .expect("Failed to build HTTP client pool");

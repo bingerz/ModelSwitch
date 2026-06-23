@@ -5,7 +5,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -273,4 +272,13 @@ impl From<&ChannelConfig> for Channel {
     }
 }
 
-pub type SharedChannels = Arc<RwLock<Vec<Channel>>>;
+/// Shared channel storage with per-channel locking.
+///
+/// Outer `tokio::sync::RwLock<HashMap<Uuid, _>>` is held only briefly for
+/// HashMap lookups and iteration. Each channel value is wrapped in an inner
+/// `std::sync::RwLock<Channel>` so that circuit-breaker mutations, latency
+/// updates, and other per-channel writes do not block routing reads of other
+/// channels. The inner std lock is safe because no `.await` is held while the
+/// guard is live.
+pub type SharedChannels =
+    Arc<tokio::sync::RwLock<HashMap<Uuid, Arc<std::sync::RwLock<Channel>>>>>;

@@ -59,6 +59,11 @@ fn translate_gemini_sse_chunk(bytes: &[u8], model: &str) -> Bytes {
 /// If the client disconnects mid-stream, the task continues draining the
 /// upstream to ensure telemetry (and therefore budget reconciliation) completes.
 ///
+/// `first_byte_timeout` applies to the FIRST `upstream.next()` call only,
+/// providing a true TTFT (time-to-first-token) guard. Subsequent reads use
+/// the constant `STREAM_READ_TIMEOUT`. Pass `None` to skip the first-byte
+/// timeout (falls back to `STREAM_READ_TIMEOUT` for all reads).
+///
 /// Returns the response, a unified output buffer that captures the exact bytes
 /// delivered to the client (after any Gemini translation), and a `Notify` that
 /// is signaled once the upstream stream has been fully consumed (allowing the
@@ -72,6 +77,7 @@ pub fn sse_stream_response_with_telemetry(
     upstream_stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
     translate_gemini: bool,
     model: String,
+    first_byte_timeout: Option<std::time::Duration>,
 ) -> (
     Response,
     Arc<Mutex<BytesMut>>,
@@ -90,9 +96,54 @@ pub fn sse_stream_response_with_telemetry(
         let stream_done = Arc::clone(&stream_done);
         tokio::spawn(async move {
             let mut upstream = Box::pin(upstream_stream);
+            let mut first_chunk = true;
 
             loop {
-                let next_result =
+                let next_result = if first_chunk {
+                    first_chunk = false;
+                    match first_byte_timeout {
+                        Some(ttft) => {
+                            match tokio::time::timeout(ttft, upstream.next()).await {
+                                Ok(Some(result)) => result,
+                                Ok(None) => break, // stream ended normally before any data
+                                Err(_elapsed) => {
+                                    tracing::warn!(
+                                        "TTFT first-byte timeout ({:?}) — aborting stream",
+                                        ttft
+                                    );
+                                    let _ = tx
+                                        .send(Err(std::io::Error::new(
+                                            std::io::ErrorKind::TimedOut,
+                                            "first byte timeout",
+                                        )))
+                                        .await;
+                                    break;
+                                }
+                            }
+                        }
+                        None => {
+                            // No first-byte timeout configured; use the regular
+                            // per-chunk timeout for the first read too.
+                            match tokio::time::timeout(STREAM_READ_TIMEOUT, upstream.next()).await {
+                                Ok(Some(result)) => result,
+                                Ok(None) => break,
+                                Err(_elapsed) => {
+                                    tracing::warn!(
+                                        "Stream read timeout ({}s) — upstream stalled, aborting stream",
+                                        STREAM_READ_TIMEOUT.as_secs()
+                                    );
+                                    let _ = tx
+                                        .send(Err(std::io::Error::new(
+                                            std::io::ErrorKind::TimedOut,
+                                            "upstream stream read timeout",
+                                        )))
+                                        .await;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                } else {
                     match tokio::time::timeout(STREAM_READ_TIMEOUT, upstream.next()).await {
                         Ok(Some(result)) => result,
                         Ok(None) => break, // stream ended normally
@@ -109,7 +160,8 @@ pub fn sse_stream_response_with_telemetry(
                                 .await;
                             break;
                         }
-                    };
+                    }
+                };
                 let bytes = match next_result {
                     Ok(b) => b,
                     Err(e) => {
@@ -328,7 +380,7 @@ mod tests {
         let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
 
         let (_response, output_buffer, stream_done) =
-            sse_stream_response_with_telemetry(upstream, false, "gpt-4".to_string());
+            sse_stream_response_with_telemetry(upstream, false, "gpt-4".to_string(), None);
 
         // Consume the response body so the background task completes
         let body = _response.into_body();

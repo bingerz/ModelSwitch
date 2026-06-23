@@ -121,10 +121,22 @@ pub(super) async fn handle_streaming_success(
     active_guard: ActiveRequestGuard,
 ) -> Response {
     let is_gemini = provider.is_gemini_stream();
+
+    // Compute the first-byte timeout from the gateway config. This guards against
+    // LLMs that accept the request (200 OK) but take an extremely long time to
+    // produce the first SSE data chunk ("thinking" stall). Subsequent chunk reads
+    // use the per-read timeout internally (STREAM_READ_TIMEOUT = 120s).
+    let first_byte_timeout = state
+        .gateway
+        .stream_ttft_timeout_secs
+        .filter(|&s| s > 0)
+        .map(std::time::Duration::from_secs);
+
     let (stream_resp, output_buffer, stream_done) = sse_stream_response_with_telemetry(
         resp.bytes_stream(),
         is_gemini,
         upstream_model.to_string(),
+        first_byte_timeout,
     );
 
     let est_tokens = estimate_tokens(body, true);

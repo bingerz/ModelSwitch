@@ -41,35 +41,40 @@ pub async fn select_channel(
     // Filter by availability, group, concurrency, and model — then clone + recover
     // only the surviving candidates. is_available() already accounts for expired
     // circuit breakers, so recover_if_expired() can safely run after filtering.
+    //
+    // Each inner channel is read-locked only briefly per iteration. The outer
+    // HashMap read guard is held for the full scan so we get a consistent
+    // snapshot, but it is an RwLock read guard — routing reads of OTHER
+    // channels can proceed concurrently with any per-channel write (those
+    // acquire the inner std::sync::RwLock, not this outer one).
     let mut candidates: Vec<Channel> = guard
-        .iter()
-        .filter(|c| c.is_available())
-        .filter(|c| {
+        .values()
+        .filter_map(|ch_arc| {
+            let c = ch_arc.read().unwrap_or_else(|e| e.into_inner());
+            if !c.is_available() {
+                return None;
+            }
             // Account group filter: match if channel group equals tag, or
             // channel has no group (universal).
             if let Some(tag) = account_group {
-                c.account_group.as_deref() == Some(tag) || c.account_group.is_none()
-            } else {
-                true
+                if !(c.account_group.as_deref() == Some(tag) || c.account_group.is_none()) {
+                    return None;
+                }
             }
-        })
-        .filter(|c| {
             // Check concurrent request limit
             if let Some(max) = c.max_concurrent {
-                ctx.active_requests.get(c.id) < max
-            } else {
-                true // No limit configured
+                if ctx.active_requests.get(c.id) >= max {
+                    return None;
+                }
             }
-        })
-        .filter(|c| {
             // Empty mapping = pass-through, supports all models
             // Non-empty mapping = only supports explicitly listed models
-            c.model_mapping.is_empty() || c.model_mapping.contains_key(requested_model)
-        })
-        .map(|c| {
-            let mut c = c.clone();
-            c.recover_if_expired();
-            c
+            if !c.model_mapping.is_empty() && !c.model_mapping.contains_key(requested_model) {
+                return None;
+            }
+            let mut cloned = c.clone();
+            cloned.recover_if_expired();
+            Some(cloned)
         })
         .collect();
 

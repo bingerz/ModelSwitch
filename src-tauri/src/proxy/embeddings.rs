@@ -79,25 +79,9 @@ pub async fn handle_embeddings(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    // Narrow the channel pool when an account group tag is present, matching
-    // the semantics in dispatch.rs: channels with a matching tag or no tag.
-    let channels = if let Some(ref tag) = account_group {
-        let all = state.channel_mgr.channels();
-        let guard = all.read().await;
-        let filtered: Vec<crate::channel::Channel> = guard
-            .iter()
-            .filter(|c| c.account_group.as_deref() == Some(tag.as_str()) || c.account_group.is_none())
-            .map(|c| {
-                let mut c = c.clone();
-                c.recover_if_expired();
-                c
-            })
-            .collect();
-        drop(guard);
-        std::sync::Arc::new(tokio::sync::RwLock::new(filtered))
-    } else {
-        state.channel_mgr.channels()
-    };
+    // Channel selection uses select_channel's built-in account_group
+    // filtering (matching tag or universal/None), consistent with dispatch.rs.
+    let channels = state.channel_mgr.channels();
 
     // ── Channel selection ──────────────────────────────────────────────
     let ctx = RoutingContext {
@@ -111,7 +95,7 @@ pub async fn handle_embeddings(
         &resolved_model,
         state.gateway.routing_strategy,
         &ctx,
-        None,
+        account_group.as_deref(),
     )
     .await
     {

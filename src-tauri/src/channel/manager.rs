@@ -2,7 +2,7 @@ use crate::channel::{Channel, ChannelStatus, CredentialType, SharedChannels};
 use crate::config::{AppConfig, ChannelConfig, GatewayConfig};
 use crate::credential::SharedCredentialStore;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock as StdRwLock};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -17,7 +17,14 @@ pub struct ChannelManager {
 
 impl ChannelManager {
     pub fn new(config: &AppConfig, credential_store: SharedCredentialStore) -> Self {
-        let channels: Vec<Channel> = config.channels.iter().map(Channel::from_config).collect();
+        let channels: HashMap<Uuid, Arc<StdRwLock<Channel>>> = config
+            .channels
+            .iter()
+            .map(|c| {
+                let ch = Channel::from_config(c);
+                (ch.id, Arc::new(StdRwLock::new(ch)))
+            })
+            .collect();
 
         Self {
             channels: Arc::new(RwLock::new(channels)),
@@ -35,30 +42,34 @@ impl ChannelManager {
     pub async fn list(&self) -> Vec<Channel> {
         let channels = self.channels.read().await;
         channels
-            .iter()
-            .map(|c| {
-                let mut c = c.clone();
+            .values()
+            .filter_map(|ch_arc| {
+                let ch = ch_arc.read().unwrap_or_else(|e| e.into_inner());
+                let mut c = ch.clone();
                 c.recover_if_expired();
-                c
+                Some(c)
             })
             .collect()
     }
 
     pub async fn get(&self, id: Uuid) -> Option<Channel> {
         let channels = self.channels.read().await;
-        channels.iter().find(|c| c.id == id).cloned()
+        channels.get(&id).map(|ch_arc| {
+            let ch = ch_arc.read().unwrap_or_else(|e| e.into_inner());
+            ch.clone()
+        })
     }
 
     pub async fn create(&self, channel: Channel) -> Channel {
         let mut channels = self.channels.write().await;
-        channels.push(channel.clone());
+        channels.insert(channel.id, Arc::new(StdRwLock::new(channel.clone())));
         channel
     }
 
     pub async fn update(&self, id: Uuid, updated: Channel) -> Option<Channel> {
         let mut channels = self.channels.write().await;
-        if let Some(idx) = channels.iter().position(|c| c.id == id) {
-            channels[idx] = updated.clone();
+        if channels.contains_key(&id) {
+            channels.insert(id, Arc::new(StdRwLock::new(updated.clone())));
             Some(updated)
         } else {
             None
@@ -67,14 +78,19 @@ impl ChannelManager {
 
     pub async fn delete(&self, id: Uuid) -> bool {
         let mut channels = self.channels.write().await;
-        let before = channels.len();
-        channels.retain(|c| c.id != id);
-        channels.len() < before
+        channels.remove(&id).is_some()
     }
 
     pub async fn mark_circuit_open(&self, id: Uuid) {
-        let mut channels = self.channels.write().await;
-        if let Some(ch) = channels.iter_mut().find(|c| c.id == id) {
+        // Read outer lock only briefly to clone the Arc, then drop it before
+        // acquiring the inner write lock. This ensures circuit-breaker writes
+        // do not block routing reads of other channels.
+        let ch_arc = {
+            let channels = self.channels.read().await;
+            channels.get(&id).map(Arc::clone)
+        };
+        if let Some(ch_arc) = ch_arc {
+            let mut ch = ch_arc.write().unwrap_or_else(|e| e.into_inner());
             ch.consecutive_failures += 1;
             let base_minutes = ch.cooldown_minutes.unwrap_or(self.circuit_breaker_minutes);
             // Progressive backoff: 1x, 2x, 4x, 8x... capped at 30 min
@@ -90,20 +106,43 @@ impl ChannelManager {
         let duration_mins = retry_after_secs
             .map(|s| (s / 60).max(1))
             .unwrap_or(self.circuit_breaker_minutes);
-        let mut channels = self.channels.write().await;
-        if let Some(ch) = channels.iter_mut().find(|c| c.id == id) {
+
+        let ch_arc = {
+            let channels = self.channels.read().await;
+            channels.get(&id).map(Arc::clone)
+        };
+        if let Some(ch_arc) = ch_arc {
+            let mut ch = ch_arc.write().unwrap_or_else(|e| e.into_inner());
             ch.mark_circuit_open(duration_mins);
         }
     }
 
     pub async fn get_credential(&self, id: Uuid) -> Option<String> {
-        let channels = self.channels.read().await;
-        let ch = channels.iter().find(|c| c.id == id)?;
+        // Snapshot the fields we need under the inner read lock, then release.
+        // The credential-store lookup (keyring/file IO) happens outside any
+        // channel lock so a slow keyring does not stall routing.
+        let (api_keys, primary_key, key_ref) = {
+            let channels = self.channels.read().await;
+            let ch_arc = channels.get(&id)?;
+            let ch = ch_arc.read().unwrap_or_else(|e| e.into_inner());
+            (
+                ch.api_keys.clone(),
+                ch.credential.api_key.clone(),
+                ch.credential.key_ref.clone(),
+            )
+        };
 
         // Multi-key rotation: when additional keys are configured, rotate
         // through [credential.api_key, ...api_keys] round-robin.
-        if !ch.api_keys.is_empty() {
-            let all_keys = ch.all_keys();
+        if !api_keys.is_empty() {
+            let all_keys = {
+                let mut keys = Vec::with_capacity(1 + api_keys.len());
+                if let Some(ref key) = primary_key {
+                    keys.push(key.clone());
+                }
+                keys.extend(api_keys);
+                keys
+            };
             if all_keys.is_empty() {
                 // Fall through to credential store lookup below
             } else {
@@ -119,51 +158,55 @@ impl ChannelManager {
         }
 
         // Priority 1: inline api_key from config
-        if let Some(ref key) = ch.credential.api_key {
+        if let Some(ref key) = primary_key {
             return Some(key.clone());
         }
 
         // Priority 2: lookup from credential store (keyring/file)
         let service = "modelswitch";
-        let username = &ch.credential.key_ref;
+        let username = &key_ref;
 
         self.credential_store.get(service, username).ok().flatten()
     }
 
     /// Persist current channels to config file. Best-effort: logs errors but does not propagate.
     pub async fn persist(&self) {
-        let channels = self.channels.read().await;
-        let channel_configs: Vec<ChannelConfig> = channels
-            .iter()
-            .map(|c| ChannelConfig {
-                id: c.id.to_string(),
-                name: c.name.clone(),
-                provider: c.provider.as_str().to_string(),
-                priority: c.priority,
-                weight: c.weight,
-                cost_per_token: c.cost_per_token,
-                input_cost_per_mtok: c.input_cost_per_mtok,
-                output_cost_per_mtok: c.output_cost_per_mtok,
-                credential_type: match c.credential.cred_type {
-                    CredentialType::ApiKey => "api_key".to_string(),
-                    CredentialType::WebSession => "web_session".to_string(),
-                },
-                credential_ref: c.credential.key_ref.clone(),
-                api_key: c.credential.api_key.clone(),
-                base_url: c.base_url.clone(),
-                enabled: c.enabled,
-                model_mapping: c.model_mapping.clone(),
-                cooldown_minutes: c.cooldown_minutes,
-                rpm_limit: c.rpm_limit,
-                tpm_limit: c.tpm_limit,
-                account_group: c.account_group.clone(),
-                payload_rules: None,
-                quota: None,
-                max_concurrent: c.max_concurrent,
-                api_keys: c.api_keys.clone(),
-            })
-            .collect();
-        drop(channels);
+        let channel_configs: Vec<ChannelConfig> = {
+            let channels = self.channels.read().await;
+            channels
+                .values()
+                .filter_map(|ch_arc| {
+                    let c = ch_arc.read().unwrap_or_else(|e| e.into_inner());
+                    Some(ChannelConfig {
+                        id: c.id.to_string(),
+                        name: c.name.clone(),
+                        provider: c.provider.as_str().to_string(),
+                        priority: c.priority,
+                        weight: c.weight,
+                        cost_per_token: c.cost_per_token,
+                        input_cost_per_mtok: c.input_cost_per_mtok,
+                        output_cost_per_mtok: c.output_cost_per_mtok,
+                        credential_type: match c.credential.cred_type {
+                            CredentialType::ApiKey => "api_key".to_string(),
+                            CredentialType::WebSession => "web_session".to_string(),
+                        },
+                        credential_ref: c.credential.key_ref.clone(),
+                        api_key: c.credential.api_key.clone(),
+                        base_url: c.base_url.clone(),
+                        enabled: c.enabled,
+                        model_mapping: c.model_mapping.clone(),
+                        cooldown_minutes: c.cooldown_minutes,
+                        rpm_limit: c.rpm_limit,
+                        tpm_limit: c.tpm_limit,
+                        account_group: c.account_group.clone(),
+                        payload_rules: None,
+                        quota: None,
+                        max_concurrent: c.max_concurrent,
+                        api_keys: c.api_keys.clone(),
+                    })
+                })
+                .collect()
+        };
 
         // Preserve existing MCP server configs — only channels are being persisted.
         let existing_mcp_servers = AppConfig::load().map(|c| c.mcp_servers).unwrap_or_default();
@@ -181,8 +224,12 @@ impl ChannelManager {
 
     /// Record a latency sample for a channel and reset its consecutive failure count.
     pub async fn record_latency(&self, id: Uuid, latency_ms: u64) {
-        let mut channels = self.channels.write().await;
-        if let Some(ch) = channels.iter_mut().find(|c| c.id == id) {
+        let ch_arc = {
+            let channels = self.channels.read().await;
+            channels.get(&id).map(Arc::clone)
+        };
+        if let Some(ch_arc) = ch_arc {
+            let mut ch = ch_arc.write().unwrap_or_else(|e| e.into_inner());
             // Exponential moving average (alpha = 0.3)
             if ch.avg_latency_ms == 0 {
                 ch.avg_latency_ms = latency_ms;
@@ -198,8 +245,12 @@ impl ChannelManager {
 
     /// Force-recover a channel from circuit-open state.
     pub async fn force_recover(&self, id: Uuid) {
-        let mut channels = self.channels.write().await;
-        if let Some(ch) = channels.iter_mut().find(|c| c.id == id) {
+        let ch_arc = {
+            let channels = self.channels.read().await;
+            channels.get(&id).map(Arc::clone)
+        };
+        if let Some(ch_arc) = ch_arc {
+            let mut ch = ch_arc.write().unwrap_or_else(|e| e.into_inner());
             ch.status = ChannelStatus::Healthy;
             ch.circuit_open_until = None;
             ch.consecutive_failures = 0;
@@ -208,11 +259,15 @@ impl ChannelManager {
     }
 
     /// Atomically replace the entire channel list with a new set of channels.
-    /// This acquires the write lock exactly once and swaps the whole vector,
+    /// This acquires the write lock exactly once and swaps the whole map,
     /// so dispatch never sees a partially-updated list.
     pub async fn replace_all(&self, new_channels: Vec<Channel>) {
         let mut channels = self.channels.write().await;
-        *channels = new_channels;
+        let new_map: HashMap<Uuid, Arc<StdRwLock<Channel>>> = new_channels
+            .into_iter()
+            .map(|c| (c.id, Arc::new(StdRwLock::new(c))))
+            .collect();
+        *channels = new_map;
     }
 }
 
