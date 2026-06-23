@@ -108,20 +108,42 @@ function AppInner() {
   // On mount: check if gateway is running, auto-start if not
   useEffect(() => {
     if (!isTauri) return; // Web mode: gateway is already running
+    let cancelled = false;
     (async () => {
       try {
         const status: GwStatus = await invokeTauri("gateway_status");
-        if (!status.running) {
+        if (status.running) return; // Already running, no toast needed
+
+        // Attempt to start, with one retry after 2s if bind fails
+        try {
           await invokeTauri("gateway_start");
+        } catch (e) {
+          if (cancelled) return;
+          if (typeof e === "string" && e.includes("bind")) {
+            // Port still in use — wait and retry once
+            await new Promise((r) => setTimeout(r, 2000));
+            if (cancelled) return;
+            await invokeTauri("gateway_start"); // Retry
+          } else {
+            throw e; // Re-throw non-bind errors
+          }
+        }
+
+        if (!cancelled) {
           toast.success(t("toast.gatewayStarted"));
         }
       } catch (e) {
-        // Tauri API not available (browser dev mode) or gateway bind failed
-        if (typeof e === "string" && e.includes("bind")) {
-          toast.error(t("toast.gatewayFailed", { error: e }));
-        }
+        if (cancelled) return;
+        // Don't show error for "already running" — that's a normal race
+        if (typeof e === "string" && e.includes("already running")) return;
+        toast.error(
+          typeof e === "string" ? e : t("toast.gatewayFailed", { error: String(e) })
+        );
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [toast, t]);
 
   // Listen for window close-requested event from Rust

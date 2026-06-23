@@ -12,12 +12,12 @@ use crate::middleware;
 use crate::provider_budget::ProviderBudgetStore;
 use crate::proxy;
 use crate::proxy::cache::{CacheMode, InFlightRequests, RequestCache};
-use crate::proxy::{
-    AppState, BillingState, CacheState, ProxyParams, LimitsState, McpState, RouterState,
-    SecurityState,
-};
 use crate::proxy::payload_rules::ChannelPayloadRules;
 use crate::proxy::rate_limiter::RateLimiter;
+use crate::proxy::{
+    AppState, BillingState, CacheState, LimitsState, McpState, ProxyParams, RouterState,
+    SecurityState,
+};
 use crate::quota;
 use crate::quota::registry::QuotaProviderRegistry;
 use crate::quota::QuotaStore;
@@ -196,9 +196,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
 }
 
 /// Initialize tracing, load config, and build the HTTP connection pool.
-fn build_infra(
-    config_path: Option<std::path::PathBuf>,
-) -> (AppConfig, crate::http_pool::HttpPool) {
+fn build_infra(config_path: Option<std::path::PathBuf>) -> (AppConfig, crate::http_pool::HttpPool) {
     // Initialize tracing (no-op if already initialized, e.g. by CLI main)
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
@@ -437,10 +435,7 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
             "/v1/chat/completions",
             post(proxy::openai::handle_chat_completions),
         )
-        .route(
-            "/v1/embeddings",
-            post(proxy::embeddings::handle_embeddings),
-        )
+        .route("/v1/embeddings", post(proxy::embeddings::handle_embeddings))
         .route("/v1/models", get(proxy::openai::handle_list_models))
         .route("/v1/tools", get(proxy::openai::handle_list_tools))
         .route("/v1/messages", post(proxy::anthropic::handle_messages))
@@ -708,21 +703,48 @@ pub async fn start_gateway(
         tracing::debug!("PID file written: {} (pid={})", pid_path.display(), pid);
     }
 
-    let listener = match tokio::net::TcpListener::bind(&addr).await {
-        Ok(l) => {
-            tracing::info!("Gateway listening on {}", addr);
-            if let Some(tx) = bind_notify {
-                let _ = tx.send(Ok(()));
+    let listener = {
+        const MAX_BIND_RETRIES: u32 = 10;
+        const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+        let mut last_err = String::new();
+        let mut bound = None;
+        for attempt in 1..=MAX_BIND_RETRIES {
+            match tokio::net::TcpListener::bind(&addr).await {
+                Ok(l) => {
+                    if attempt > 1 {
+                        tracing::info!("Gateway bound to {} after {} retries", addr, attempt - 1);
+                    }
+                    tracing::info!("Gateway listening on {}", addr);
+                    bound = Some(l);
+                    break;
+                }
+                Err(e) => {
+                    last_err = format!("{e}");
+                    if attempt < MAX_BIND_RETRIES {
+                        tracing::warn!(
+                            "Bind attempt {}/{} failed on {} — retrying in {}ms: {}",
+                            attempt, MAX_BIND_RETRIES, addr, RETRY_DELAY.as_millis(), e
+                        );
+                        tokio::time::sleep(RETRY_DELAY).await;
+                    }
+                }
             }
-            l
         }
-        Err(e) => {
-            let msg = format!("Failed to bind gateway on {addr}: {e}");
-            tracing::error!("{msg}");
-            if let Some(tx) = bind_notify {
-                let _ = tx.send(Err(msg));
+        match bound {
+            Some(l) => {
+                if let Some(tx) = bind_notify {
+                    let _ = tx.send(Ok(()));
+                }
+                l
             }
-            return;
+            None => {
+                let msg = format!("Failed to bind gateway on {addr}: {last_err}");
+                tracing::error!("{msg}");
+                if let Some(tx) = bind_notify {
+                    let _ = tx.send(Err(msg));
+                }
+                return;
+            }
         }
     };
 
@@ -775,8 +797,15 @@ mod tests {
         let state = build_test_state(vec![]);
         let app = build_router(state, None);
         let response = app
-            .oneshot(Request::builder().method(Method::GET).uri("/health").body(Body::default()).unwrap())
-            .await.unwrap();
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/health")
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
 
@@ -785,8 +814,15 @@ mod tests {
         let state = build_test_state(vec![]);
         let app = build_router(state, None);
         let response = app
-            .oneshot(Request::builder().method(Method::GET).uri("/metrics").body(Body::default()).unwrap())
-            .await.unwrap();
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/metrics")
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
 
@@ -795,8 +831,15 @@ mod tests {
         let state = build_test_state(vec![]);
         let app = build_router(state, None);
         let response = app
-            .oneshot(Request::builder().method(Method::GET).uri("/api/channels").body(Body::default()).unwrap())
-            .await.unwrap();
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/channels")
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         // Should NOT be 404 — route is registered
         assert_ne!(response.status(), StatusCode::NOT_FOUND);
     }
@@ -806,8 +849,15 @@ mod tests {
         let state = build_test_state(vec![]);
         let app = build_router(state, None);
         let response = app
-            .oneshot(Request::builder().method(Method::GET).uri("/api/virtual-keys").body(Body::default()).unwrap())
-            .await.unwrap();
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/virtual-keys")
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_ne!(response.status(), StatusCode::NOT_FOUND);
     }
 
@@ -816,8 +866,15 @@ mod tests {
         let state = build_test_state(vec![]);
         let app = build_router(state, None);
         let response = app
-            .oneshot(Request::builder().method(Method::GET).uri("/nonexistent/path").body(Body::default()).unwrap())
-            .await.unwrap();
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/nonexistent/path")
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }
