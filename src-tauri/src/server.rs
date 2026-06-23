@@ -723,7 +723,11 @@ pub async fn start_gateway(
                     if attempt < MAX_BIND_RETRIES {
                         tracing::warn!(
                             "Bind attempt {}/{} failed on {} — retrying in {}ms: {}",
-                            attempt, MAX_BIND_RETRIES, addr, RETRY_DELAY.as_millis(), e
+                            attempt,
+                            MAX_BIND_RETRIES,
+                            addr,
+                            RETRY_DELAY.as_millis(),
+                            e
                         );
                         tokio::time::sleep(RETRY_DELAY).await;
                     }

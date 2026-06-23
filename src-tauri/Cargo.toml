@@ -75,3 +75,8 @@ rmcp = { version = "1.7", default-features = false, features = [
 
 [dev-dependencies]
 wiremock = "0.6"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true

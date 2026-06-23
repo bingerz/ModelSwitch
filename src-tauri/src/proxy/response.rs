@@ -399,30 +399,33 @@ pub(super) async fn handle_json_success(
     active_guard: ActiveRequestGuard,
 ) -> Response {
     // Hold the pool guard and active-request guard until the function returns —
-    // the non-streaming response body is fully consumed after `resp.text().await`
+    // the non-streaming response body is fully consumed after `resp.bytes().await`
     // below. Both guards decrement their counters on drop.
     let _pool_guard = pool_guard;
     let _active_guard = active_guard;
 
-    let body_text = resp.text().await.unwrap_or_default();
+    let body_bytes = resp.bytes().await.unwrap_or_default();
 
     // Translate response body via provider (pass-through for OpenAI/Anthropic,
     // Gemini-to-OpenAI translation for Gemini).
-    // Short-circuit for pass-through providers (OpenAI, Anthropic) — avoids
-    // a full JSON parse + Value tree allocation + re-serialize per response.
-    let response_body = if provider.needs_response_transform() {
+    // Use Bytes to avoid String allocation + UTF-8 validation on the hot path.
+    let response_bytes: bytes::Bytes = if provider.needs_response_transform() {
         // Only Gemini needs parse + transform + re-serialize
-        if let Ok(v) = serde_json::from_str::<Value>(&body_text) {
+        let body_str = std::str::from_utf8(&body_bytes).unwrap_or("");
+        if let Ok(v) = serde_json::from_str::<Value>(body_str) {
             let translated = provider.transform_response(&v, upstream_model);
-            serde_json::to_string(&translated).unwrap_or(body_text)
+            bytes::Bytes::from(serde_json::to_string(&translated).unwrap_or_default())
         } else {
-            body_text
+            body_bytes
         }
     } else {
         // Pass-through — use original bytes, no parse/re-serialize
-        body_text
+        body_bytes
     };
-    let token_usage = extract_usage(&response_body);
+
+    // Zero-copy str borrow from Bytes for usage extraction
+    let response_str = std::str::from_utf8(&response_bytes).unwrap_or("");
+    let token_usage = extract_usage(response_str);
     let input_tokens = token_usage.input_tokens;
     let output_tokens = token_usage.output_tokens;
     let estimated_cost = channel
@@ -436,7 +439,7 @@ pub(super) async fn handle_json_success(
     state.cache.request_cache.insert(
         cache_key,
         cache_key_material.to_string(),
-        response_body.clone(),
+        response_str.to_string(),
     );
     state.cache.in_flight.complete(cache_key);
 
@@ -554,7 +557,11 @@ pub(super) async fn handle_json_success(
     }
 
     let mut resp = inject_passthrough_headers(
-        json_response(StatusCode::OK, response_body),
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("Content-Type", "application/json")
+            .body(Body::from(response_bytes))
+            .expect("valid HTTP response construction"),
         upstream_headers,
     );
     if trigger_reason == Some("model_fallback") {
