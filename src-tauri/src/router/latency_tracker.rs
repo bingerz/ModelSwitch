@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 use uuid::Uuid;
 
@@ -12,7 +12,7 @@ type LatencySample = (u64, Option<u64>);
 /// Tracks recent latency samples per channel using a sliding window.
 /// Provides more responsive routing decisions than a static EMA.
 pub struct LatencyTracker {
-    samples: Mutex<HashMap<Uuid, Vec<LatencySample>>>,
+    samples: Mutex<HashMap<Uuid, VecDeque<LatencySample>>>,
 }
 
 impl LatencyTracker {
@@ -40,10 +40,10 @@ impl LatencyTracker {
         let mut guard = self.samples.lock().unwrap_or_else(|e| e.into_inner());
         let samples = guard
             .entry(channel_id)
-            .or_insert_with(|| Vec::with_capacity(WINDOW_SIZE + 1));
-        samples.push((latency_ms, output_tokens));
+            .or_insert_with(|| VecDeque::with_capacity(WINDOW_SIZE + 1));
+        samples.push_back((latency_ms, output_tokens));
         if samples.len() > WINDOW_SIZE {
-            samples.remove(0); // Remove oldest
+            samples.pop_front(); // O(1) eviction instead of O(n) Vec::remove(0)
         }
     }
 

@@ -1,5 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 /// Controls cache read/write behavior.
@@ -41,7 +41,7 @@ impl CacheMode {
 /// A simple in-memory request cache with bounded size.
 /// Caches non-streaming requests by hash of model + body (excluding stream field).
 pub struct RequestCache {
-    state: Mutex<CacheState>,
+    state: RwLock<CacheState>,
     ttl: Duration,
     max_entries: usize,
     mode: CacheMode,
@@ -64,7 +64,7 @@ impl RequestCache {
     /// Create a new cache with the given TTL, max entries, and cache mode.
     pub fn new(ttl: Duration, max_entries: usize, mode: CacheMode) -> Self {
         Self {
-            state: Mutex::new(CacheState {
+            state: RwLock::new(CacheState {
                 entries: HashMap::new(),
                 order: VecDeque::new(),
             }),
@@ -103,19 +103,18 @@ impl RequestCache {
     /// The `key_material` is compared against the stored material to eliminate false positives
     /// from `u128` hash collisions.
     ///
-    /// Performs a lazy TTL check on the requested key only — bulk eviction of
-    /// expired entries is handled by `sweep_expired()`.
+    /// Read-only: expired entries are reported as misses but left in place.
+    /// Actual eviction is handled by the periodic `sweep_expired()` task.
     pub fn get(&self, key: u128, key_material: &str) -> Option<String> {
         if !self.mode.can_read() {
             return None;
         }
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        // Lazy TTL check — only check the requested key, not all entries.
+        let state = self.state.read().unwrap_or_else(|e| e.into_inner());
+        // Read-only TTL check — expired entries are left in place and removed
+        // later by the periodic sweep_expired() task. This keeps get() truly
+        // read-only so concurrent reads never block each other.
         let entry = state.entries.get(&key)?;
         if entry.cached_at.elapsed() >= self.ttl {
-            // Expired — remove just this entry.
-            state.entries.remove(&key);
-            state.order.retain(|k| *k != key);
             return None;
         }
         if entry.key_material == key_material {
@@ -131,7 +130,7 @@ impl RequestCache {
     /// Intended to be called periodically by a background task rather than on
     /// every cache read.
     pub fn sweep_expired(&self) -> usize {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
         let before = state.entries.len();
         let ttl = self.ttl;
         // Collect expired keys first to avoid double mutable borrow of `state`.
@@ -158,7 +157,7 @@ impl RequestCache {
         if !self.mode.can_write() {
             return;
         }
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
 
         // If key already exists, remove old position from order
         if state.entries.contains_key(&key) {
@@ -187,13 +186,13 @@ impl RequestCache {
 
     /// Returns the current number of cached entries (for diagnostics).
     pub fn len(&self) -> usize {
-        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let state = self.state.read().unwrap_or_else(|e| e.into_inner());
         state.entries.len()
     }
 
     /// Clear all cached entries.
     pub fn flush(&self) {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
         state.entries.clear();
         state.order.clear();
     }
