@@ -6,6 +6,7 @@ pub mod mcp_tools;
 pub mod openai;
 pub mod payload_rules;
 pub mod rate_limiter;
+pub mod responses;
 pub mod state;
 pub mod stream;
 pub mod translate;

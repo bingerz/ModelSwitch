@@ -448,6 +448,7 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
             "/v1/chat/completions",
             post(proxy::openai::handle_chat_completions),
         )
+        .route("/v1/responses", post(proxy::responses::handle_responses))
         .route("/v1/embeddings", post(proxy::embeddings::handle_embeddings))
         .route("/v1/models", get(proxy::openai::handle_list_models))
         .route("/v1/tools", get(proxy::openai::handle_list_tools))
