@@ -91,6 +91,10 @@ pub struct GatewayConfig {
     /// Bearer token for /api/* endpoints. None = no auth. Env MODELSWITCH_ADMIN_TOKEN takes precedence.
     #[serde(default)]
     pub admin_token: Option<String>,
+    /// Directory containing web console static files (default None = disabled).
+    /// When set, the gateway serves a web UI at `/` for browser-based management.
+    #[serde(default)]
+    pub web_console_dir: Option<String>,
     /// Maximum time (seconds) to wait for in-flight requests during shutdown.
     #[serde(default = "default_drain_timeout_secs")]
     pub drain_timeout_secs: u64,
@@ -392,6 +396,7 @@ impl Default for GatewayConfig {
             health_check_interval_secs: default_health_check_interval_secs(),
             health_check_enabled: default_health_check_enabled(),
             admin_token: None,
+            web_console_dir: None,
             drain_timeout_secs: default_drain_timeout_secs(),
             request_timeout_secs: None,
             stream_keepalive_secs: None,

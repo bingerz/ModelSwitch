@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { type GwStatus, invokeTauri } from "./lib/api";
+import { type GwStatus, invokeTauri, isTauri } from "./lib/api";
 import { ToastProvider, useToast } from "./components/Toast";
+import { LoginPage } from "./components/LoginPage";
 import { ChannelPanel } from "./components/channel/ChannelPanel";
 import { LogViewer } from "./components/LogViewer";
 import { StatusBar } from "./components/StatusBar";
@@ -54,6 +55,10 @@ function AppInner() {
   const toast = useToast();
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [authed, setAuthed] = useState(() => {
+    if (isTauri) return true;
+    return !!localStorage.getItem("admin_token");
+  });
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -64,6 +69,7 @@ function AppInner() {
 
   // On mount: check if gateway is running, auto-start if not
   useEffect(() => {
+    if (!isTauri) return; // Web mode: gateway is already running
     (async () => {
       try {
         const status: GwStatus = await invokeTauri("gateway_status");
@@ -83,6 +89,7 @@ function AppInner() {
   // Listen for window close-requested event from Rust
   // Gateway lifecycle is tied to the app — closing the app always stops the gateway.
   useEffect(() => {
+    if (!isTauri) return; // Web mode: no Tauri window events
     let unlisten: (() => void) | null = null;
 
     (async () => {
@@ -108,6 +115,10 @@ function AppInner() {
     };
   }, []);
 
+  if (!authed) {
+    return <LoginPage onSuccess={() => setAuthed(true)} />;
+  }
+
   return (
     <div className="layout">
       <div className="layout-body">
@@ -129,6 +140,17 @@ function AppInner() {
               </div>
             ))}
           </div>
+          {!isTauri && (
+            <button
+              className="nav-item logout-button"
+              onClick={() => {
+                localStorage.removeItem("admin_token");
+                window.location.reload();
+              }}
+            >
+              Logout
+            </button>
+          )}
           <button className="theme-toggle" onClick={toggleTheme} title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}>
             <span className="theme-toggle-icon">{theme === "dark" ? "☀" : "☾"}</span>
           </button>

@@ -1,4 +1,6 @@
-const API_BASE = "http://127.0.0.1:8080";
+import { isTauri, API_BASE } from "./runtime";
+
+export { isTauri };
 
 export interface Channel {
   id: string;
@@ -133,14 +135,25 @@ interface PaginatedEnvelope<T> {
   limit: number;
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+export async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = localStorage.getItem("admin_token");
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options?.headers,
+    },
   });
+  if (res.status === 401) {
+    // Token invalid or expired — clear and redirect to login
+    localStorage.removeItem("admin_token");
+    window.location.reload();
+    throw new Error("Unauthorized");
+  }
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   const json = await res.json();
-  // Auto-unwrap ApiResponse<T> envelope used by all admin endpoints
+  // Auto-unwrap ApiResponse<T> envelope
   if (json && typeof json === "object" && "ok" in json && "data" in json) {
     if (!json.ok) {
       throw new Error(json.error?.message ?? "Unknown API error");
@@ -175,6 +188,9 @@ export interface GwStatus {
 }
 
 export async function invokeTauri<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (!isTauri) {
+    throw new Error(`Command "${cmd}" is only available in desktop mode`);
+  }
   const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
   return tauriInvoke(cmd, args);
 }
@@ -337,9 +353,18 @@ export const api = {
       `/api/channels/${id}/status`
     ),
   logs: async (offset = 0, limit = 50): Promise<DispatchLog[]> => {
+    const token = localStorage.getItem("admin_token");
     const res = await fetch(`${API_BASE}/api/logs?offset=${offset}&limit=${limit}`, {
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
     });
+    if (res.status === 401) {
+      localStorage.removeItem("admin_token");
+      window.location.reload();
+      throw new Error("Unauthorized");
+    }
     if (!res.ok) throw new Error(`API error: ${res.status}`);
     const json: PaginatedEnvelope<DispatchLog[]> = await res.json();
     return json.data;

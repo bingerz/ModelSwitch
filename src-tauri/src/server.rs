@@ -190,6 +190,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         host,
         port,
         drain_timeout_secs: config.gateway.drain_timeout_secs,
+        web_console_dir: config.gateway.web_console_dir.clone(),
     }
 }
 
@@ -398,7 +399,7 @@ fn spawn_config_watcher(state: &Arc<AppState>, watcher_config_path: &Option<std:
 /// Build the Axum Router with all proxy and admin routes.
 /// Proxy routes use optional virtual-key auth (pass-through when no keys configured);
 /// admin routes use optional Bearer token auth.
-pub fn build_router(state: Arc<AppState>) -> Router {
+pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Router {
     let proxy_state = Arc::clone(&state);
     let proxy_auth_state = Arc::clone(&state);
     let sanitizer_state = Arc::clone(&state);
@@ -527,14 +528,28 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         base_router
     };
 
-    router
+    let router = router
         .layer(axum::middleware::from_fn(
             middleware::request_id::request_id_middleware,
         ))
         .layer(CompressionLayer::new())
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
-        .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024))
+        .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024));
+
+    // Serve web console static files if configured.
+    // Explicit API routes (above) take precedence — this only catches unmatched paths,
+    // which is exactly SPA routing behavior.
+    let router = if let Some(dir) = web_console_dir {
+        use tower_http::services::{ServeDir, ServeFile};
+        let index_path = format!("{}/index.html", dir);
+        let serve_dir = ServeDir::new(dir).fallback(ServeFile::new(index_path));
+        router.fallback_service(serve_dir)
+    } else {
+        router
+    };
+
+    router
 }
 
 /// Handler for the `/metrics` Prometheus scrape endpoint.
@@ -557,8 +572,9 @@ pub async fn start_gateway(
     drain_timeout_secs: u64,
     shutdown_notify: Option<Arc<Notify>>,
     bind_notify: Option<oneshot::Sender<Result<(), String>>>,
+    web_console_dir: Option<&str>,
 ) {
-    let app = build_router(state.clone());
+    let app = build_router(state.clone(), web_console_dir);
     let quota_for_shutdown = Arc::clone(&state.billing.quota_store);
     let provider_budgets_for_shutdown = Arc::clone(&state.billing.provider_budgets);
     let mcp_for_shutdown = Arc::clone(&state.mcp.mcp_manager);
@@ -641,7 +657,7 @@ mod tests {
     #[tokio::test]
     async fn health_endpoint_returns_200() {
         let state = build_test_state(vec![]);
-        let app = build_router(state);
+        let app = build_router(state, None);
         let response = app
             .oneshot(Request::builder().method(Method::GET).uri("/health").body(Body::default()).unwrap())
             .await.unwrap();
@@ -651,7 +667,7 @@ mod tests {
     #[tokio::test]
     async fn metrics_endpoint_returns_200() {
         let state = build_test_state(vec![]);
-        let app = build_router(state);
+        let app = build_router(state, None);
         let response = app
             .oneshot(Request::builder().method(Method::GET).uri("/metrics").body(Body::default()).unwrap())
             .await.unwrap();
@@ -661,7 +677,7 @@ mod tests {
     #[tokio::test]
     async fn admin_channels_route_registered() {
         let state = build_test_state(vec![]);
-        let app = build_router(state);
+        let app = build_router(state, None);
         let response = app
             .oneshot(Request::builder().method(Method::GET).uri("/api/channels").body(Body::default()).unwrap())
             .await.unwrap();
@@ -672,7 +688,7 @@ mod tests {
     #[tokio::test]
     async fn admin_virtual_keys_route_registered() {
         let state = build_test_state(vec![]);
-        let app = build_router(state);
+        let app = build_router(state, None);
         let response = app
             .oneshot(Request::builder().method(Method::GET).uri("/api/virtual-keys").body(Body::default()).unwrap())
             .await.unwrap();
@@ -682,7 +698,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_route_returns_404() {
         let state = build_test_state(vec![]);
-        let app = build_router(state);
+        let app = build_router(state, None);
         let response = app
             .oneshot(Request::builder().method(Method::GET).uri("/nonexistent/path").body(Body::default()).unwrap())
             .await.unwrap();

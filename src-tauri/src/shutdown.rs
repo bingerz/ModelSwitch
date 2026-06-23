@@ -34,6 +34,16 @@ pub async fn run_gateway(handles: GatewayHandles) {
         host,
         port,
         drain_timeout_secs,
+        web_console_dir,
     } = handles;
-    start_gateway(state, &host, port, drain_timeout_secs, None, None).await;
+    start_gateway(
+        state,
+        &host,
+        port,
+        drain_timeout_secs,
+        None,
+        None,
+        web_console_dir.as_deref(),
+    )
+    .await;
 }

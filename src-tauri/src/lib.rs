@@ -66,6 +66,7 @@ pub struct GatewayHandles {
     pub host: String,
     pub port: u16,
     pub drain_timeout_secs: u64,
+    pub web_console_dir: Option<String>,
 }
 
 // -- Tauri entry point -------------------------------------------------------

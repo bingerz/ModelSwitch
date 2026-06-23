@@ -23,6 +23,7 @@ pub(crate) struct GatewayManager {
     host: String,
     port: u16,
     drain_timeout_secs: u64,
+    web_console_dir: Option<String>,
     inner: Mutex<GwInner>,
 }
 
@@ -33,6 +34,7 @@ impl GatewayManager {
             host: handles.host,
             port: handles.port,
             drain_timeout_secs: handles.drain_timeout_secs,
+            web_console_dir: handles.web_console_dir,
             inner: Mutex::new(GwInner {
                 running: false,
                 shutdown: None,
@@ -108,6 +110,7 @@ pub(crate) async fn gateway_start(manager: tauri::State<'_, GatewayManager>) -> 
     let host = manager.host.clone();
     let port = manager.port;
     let drain = manager.drain_timeout_secs;
+    let web_console_dir = manager.web_console_dir.clone();
     let shutdown_clone = Arc::clone(&shutdown);
 
     tauri::async_runtime::spawn(async move {
@@ -118,6 +121,7 @@ pub(crate) async fn gateway_start(manager: tauri::State<'_, GatewayManager>) -> 
             drain,
             Some(shutdown_clone),
             Some(bind_ok_tx),
+            web_console_dir.as_deref(),
         )
         .await;
         let _ = stopped_tx.send(());

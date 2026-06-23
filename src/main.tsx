@@ -16,6 +16,7 @@ import "./styles/components/mcp.css";
 import "./styles/components/virtual-keys.css";
 import "./styles/components/misc.css";
 import "./styles/ui.css";
+import "./styles/login.css";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
