@@ -131,6 +131,9 @@ pub async fn handle_embeddings(
         }
     };
 
+    // ── Track active request via RAII guard ───────────────────────────
+    let _active_guard = state.router.active_requests.acquire(channel.id);
+
     // ── Provider budget check ──────────────────────────────────────────
     let provider_name = channel.provider.as_str().to_string();
     if !state
@@ -144,7 +147,6 @@ pub async fn handle_embeddings(
             channel = %channel.name,
             "Provider budget exceeded, rejecting embeddings request"
         );
-        state.router.active_requests.decrement(channel.id);
         return json_response(
             StatusCode::PAYMENT_REQUIRED,
             serde_json::json!({
@@ -172,7 +174,6 @@ pub async fn handle_embeddings(
             reason = rate_reason,
             "Embeddings request rate limited"
         );
-        state.router.active_requests.decrement(channel.id);
         return json_response(
             StatusCode::TOO_MANY_REQUESTS,
             serde_json::json!({
@@ -195,7 +196,6 @@ pub async fn handle_embeddings(
                 .limits
                 .rate_limiter
                 .record(channel.id, estimated_tokens);
-            state.router.active_requests.decrement(channel.id);
             state.channel_mgr.mark_circuit_open(channel.id).await;
             return json_response(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -272,7 +272,6 @@ pub async fn handle_embeddings(
                 .limits
                 .rate_limiter
                 .record(channel.id, estimated_tokens);
-            state.router.active_requests.decrement(channel_id);
             state.channel_mgr.mark_circuit_open(channel_id).await;
 
             crate::metrics::requests_total()
@@ -302,7 +301,8 @@ pub async fn handle_embeddings(
         .limits
         .rate_limiter
         .record(channel.id, estimated_tokens);
-    state.router.active_requests.decrement(channel_id);
+
+    // Active-request decrement handled by `_active_guard` drop at function end.
 
     // Record metrics
     let status_label = if status.is_success() { "success" } else { "error" };

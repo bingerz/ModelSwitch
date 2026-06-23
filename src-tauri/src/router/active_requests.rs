@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 /// Tracks active request counts per channel for least-busy routing.
@@ -32,6 +32,16 @@ impl ActiveRequests {
         }
     }
 
+    /// Increment the active request count and return a guard that decrements on drop.
+    /// Call this instead of `increment()` + manual `decrement()`.
+    pub fn acquire(self: &Arc<Self>, channel_id: Uuid) -> ActiveRequestGuard {
+        self.increment(channel_id);
+        ActiveRequestGuard {
+            tracker: Arc::clone(self),
+            channel_id,
+        }
+    }
+
     /// Get the current active request count for a channel.
     pub fn get(&self, channel_id: Uuid) -> u32 {
         let guard = self.counts.lock().unwrap_or_else(|e| e.into_inner());
@@ -54,5 +64,18 @@ impl ActiveRequests {
 impl Default for ActiveRequests {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// RAII guard that decrements the active request count on drop.
+/// Eliminates manual decrement call sites that can drift.
+pub struct ActiveRequestGuard {
+    tracker: Arc<ActiveRequests>,
+    channel_id: Uuid,
+}
+
+impl Drop for ActiveRequestGuard {
+    fn drop(&mut self) {
+        self.tracker.decrement(self.channel_id);
     }
 }

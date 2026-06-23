@@ -12,6 +12,12 @@ use tokio_stream::StreamExt;
 /// from being held open indefinitely. Generous enough for slow LLM providers.
 const STREAM_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// Maximum bytes to accumulate in the output buffer for post-stream telemetry.
+/// The usage object is always in the last SSE chunk, so we only need the tail.
+/// When this limit is hit, we truncate the buffer to keep only the second half,
+/// discarding old bytes while preserving recent output.
+const MAX_OUTPUT_BUFFER_BYTES: usize = 512 * 1024; // 512KB
+
 /// Translate a Gemini SSE chunk to OpenAI SSE format.
 /// Each `data:` line is parsed as JSON and converted via `gemini_stream_to_openai`.
 /// Non-JSON lines, comments, and `[DONE]` markers are passed through.
@@ -126,6 +132,11 @@ pub fn sse_stream_response_with_telemetry(
                     let mut buf =
                         output_buffer_clone.lock().unwrap_or_else(|e| e.into_inner());
                     buf.extend_from_slice(&output_bytes);
+                    if buf.len() > MAX_OUTPUT_BUFFER_BYTES {
+                        let keep_from = buf.len() / 2;
+                        let tail = buf.split_off(keep_from);
+                        *buf = tail;
+                    }
                 }
 
                 // Forward to client — if disconnected, continue draining upstream
@@ -166,6 +177,11 @@ pub fn sse_stream_response_with_telemetry(
                                     .lock()
                                     .unwrap_or_else(|e| e.into_inner());
                                 buf.extend_from_slice(&drain_output);
+                                if buf.len() > MAX_OUTPUT_BUFFER_BYTES {
+                                    let keep_from = buf.len() / 2;
+                                    let tail = buf.split_off(keep_from);
+                                    *buf = tail;
+                                }
                             }
                         }
                     }

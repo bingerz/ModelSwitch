@@ -350,8 +350,6 @@ pub(crate) async fn dispatch(
                     channel = %channel.name,
                     "Provider budget exceeded, skipping channel"
                 );
-                // Decrement the active-request counter that select_channel bumped.
-                state.router.active_requests.decrement(channel.id);
                 continue;
             }
 

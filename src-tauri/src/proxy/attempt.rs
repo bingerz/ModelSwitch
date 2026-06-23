@@ -199,8 +199,9 @@ pub(super) async fn try_channel_attempt(
         req_builder = req_builder.header("Accept", "text/event-stream");
     }
 
-    // Track active request count for least-busy routing
-    state.router.active_requests.increment(channel.id);
+    // Track active request count for least-busy routing via RAII guard.
+    // The guard decrements automatically on drop — no manual decrement needed.
+    let _active_guard = state.router.active_requests.acquire(channel.id);
 
     let resp_result = if is_stream {
         match state.gateway.stream_ttft_timeout_secs {
@@ -219,7 +220,6 @@ pub(super) async fn try_channel_attempt(
                             .limits
                             .rate_limiter
                             .record(channel.id, estimated_tokens);
-                        state.router.active_requests.decrement(channel.id);
                         state.channel_mgr.mark_circuit_open(channel.id).await;
                         log_attempt_failure(
                             &state.logger,
@@ -251,7 +251,6 @@ pub(super) async fn try_channel_attempt(
         Ok(r) => r,
         Err(e) => {
             tracing::error!(channel = %channel.name, error = %e, "Request failed");
-            state.router.active_requests.decrement(channel.id);
             state.channel_mgr.mark_circuit_open(channel.id).await;
             log_attempt_failure(
                 &state.logger,
@@ -281,7 +280,6 @@ pub(super) async fn try_channel_attempt(
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<u64>().ok());
         tracing::warn!(channel = %channel.name, retry_after_secs, "Rate limited (429)");
-        state.router.active_requests.decrement(channel.id);
         state
             .channel_mgr
             .mark_circuit_open_with_retry(channel.id, retry_after_secs)
@@ -301,7 +299,6 @@ pub(super) async fn try_channel_attempt(
 
     if status.is_server_error() {
         tracing::warn!(channel = %channel.name, status = %status, "Server error");
-        state.router.active_requests.decrement(channel.id);
         state.channel_mgr.mark_circuit_open(channel.id).await;
         log_attempt_failure(
             &state.logger,
@@ -319,7 +316,6 @@ pub(super) async fn try_channel_attempt(
     if !status.is_success() {
         let status_code = status;
         let body_text = resp.text().await.unwrap_or_default();
-        state.router.active_requests.decrement(channel.id);
 
         // Check for context window exceeded error before falling back to the
         // generic client-error path. When detected, signal the dispatch loop
@@ -416,6 +412,7 @@ pub(super) async fn try_channel_attempt(
             cache_key,
             cache_key_material,
             pool_guard,
+            _active_guard,
         )
         .await;
         AttemptOutcome::Respond(response)
@@ -439,6 +436,7 @@ pub(super) async fn try_channel_attempt(
             cache_key,
             cache_key_material,
             pool_guard,
+            _active_guard,
         )
         .await;
         AttemptOutcome::Respond(response)

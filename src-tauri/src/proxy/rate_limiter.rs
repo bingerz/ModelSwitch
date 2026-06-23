@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
+use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -90,77 +91,95 @@ impl ChannelWindows {
     }
 }
 
-/// Internal state behind a single Mutex.
-struct RateLimiterState {
-    channels: HashMap<Uuid, (ChannelWindows, ChannelLimits)>,
-    global_tpm_window: BucketedWindow,
+/// Per-channel state behind its own independent Mutex.
+/// Each channel gets an `Arc<Mutex<PerChannelState>>` so that operations
+/// on one channel never block operations on another.
+struct PerChannelState {
+    windows: ChannelWindows,
+    limits: ChannelLimits,
 }
 
 /// Per-channel rate limiting for tokens per minute (TPM) and requests per minute (RPM).
-/// All state is behind a single Mutex to avoid multi-lock overhead.
+///
+/// Each channel's state is behind an independent `Mutex` to eliminate contention
+/// between unrelated channels. The outer `RwLock` on the `HashMap` is only held
+/// briefly to look up or create a channel's `Arc`, then dropped before the
+/// per-channel mutex is acquired. Global TPM tracking has its own separate lock.
 pub struct RateLimiter {
-    state: Mutex<RateLimiterState>,
+    /// Channel lookup/creation only — briefly held under read lock.
+    channels: RwLock<HashMap<Uuid, Arc<Mutex<PerChannelState>>>>,
+    /// Global TPM window — independent lock, never blocks per-channel ops.
+    global_tpm: Mutex<BucketedWindow>,
     global_tpm_limit: Option<u64>,
 }
 
 impl RateLimiter {
     pub fn new(global_tpm_limit: Option<u64>) -> Self {
         Self {
-            state: Mutex::new(RateLimiterState {
-                channels: HashMap::new(),
-                global_tpm_window: BucketedWindow::new(WINDOW_MS),
-            }),
+            channels: RwLock::new(HashMap::new()),
+            global_tpm: Mutex::new(BucketedWindow::new(WINDOW_MS)),
             global_tpm_limit,
         }
     }
 
+    /// Get or create the `Arc<Mutex<PerChannelState>>` for a channel.
+    /// Acquires a write lock on the channels map only if creation is needed.
+    fn get_or_create_channel(&self, channel_id: Uuid) -> Arc<Mutex<PerChannelState>> {
+        // Fast path: read lock only
+        {
+            let map = self.channels.read().unwrap_or_else(|e| e.into_inner());
+            if let Some(arc) = map.get(&channel_id) {
+                return Arc::clone(arc);
+            }
+        }
+        // Slow path: write lock to create entry
+        let mut map = self.channels.write().unwrap_or_else(|e| e.into_inner());
+        // Double-check after acquiring write lock (another thread may have created it)
+        map.entry(channel_id)
+            .or_insert_with(|| {
+                Arc::new(Mutex::new(PerChannelState {
+                    windows: ChannelWindows::new(),
+                    limits: ChannelLimits::default(),
+                }))
+            })
+            .clone()
+    }
+
     pub fn set_channel_tpm_limit(&self, channel_id: Uuid, limit: u64) {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let entry = state
-            .channels
-            .entry(channel_id)
-            .or_insert_with(|| (ChannelWindows::new(), ChannelLimits::default()));
-        entry.1.tpm = Some(limit);
+        let arc = self.get_or_create_channel(channel_id);
+        let mut state = arc.lock().unwrap_or_else(|e| e.into_inner());
+        state.limits.tpm = Some(limit);
     }
 
     pub fn set_channel_rpm_limit(&self, channel_id: Uuid, limit: u64) {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let entry = state
-            .channels
-            .entry(channel_id)
-            .or_insert_with(|| (ChannelWindows::new(), ChannelLimits::default()));
-        entry.1.rpm = limit;
+        let arc = self.get_or_create_channel(channel_id);
+        let mut state = arc.lock().unwrap_or_else(|e| e.into_inner());
+        state.limits.rpm = limit;
     }
 
     /// Check if a request with the given estimated token count is allowed.
     /// Returns (allowed, reason).
     pub fn check(&self, channel_id: Uuid, estimated_tokens: u64) -> (bool, &'static str) {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-
-        // Check global TPM
+        // Check global TPM first (independent lock)
         if let Some(global_limit) = self.global_tpm_limit {
-            if !state
-                .global_tpm_window
-                .check_and_add(estimated_tokens, global_limit)
-            {
+            let global = self.global_tpm.lock().unwrap_or_else(|e| e.into_inner());
+            if !global.check_and_add(estimated_tokens, global_limit) {
                 return (false, "global_tpm_exceeded");
             }
         }
 
-        // Get or create channel entry
-        let entry = state
-            .channels
-            .entry(channel_id)
-            .or_insert_with(|| (ChannelWindows::new(), ChannelLimits::default()));
+        // Get channel Arc (brief read lock), then lock only this channel
+        let arc = self.get_or_create_channel(channel_id);
+        let state = arc.lock().unwrap_or_else(|e| e.into_inner());
 
         // Check per-channel RPM
-        if entry.0.rpm.current_total() >= entry.1.rpm {
+        if state.windows.rpm.current_total() >= state.limits.rpm {
             return (false, "channel_rpm_exceeded");
         }
 
         // Check per-channel TPM (only if limit is configured)
-        if let Some(tpm_limit) = entry.1.tpm {
-            if entry.0.tpm.current_total() + estimated_tokens > tpm_limit {
+        if let Some(tpm_limit) = state.limits.tpm {
+            if state.windows.tpm.current_total() + estimated_tokens > tpm_limit {
                 return (false, "channel_tpm_exceeded");
             }
         }
@@ -170,37 +189,45 @@ impl RateLimiter {
 
     /// Record that a request was dispatched to a channel.
     pub fn record(&self, channel_id: Uuid, tokens: u64) {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        // Per-channel recording (independent lock)
+        let arc = self.get_or_create_channel(channel_id);
+        {
+            let mut state = arc.lock().unwrap_or_else(|e| e.into_inner());
+            state.windows.tpm.add(tokens);
+            state.windows.rpm.add(1);
+        }
 
-        let entry = state
-            .channels
-            .entry(channel_id)
-            .or_insert_with(|| (ChannelWindows::new(), ChannelLimits::default()));
-        entry.0.tpm.add(tokens);
-        entry.0.rpm.add(1);
-
+        // Global TPM recording (independent lock)
         if self.global_tpm_limit.is_some() {
-            state.global_tpm_window.add(tokens);
+            let mut global = self.global_tpm.lock().unwrap_or_else(|e| e.into_inner());
+            global.add(tokens);
         }
     }
 
     /// Get the current TPM usage for a channel (0 if no data).
     pub fn current_tpm(&self, channel_id: Uuid) -> u64 {
-        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state
-            .channels
-            .get(&channel_id)
-            .map(|(windows, _)| windows.tpm.current_total())
-            .unwrap_or(0)
+        let map = self.channels.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(arc) = map.get(&channel_id) {
+            let arc = Arc::clone(arc);
+            drop(map);
+            let state = arc.lock().unwrap_or_else(|e| e.into_inner());
+            state.windows.tpm.current_total()
+        } else {
+            0
+        }
     }
 
     /// Get the TPM limit for a channel (None if not configured).
     pub fn tpm_limit(&self, channel_id: Uuid) -> Option<u64> {
-        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state
-            .channels
-            .get(&channel_id)
-            .and_then(|(_, limits)| limits.tpm)
+        let map = self.channels.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(arc) = map.get(&channel_id) {
+            let arc = Arc::clone(arc);
+            drop(map);
+            let state = arc.lock().unwrap_or_else(|e| e.into_inner());
+            state.limits.tpm
+        } else {
+            None
+        }
     }
 }
 

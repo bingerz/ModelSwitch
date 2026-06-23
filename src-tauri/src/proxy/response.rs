@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::channel::Channel;
 use crate::proxy::stream::{json_response, keepalive_stream, sse_stream_response_with_telemetry};
+use crate::router::active_requests::ActiveRequestGuard;
 
 use super::provider::ProviderAdaptor;
 use super::usage::{extract_usage, extract_usage_from_stream};
@@ -117,6 +118,7 @@ pub(super) async fn handle_streaming_success(
     cache_key: u128,
     cache_key_material: &str,
     pool_guard: crate::http_pool::PooledClient,
+    active_guard: ActiveRequestGuard,
 ) -> Response {
     let is_gemini = provider.is_gemini_stream();
     let (stream_resp, output_buffer, stream_done) = sse_stream_response_with_telemetry(
@@ -169,7 +171,6 @@ pub(super) async fn handle_streaming_success(
         .router
         .latency_tracker
         .record(channel.id, start.elapsed().as_millis() as u64);
-    state.router.active_requests.decrement(channel.id);
 
     // Spawn background task to extract real token counts from stream
     {
@@ -194,13 +195,16 @@ pub(super) async fn handle_streaming_success(
         let bg_cache_key = cache_key;
         let bg_key_material = cache_key_material.to_string();
         let bg_pool_guard = pool_guard;
+        let bg_active_guard = active_guard;
         crate::spawn_bg(async move {
-            // Hold the pool guard for the entire lifetime of the background task.
-            // This keeps the HTTP pool's active count accurate while the
-            // streaming body continues flowing to the client. The guard is
-            // dropped (decrementing the count) when this task completes —
-            // shortly after the stream is fully consumed.
+            // Hold the pool guard and active-request guard for the entire
+            // lifetime of the background task. This keeps the HTTP pool's
+            // active count accurate while the streaming body continues
+            // flowing to the client. Both guards are dropped (decrementing
+            // their respective counts) when this task completes — shortly
+            // after the stream is fully consumed.
             let _pool_guard = bg_pool_guard;
+            let _active_guard = bg_active_guard;
 
             // Wait for the upstream stream to be fully consumed by the
             // stream-forwarding task.  `Notify` stores a permit if
@@ -380,10 +384,13 @@ pub(super) async fn handle_json_success(
     cache_key: u128,
     cache_key_material: &str,
     pool_guard: crate::http_pool::PooledClient,
+    active_guard: ActiveRequestGuard,
 ) -> Response {
-    // Hold the pool guard until the function returns — the non-streaming
-    // response body is fully consumed after `resp.text().await` below.
+    // Hold the pool guard and active-request guard until the function returns —
+    // the non-streaming response body is fully consumed after `resp.text().await`
+    // below. Both guards decrement their counters on drop.
     let _pool_guard = pool_guard;
+    let _active_guard = active_guard;
 
     let body_text = resp.text().await.unwrap_or_default();
 
@@ -421,8 +428,7 @@ pub(super) async fn handle_json_success(
     );
     state.cache.in_flight.complete(cache_key);
 
-    // Fast atomic decrement stays inline.
-    state.router.active_requests.decrement(channel.id);
+    // Active-request decrement handled by `_active_guard` drop at function end.
 
     // Background: quota accumulation, virtual-key spend, logging, and metrics
     // are non-blocking to return the HTTP response as quickly as possible.
