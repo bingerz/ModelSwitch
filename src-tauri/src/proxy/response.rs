@@ -235,7 +235,7 @@ pub(super) async fn handle_streaming_success(
             // to a String. All SSE parsing (data-line extraction, usage
             // detection) happens here instead of per-chunk on the hot path.
             let output_text = {
-                let buf = bg_output_buffer.lock().unwrap_or_else(|e| e.into_inner());
+                let buf = bg_output_buffer.lock();
                 String::from_utf8_lossy(&buf).to_string()
             };
 

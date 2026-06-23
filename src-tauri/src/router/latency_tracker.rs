@@ -1,5 +1,5 @@
+use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
 use uuid::Uuid;
 
 const WINDOW_SIZE: usize = 10; // Track last 10 samples
@@ -37,7 +37,7 @@ impl LatencyTracker {
         latency_ms: u64,
         output_tokens: Option<u64>,
     ) {
-        let mut guard = self.samples.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = self.samples.lock();
         let samples = guard
             .entry(channel_id)
             .or_insert_with(|| VecDeque::with_capacity(WINDOW_SIZE + 1));
@@ -50,7 +50,7 @@ impl LatencyTracker {
     /// Get the average latency from recent samples for a channel.
     /// Returns 0 if no samples exist.
     pub fn avg_latency(&self, channel_id: Uuid) -> u64 {
-        let guard = self.samples.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = self.samples.lock();
         guard
             .get(&channel_id)
             .map(|samples| {
@@ -65,7 +65,7 @@ impl LatencyTracker {
 
     /// Get the p95 latency from recent samples for a channel.
     pub fn p95_latency(&self, channel_id: Uuid) -> u64 {
-        let guard = self.samples.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = self.samples.lock();
         guard
             .get(&channel_id)
             .map(|samples| {
@@ -84,7 +84,7 @@ impl LatencyTracker {
     /// Returns None if no samples have token data.
     /// Computes total_latency / total_tokens across all samples that have tokens.
     pub fn avg_latency_per_token(&self, channel_id: Uuid) -> Option<u64> {
-        let guard = self.samples.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = self.samples.lock();
         guard.get(&channel_id).and_then(|samples| {
             let with_tokens: Vec<&LatencySample> = samples
                 .iter()

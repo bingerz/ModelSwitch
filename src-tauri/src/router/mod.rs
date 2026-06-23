@@ -46,11 +46,11 @@ pub async fn select_channel(
     // HashMap read guard is held for the full scan so we get a consistent
     // snapshot, but it is an RwLock read guard — routing reads of OTHER
     // channels can proceed concurrently with any per-channel write (those
-    // acquire the inner std::sync::RwLock, not this outer one).
+    // acquire the inner parking_lot::RwLock, not this outer one).
     let mut candidates: Vec<Channel> = guard
         .values()
         .filter_map(|ch_arc| {
-            let c = ch_arc.read().unwrap_or_else(|e| e.into_inner());
+            let c = ch_arc.read();
             if !c.is_available() {
                 return None;
             }

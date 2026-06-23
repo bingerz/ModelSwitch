@@ -62,7 +62,7 @@ impl std::ops::Deref for PooledClient {
 
 impl Drop for PooledClient {
     fn drop(&mut self) {
-        self.active.fetch_sub(1, Ordering::Release);
+        self.active.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -95,7 +95,7 @@ impl HttpPool {
     /// The active count is decremented when the guard is dropped.
     pub fn get(&self) -> PooledClient {
         let idx = self.least_busy_index();
-        self.clients[idx].active.fetch_add(1, Ordering::AcqRel);
+        self.clients[idx].active.fetch_add(1, Ordering::Relaxed);
         PooledClient {
             client: self.clients[idx].client.clone(),
             active: Arc::clone(&self.clients[idx].active),
@@ -104,7 +104,7 @@ impl HttpPool {
 
     /// Return the first client, suitable for low-frequency background tasks.
     pub fn first(&self) -> PooledClient {
-        self.clients[0].active.fetch_add(1, Ordering::AcqRel);
+        self.clients[0].active.fetch_add(1, Ordering::Relaxed);
         PooledClient {
             client: self.clients[0].client.clone(),
             active: Arc::clone(&self.clients[0].active),
@@ -115,7 +115,7 @@ impl HttpPool {
         let mut best_idx = 0;
         let mut best_count = u8::MAX;
         for (i, entry) in self.clients.iter().enumerate() {
-            let count = entry.active.load(Ordering::Acquire);
+            let count = entry.active.load(Ordering::Relaxed);
             if count < best_count {
                 best_count = count;
                 best_idx = i;

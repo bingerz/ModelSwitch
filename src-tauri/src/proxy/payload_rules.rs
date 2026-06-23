@@ -1,3 +1,4 @@
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -40,7 +41,7 @@ impl PayloadRules {
 
 /// Per-channel payload rules registry.
 pub struct ChannelPayloadRules {
-    rules: std::sync::RwLock<HashMap<uuid::Uuid, PayloadRules>>,
+    rules: RwLock<HashMap<uuid::Uuid, PayloadRules>>,
 }
 
 impl Default for ChannelPayloadRules {
@@ -52,39 +53,26 @@ impl Default for ChannelPayloadRules {
 impl ChannelPayloadRules {
     pub fn new() -> Self {
         Self {
-            rules: std::sync::RwLock::new(HashMap::new()),
+            rules: RwLock::new(HashMap::new()),
         }
     }
 
     pub fn add(&self, channel_id: uuid::Uuid, rules: PayloadRules) {
-        self.rules
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(channel_id, rules);
+        self.rules.write().insert(channel_id, rules);
     }
 
     pub fn get(&self, channel_id: uuid::Uuid) -> Option<PayloadRules> {
-        self.rules
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(&channel_id)
-            .cloned()
+        self.rules.read().get(&channel_id).cloned()
     }
 
     /// Check if any rules exist for a given channel (without cloning).
     pub fn has_rules(&self, channel_id: uuid::Uuid) -> bool {
-        self.rules
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains_key(&channel_id)
+        self.rules.read().contains_key(&channel_id)
     }
 
     /// Remove rules for a channel that has been deleted.
     pub fn remove(&self, channel_id: uuid::Uuid) {
-        self.rules
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&channel_id);
+        self.rules.write().remove(&channel_id);
     }
 }
 

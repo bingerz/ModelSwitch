@@ -134,7 +134,7 @@ async fn select_channel_for_attempt(
             guard.get(&aff_id).map(Arc::clone)
         };
         if let Some(ch_arc) = ch_arc {
-            let ch = ch_arc.read().unwrap_or_else(|e| e.into_inner());
+            let ch = ch_arc.read();
             let group_ok = account_group.is_none_or(|tag| {
                 ch.account_group.as_deref() == Some(tag) || ch.account_group.is_none()
             });
@@ -544,10 +544,11 @@ mod tests {
     }
 
     fn make_shared_channels(channels: Vec<Channel>) -> SharedChannels {
-        let map: std::collections::HashMap<uuid::Uuid, Arc<std::sync::RwLock<Channel>>> = channels
-            .into_iter()
-            .map(|c| (c.id, Arc::new(std::sync::RwLock::new(c))))
-            .collect();
+        let map: std::collections::HashMap<uuid::Uuid, Arc<parking_lot::RwLock<Channel>>> =
+            channels
+                .into_iter()
+                .map(|c| (c.id, Arc::new(parking_lot::RwLock::new(c))))
+                .collect();
         Arc::new(RwLock::new(map))
     }
 

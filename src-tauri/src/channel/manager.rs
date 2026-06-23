@@ -1,8 +1,9 @@
 use crate::channel::{Channel, ChannelStatus, CredentialType, SharedChannels};
 use crate::config::{AppConfig, ChannelConfig, GatewayConfig};
 use crate::credential::SharedCredentialStore;
+use parking_lot::{Mutex, RwLock as StdRwLock};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock as StdRwLock};
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -44,7 +45,7 @@ impl ChannelManager {
         channels
             .values()
             .filter_map(|ch_arc| {
-                let ch = ch_arc.read().unwrap_or_else(|e| e.into_inner());
+                let ch = ch_arc.read();
                 let mut c = ch.clone();
                 c.recover_if_expired();
                 Some(c)
@@ -55,7 +56,7 @@ impl ChannelManager {
     pub async fn get(&self, id: Uuid) -> Option<Channel> {
         let channels = self.channels.read().await;
         channels.get(&id).map(|ch_arc| {
-            let ch = ch_arc.read().unwrap_or_else(|e| e.into_inner());
+            let ch = ch_arc.read();
             ch.clone()
         })
     }
@@ -90,7 +91,7 @@ impl ChannelManager {
             channels.get(&id).map(Arc::clone)
         };
         if let Some(ch_arc) = ch_arc {
-            let mut ch = ch_arc.write().unwrap_or_else(|e| e.into_inner());
+            let mut ch = ch_arc.write();
             ch.consecutive_failures += 1;
             let base_minutes = ch.cooldown_minutes.unwrap_or(self.circuit_breaker_minutes);
             // Progressive backoff: 1x, 2x, 4x, 8x... capped at 30 min
@@ -112,7 +113,7 @@ impl ChannelManager {
             channels.get(&id).map(Arc::clone)
         };
         if let Some(ch_arc) = ch_arc {
-            let mut ch = ch_arc.write().unwrap_or_else(|e| e.into_inner());
+            let mut ch = ch_arc.write();
             ch.mark_circuit_open(duration_mins);
         }
     }
@@ -124,7 +125,7 @@ impl ChannelManager {
         let (api_keys, primary_key, key_ref) = {
             let channels = self.channels.read().await;
             let ch_arc = channels.get(&id)?;
-            let ch = ch_arc.read().unwrap_or_else(|e| e.into_inner());
+            let ch = ch_arc.read();
             (
                 ch.api_keys.clone(),
                 ch.credential.api_key.clone(),
@@ -147,7 +148,7 @@ impl ChannelManager {
                 // Fall through to credential store lookup below
             } else {
                 let idx = {
-                    let mut counters = self.key_indices.lock().unwrap();
+                    let mut counters = self.key_indices.lock();
                     let entry = counters.entry(id).or_insert(0);
                     let current = *entry;
                     *entry = (current + 1) % all_keys.len();
@@ -176,7 +177,7 @@ impl ChannelManager {
             channels
                 .values()
                 .filter_map(|ch_arc| {
-                    let c = ch_arc.read().unwrap_or_else(|e| e.into_inner());
+                    let c = ch_arc.read();
                     Some(ChannelConfig {
                         id: c.id.to_string(),
                         name: c.name.clone(),
@@ -229,7 +230,7 @@ impl ChannelManager {
             channels.get(&id).map(Arc::clone)
         };
         if let Some(ch_arc) = ch_arc {
-            let mut ch = ch_arc.write().unwrap_or_else(|e| e.into_inner());
+            let mut ch = ch_arc.write();
             // Exponential moving average (alpha = 0.3)
             if ch.avg_latency_ms == 0 {
                 ch.avg_latency_ms = latency_ms;
@@ -250,7 +251,7 @@ impl ChannelManager {
             channels.get(&id).map(Arc::clone)
         };
         if let Some(ch_arc) = ch_arc {
-            let mut ch = ch_arc.write().unwrap_or_else(|e| e.into_inner());
+            let mut ch = ch_arc.write();
             ch.status = ChannelStatus::Healthy;
             ch.circuit_open_until = None;
             ch.consecutive_failures = 0;

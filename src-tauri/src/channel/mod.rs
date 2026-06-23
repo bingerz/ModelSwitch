@@ -276,8 +276,9 @@ impl From<&ChannelConfig> for Channel {
 ///
 /// Outer `tokio::sync::RwLock<HashMap<Uuid, _>>` is held only briefly for
 /// HashMap lookups and iteration. Each channel value is wrapped in an inner
-/// `std::sync::RwLock<Channel>` so that circuit-breaker mutations, latency
+/// `parking_lot::RwLock<Channel>` so that circuit-breaker mutations, latency
 /// updates, and other per-channel writes do not block routing reads of other
-/// channels. The inner std lock is safe because no `.await` is held while the
-/// guard is live.
-pub type SharedChannels = Arc<tokio::sync::RwLock<HashMap<Uuid, Arc<std::sync::RwLock<Channel>>>>>;
+/// channels. The inner parking_lot lock is safe because no `.await` is held
+/// while the guard is live.
+pub type SharedChannels =
+    Arc<tokio::sync::RwLock<HashMap<Uuid, Arc<parking_lot::RwLock<Channel>>>>>;

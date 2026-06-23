@@ -2,9 +2,9 @@ use axum::body::Body;
 use axum::response::Response;
 use bytes::{Bytes, BytesMut};
 use futures::stream::Stream;
+use parking_lot::Mutex;
 use reqwest::StatusCode;
 use std::sync::Arc;
-use std::sync::Mutex;
 use tokio::sync::Notify;
 use tokio_stream::StreamExt;
 
@@ -177,9 +177,7 @@ pub fn sse_stream_response_with_telemetry(
                 // Accumulate output bytes for telemetry + cache (zero-parse hot path).
                 // Single mutex lock + byte append, no SSE parsing on the hot path.
                 {
-                    let mut buf = output_buffer_clone
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner());
+                    let mut buf = output_buffer_clone.lock();
                     buf.extend_from_slice(&output_bytes);
                     if buf.len() > MAX_OUTPUT_BUFFER_BYTES {
                         let keep_from = buf.len() / 2;
@@ -222,9 +220,7 @@ pub fn sse_stream_response_with_telemetry(
                                 bytes
                             };
                             {
-                                let mut buf = output_buffer_clone
-                                    .lock()
-                                    .unwrap_or_else(|e| e.into_inner());
+                                let mut buf = output_buffer_clone.lock();
                                 buf.extend_from_slice(&drain_output);
                                 if buf.len() > MAX_OUTPUT_BUFFER_BYTES {
                                     let keep_from = buf.len() / 2;
@@ -387,7 +383,7 @@ mod tests {
         // Wait for the stream task to finish writing all chunks
         stream_done.notified().await;
 
-        let buf = output_buffer.lock().unwrap_or_else(|e| e.into_inner());
+        let buf = output_buffer.lock();
         let raw = String::from_utf8_lossy(&buf);
         assert!(
             raw.contains("Hello"),

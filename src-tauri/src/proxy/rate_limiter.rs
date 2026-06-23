@@ -1,6 +1,6 @@
+use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::{Mutex, RwLock};
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -127,13 +127,13 @@ impl RateLimiter {
     fn get_or_create_channel(&self, channel_id: Uuid) -> Arc<Mutex<PerChannelState>> {
         // Fast path: read lock only
         {
-            let map = self.channels.read().unwrap_or_else(|e| e.into_inner());
+            let map = self.channels.read();
             if let Some(arc) = map.get(&channel_id) {
                 return Arc::clone(arc);
             }
         }
         // Slow path: write lock to create entry
-        let mut map = self.channels.write().unwrap_or_else(|e| e.into_inner());
+        let mut map = self.channels.write();
         // Double-check after acquiring write lock (another thread may have created it)
         map.entry(channel_id)
             .or_insert_with(|| {
@@ -147,13 +147,13 @@ impl RateLimiter {
 
     pub fn set_channel_tpm_limit(&self, channel_id: Uuid, limit: u64) {
         let arc = self.get_or_create_channel(channel_id);
-        let mut state = arc.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = arc.lock();
         state.limits.tpm = Some(limit);
     }
 
     pub fn set_channel_rpm_limit(&self, channel_id: Uuid, limit: u64) {
         let arc = self.get_or_create_channel(channel_id);
-        let mut state = arc.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = arc.lock();
         state.limits.rpm = limit;
     }
 
@@ -162,7 +162,7 @@ impl RateLimiter {
     pub fn check(&self, channel_id: Uuid, estimated_tokens: u64) -> (bool, &'static str) {
         // Check global TPM first (independent lock)
         if let Some(global_limit) = self.global_tpm_limit {
-            let global = self.global_tpm.lock().unwrap_or_else(|e| e.into_inner());
+            let global = self.global_tpm.lock();
             if !global.check_and_add(estimated_tokens, global_limit) {
                 return (false, "global_tpm_exceeded");
             }
@@ -170,7 +170,7 @@ impl RateLimiter {
 
         // Get channel Arc (brief read lock), then lock only this channel
         let arc = self.get_or_create_channel(channel_id);
-        let state = arc.lock().unwrap_or_else(|e| e.into_inner());
+        let state = arc.lock();
 
         // Check per-channel RPM
         if state.windows.rpm.current_total() >= state.limits.rpm {
@@ -192,25 +192,25 @@ impl RateLimiter {
         // Per-channel recording (independent lock)
         let arc = self.get_or_create_channel(channel_id);
         {
-            let mut state = arc.lock().unwrap_or_else(|e| e.into_inner());
+            let mut state = arc.lock();
             state.windows.tpm.add(tokens);
             state.windows.rpm.add(1);
         }
 
         // Global TPM recording (independent lock)
         if self.global_tpm_limit.is_some() {
-            let mut global = self.global_tpm.lock().unwrap_or_else(|e| e.into_inner());
+            let mut global = self.global_tpm.lock();
             global.add(tokens);
         }
     }
 
     /// Get the current TPM usage for a channel (0 if no data).
     pub fn current_tpm(&self, channel_id: Uuid) -> u64 {
-        let map = self.channels.read().unwrap_or_else(|e| e.into_inner());
+        let map = self.channels.read();
         if let Some(arc) = map.get(&channel_id) {
             let arc = Arc::clone(arc);
             drop(map);
-            let state = arc.lock().unwrap_or_else(|e| e.into_inner());
+            let state = arc.lock();
             state.windows.tpm.current_total()
         } else {
             0
@@ -219,11 +219,11 @@ impl RateLimiter {
 
     /// Get the TPM limit for a channel (None if not configured).
     pub fn tpm_limit(&self, channel_id: Uuid) -> Option<u64> {
-        let map = self.channels.read().unwrap_or_else(|e| e.into_inner());
+        let map = self.channels.read();
         if let Some(arc) = map.get(&channel_id) {
             let arc = Arc::clone(arc);
             drop(map);
-            let state = arc.lock().unwrap_or_else(|e| e.into_inner());
+            let state = arc.lock();
             state.limits.tpm
         } else {
             None

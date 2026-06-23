@@ -1,5 +1,6 @@
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// Tracks active request counts per channel for least-busy routing.
@@ -16,13 +17,13 @@ impl ActiveRequests {
 
     /// Increment the active request count for a channel.
     pub fn increment(&self, channel_id: Uuid) {
-        let mut guard = self.counts.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = self.counts.lock();
         *guard.entry(channel_id).or_insert(0) += 1;
     }
 
     /// Decrement the active request count for a channel.
     pub fn decrement(&self, channel_id: Uuid) {
-        let mut guard = self.counts.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = self.counts.lock();
         if let Some(count) = guard.get_mut(&channel_id) {
             if *count > 0 {
                 *count -= 1;
@@ -44,19 +45,19 @@ impl ActiveRequests {
 
     /// Get the current active request count for a channel.
     pub fn get(&self, channel_id: Uuid) -> u32 {
-        let guard = self.counts.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = self.counts.lock();
         guard.get(&channel_id).copied().unwrap_or(0)
     }
 
     /// Get all active request counts as a snapshot.
     pub fn snapshot(&self) -> HashMap<Uuid, u32> {
-        let guard = self.counts.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = self.counts.lock();
         guard.clone()
     }
 
     /// Total active requests across all channels.
     pub fn total(&self) -> u64 {
-        let guard = self.counts.lock().unwrap_or_else(|e| e.into_inner());
+        let guard = self.counts.lock();
         guard.values().map(|v| *v as u64).sum()
     }
 }
