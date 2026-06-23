@@ -60,7 +60,7 @@ async fn log_attempt_failure(
 /// Returns `Respond(response)` if a final response is ready, or `Retry` to try next.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn try_channel_attempt(
-    state: &Arc<crate::proxy::openai::AppState>,
+    state: &Arc<crate::proxy::AppState>,
     original_headers: &HeaderMap,
     body: &Value,
     provider: &dyn ProviderAdaptor,

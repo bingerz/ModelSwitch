@@ -1,7 +1,7 @@
 use super::ApiResponse;
 use crate::channel::{Channel, ChannelStatus, Credential, CredentialType, Provider};
 use crate::middleware::error::ApiError;
-use crate::proxy::openai::AppState;
+use crate::proxy::AppState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -303,6 +303,90 @@ pub async fn channel_status(
         "enabled": channel.enabled,
         "circuit_open_until": channel.circuit_open_until,
     }))))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_helpers::build_test_state;
+    use axum::extract::{Path, State};
+    use axum::http::StatusCode;
+    use axum::Json;
+    use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn list_channels_returns_empty() {
+        let state = build_test_state(vec![]);
+        let result = list_channels(State(state)).await;
+        assert!(result.ok);
+        assert!(result.data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_channel_adds_to_list() {
+        let state = build_test_state(vec![]);
+        let req = CreateChannelRequest {
+            name: "test-channel".to_string(),
+            provider: "openai".to_string(),
+            priority: 1,
+            weight: 100,
+            cost_per_token: None,
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
+            credential_type: "api_key".to_string(),
+            credential_value: "sk-test".to_string(),
+            base_url: "https://api.openai.com".to_string(),
+            model_mapping: HashMap::new(),
+            cooldown_minutes: None,
+            rpm_limit: None,
+            tpm_limit: None,
+            account_group: None,
+            max_concurrent: None,
+        };
+        let created = create_channel(State(state.clone()), Json(req))
+            .await
+            .expect("create_channel should succeed");
+        let channel_id = created.0.data.id;
+
+        let list_result = list_channels(State(state)).await;
+        assert!(list_result.ok);
+        assert_eq!(list_result.data.len(), 1);
+        assert_eq!(list_result.data[0].id, channel_id);
+    }
+
+    #[tokio::test]
+    async fn delete_channel_removes_from_list() {
+        let state = build_test_state(vec![]);
+        let req = CreateChannelRequest {
+            name: "delete-me".to_string(),
+            provider: "openai".to_string(),
+            priority: 1,
+            weight: 100,
+            cost_per_token: None,
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
+            credential_type: "api_key".to_string(),
+            credential_value: "sk-test".to_string(),
+            base_url: "https://api.openai.com".to_string(),
+            model_mapping: HashMap::new(),
+            cooldown_minutes: None,
+            rpm_limit: None,
+            tpm_limit: None,
+            account_group: None,
+            max_concurrent: None,
+        };
+        let created = create_channel(State(state.clone()), Json(req))
+            .await
+            .expect("create_channel should succeed");
+        let channel_id = created.0.data.id;
+
+        let delete_response = delete_channel(State(state.clone()), Path(channel_id)).await;
+        assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+
+        let list_result = list_channels(State(state)).await;
+        assert!(list_result.ok);
+        assert!(list_result.data.is_empty());
+    }
 }
 
 /// Set payload rules for a channel at runtime.

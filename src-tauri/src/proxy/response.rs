@@ -99,7 +99,7 @@ pub(super) fn inject_passthrough_headers(
 /// guard is dropped only after `stream_done` fires (stream fully consumed).
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_streaming_success(
-    state: &Arc<crate::proxy::openai::AppState>,
+    state: &Arc<crate::proxy::AppState>,
     channel: &Channel,
     resp: reqwest::Response,
     body: &Value,
@@ -362,7 +362,7 @@ pub(super) async fn handle_streaming_success(
 /// fully consumed when `resp.text().await` returns.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_json_success(
-    state: &Arc<crate::proxy::openai::AppState>,
+    state: &Arc<crate::proxy::AppState>,
     channel: &Channel,
     resp: reqwest::Response,
     body: &Value,

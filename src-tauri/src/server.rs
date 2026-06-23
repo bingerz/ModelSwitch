@@ -12,8 +12,8 @@ use crate::middleware;
 use crate::provider_budget::ProviderBudgetStore;
 use crate::proxy;
 use crate::proxy::cache::{CacheMode, InFlightRequests, RequestCache};
-use crate::proxy::openai::{
-    AppState, BillingState, CacheState, GatewayParams, LimitsState, McpState, RouterState,
+use crate::proxy::{
+    AppState, BillingState, CacheState, ProxyParams, LimitsState, McpState, RouterState,
     SecurityState,
 };
 use crate::proxy::payload_rules::ChannelPayloadRules;
@@ -136,7 +136,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         credential_store,
         logger: Arc::clone(&logger),
         http_pool: http_pool.clone(),
-        gateway: GatewayParams {
+        gateway: ProxyParams {
             request_timeout_secs: config.gateway.request_timeout_secs,
             stream_keepalive_secs: config.gateway.stream_keepalive_secs,
             stream_ttft_timeout_secs: config.gateway.stream_ttft_timeout_secs,
@@ -628,4 +628,64 @@ pub async fn start_gateway(
 
     // Clean up PID file on shutdown
     let _ = std::fs::remove_file(&pid_path);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_helpers::build_test_state;
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode};
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn health_endpoint_returns_200() {
+        let state = build_test_state(vec![]);
+        let app = build_router(state);
+        let response = app
+            .oneshot(Request::builder().method(Method::GET).uri("/health").body(Body::default()).unwrap())
+            .await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn metrics_endpoint_returns_200() {
+        let state = build_test_state(vec![]);
+        let app = build_router(state);
+        let response = app
+            .oneshot(Request::builder().method(Method::GET).uri("/metrics").body(Body::default()).unwrap())
+            .await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn admin_channels_route_registered() {
+        let state = build_test_state(vec![]);
+        let app = build_router(state);
+        let response = app
+            .oneshot(Request::builder().method(Method::GET).uri("/api/channels").body(Body::default()).unwrap())
+            .await.unwrap();
+        // Should NOT be 404 — route is registered
+        assert_ne!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn admin_virtual_keys_route_registered() {
+        let state = build_test_state(vec![]);
+        let app = build_router(state);
+        let response = app
+            .oneshot(Request::builder().method(Method::GET).uri("/api/virtual-keys").body(Body::default()).unwrap())
+            .await.unwrap();
+        assert_ne!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn unknown_route_returns_404() {
+        let state = build_test_state(vec![]);
+        let app = build_router(state);
+        let response = app
+            .oneshot(Request::builder().method(Method::GET).uri("/nonexistent/path").body(Body::default()).unwrap())
+            .await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
 }

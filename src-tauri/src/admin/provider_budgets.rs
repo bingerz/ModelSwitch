@@ -1,5 +1,5 @@
 use crate::middleware::error::ApiError;
-use crate::proxy::openai::AppState;
+use crate::proxy::AppState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -142,5 +142,62 @@ pub async fn delete_provider_budget(
         StatusCode::NO_CONTENT.into_response()
     } else {
         ApiError::new(StatusCode::NOT_FOUND, "Provider budget not found")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ChannelConfig;
+    use crate::test_helpers::build_test_state;
+    use axum::extract::{Path, State};
+    use axum::http::StatusCode;
+    use axum::Json;
+
+    #[tokio::test]
+    async fn list_provider_budgets_returns_empty() {
+        let state = build_test_state(vec![]);
+        let result = list_provider_budgets(State(state)).await;
+        assert!(result.data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn set_provider_budget_creates_entry() {
+        let state = build_test_state(vec![]);
+        let req = SetProviderBudgetRequest {
+            daily_budget_cents: Some(500),
+            monthly_budget_cents: Some(15000),
+        };
+        let result =
+            set_provider_budget(State(state.clone()), Path("openai".to_string()), Json(req)).await;
+        assert!(result.is_ok());
+        let response = result.unwrap().0;
+        assert_eq!(response.data.provider, "openai");
+
+        let list_result = list_provider_budgets(State(state)).await;
+        assert_eq!(list_result.data.len(), 1);
+        assert_eq!(list_result.data[0].provider, "openai");
+    }
+
+    #[tokio::test]
+    async fn set_then_delete_provider_budget() {
+        let state = build_test_state(vec![]);
+        let req = SetProviderBudgetRequest {
+            daily_budget_cents: Some(200),
+            monthly_budget_cents: Some(6000),
+        };
+        let _ = set_provider_budget(
+            State(state.clone()),
+            Path("anthropic".to_string()),
+            Json(req),
+        )
+        .await;
+
+        let delete_response =
+            delete_provider_budget(State(state.clone()), Path("anthropic".to_string())).await;
+        assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+
+        let list_result = list_provider_budgets(State(state)).await;
+        assert!(list_result.data.is_empty());
     }
 }

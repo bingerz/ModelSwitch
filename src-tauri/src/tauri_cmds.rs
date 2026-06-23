@@ -2,7 +2,7 @@
 
 use crate::admin::{McpServerResponse, McpToolResponse};
 use crate::config;
-use crate::proxy::openai::AppState;
+use crate::proxy::AppState;
 use crate::server::start_gateway;
 use crate::GatewayHandles;
 

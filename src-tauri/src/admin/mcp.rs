@@ -1,7 +1,7 @@
 use super::ApiResponse;
 use crate::config::McpServerConfig;
 use crate::middleware::error::ApiError;
-use crate::proxy::openai::AppState;
+use crate::proxy::AppState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;

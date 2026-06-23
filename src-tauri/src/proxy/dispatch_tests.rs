@@ -22,8 +22,8 @@ use crate::log::DispatchLogger;
 use crate::mcp::McpManager;
 use crate::proxy::cache::{CacheMode, InFlightRequests, RequestCache};
 use crate::proxy::dispatch;
-use crate::proxy::openai::{
-    AppState, BillingState, CacheState, GatewayParams, LimitsState, McpState, RouterState,
+use crate::proxy::{
+    AppState, BillingState, CacheState, ProxyParams, LimitsState, McpState, RouterState,
     SecurityState,
 };
 use crate::proxy::payload_rules::ChannelPayloadRules;
@@ -175,7 +175,7 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
         credential_store,
         logger,
         http_pool,
-        gateway: GatewayParams {
+        gateway: ProxyParams {
             request_timeout_secs: Some(30),
             stream_keepalive_secs: None,
             stream_ttft_timeout_secs: Some(30),

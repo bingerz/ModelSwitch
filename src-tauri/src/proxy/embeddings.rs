@@ -6,7 +6,7 @@
 //! forwards the request to the upstream `/v1/embeddings` endpoint and
 //! returns the response.
 
-use crate::proxy::openai::AppState;
+use crate::proxy::AppState;
 use crate::proxy::stream::json_response;
 use crate::proxy::SKIP_HEADERS;
 use crate::router::{self, RoutingContext};

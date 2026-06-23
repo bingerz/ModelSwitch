@@ -21,8 +21,10 @@ mod server;
 mod shutdown;
 #[cfg(feature = "tauri")]
 mod tauri_cmds;
+#[cfg(test)]
+pub(crate) mod test_helpers;
 
-use crate::proxy::openai::AppState;
+use crate::proxy::AppState;
 use std::sync::Arc;
 
 // Re-export for CLI binary and external consumers

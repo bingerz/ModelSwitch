@@ -5,7 +5,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 use std::sync::Arc;
 
-use crate::proxy::openai::AppState;
+use crate::proxy::AppState;
 
 /// Constant-time Bearer token verification to prevent timing attacks.
 fn verify_bearer_token(header_value: &str, expected: &str) -> bool {

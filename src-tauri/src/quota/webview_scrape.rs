@@ -1,4 +1,4 @@
-use crate::proxy::openai::AppState;
+use crate::proxy::AppState;
 use crate::quota::collectors::webview_scripts::aliyun::ALIYUN_BAILIAN_SCRIPT;
 use crate::quota::collectors::webview_scripts::anthropic::{
     AnthropicUsage, ANTHROPIC_USAGE_SCRIPT,

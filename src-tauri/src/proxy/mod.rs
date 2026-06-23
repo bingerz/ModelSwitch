@@ -5,6 +5,7 @@ pub mod gemini;
 pub mod mcp_tools;
 pub mod openai;
 pub mod payload_rules;
+pub mod state;
 pub mod rate_limiter;
 pub mod stream;
 pub mod translate;
@@ -18,6 +19,11 @@ mod usage;
 
 #[cfg(test)]
 mod dispatch_tests;
+
+pub use state::{
+    AppState, BillingState, CacheState, LimitsState, McpState, ProxyParams, RouterState,
+    SecurityState,
+};
 
 use crate::log::DispatchLog;
 use crate::proxy::stream::json_response;

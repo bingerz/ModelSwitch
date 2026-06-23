@@ -39,7 +39,7 @@ impl Drop for ActiveRequestGuard {
 
 /// Log the all-channels-exhausted outcome, wake coalesced waiters, and return 429.
 async fn log_all_exhausted(
-    state: &Arc<crate::proxy::openai::AppState>,
+    state: &Arc<crate::proxy::AppState>,
     original_model: &str,
     cache_key: u128,
     total_attempts: u32,
@@ -79,7 +79,7 @@ async fn log_all_exhausted(
 /// or `None` to continue dispatch.
 /// For streaming requests, the cached SSE text is returned as an event-stream response.
 async fn check_request_cache(
-    state: &Arc<crate::proxy::openai::AppState>,
+    state: &Arc<crate::proxy::AppState>,
     cache_key: u128,
     key_material: &str,
     is_stream: bool,
@@ -161,7 +161,7 @@ async fn select_channel_for_attempt(
 /// Implements priority-based channel selection, hot retry, circuit breaking,
 /// model fallback chains, SSE streaming, and header passthrough.
 pub(crate) async fn dispatch(
-    state: &Arc<crate::proxy::openai::AppState>,
+    state: &Arc<crate::proxy::AppState>,
     original_headers: &HeaderMap,
     body: &Value,
     provider: &dyn ProviderAdaptor,

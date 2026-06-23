@@ -30,7 +30,7 @@ pub(super) fn extract_virtual_key_id(headers: &HeaderMap) -> Option<Uuid> {
 pub(super) async fn extract_request_meta<'a>(
     body: &Value,
     original_headers: &'a HeaderMap,
-    state: &std::sync::Arc<crate::proxy::openai::AppState>,
+    state: &std::sync::Arc<crate::proxy::AppState>,
     default_model: &str,
 ) -> RequestMeta<'a> {
     let original_model = body

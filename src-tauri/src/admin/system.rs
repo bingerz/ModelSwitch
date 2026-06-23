@@ -2,7 +2,7 @@ use super::{ApiResponse, PaginationParams};
 use crate::channel::{Channel, Provider};
 use crate::log::DispatchLog;
 use crate::middleware::error::ApiError;
-use crate::proxy::openai::AppState;
+use crate::proxy::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -301,6 +301,8 @@ pub async fn reload_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::build_test_state;
+    use axum::extract::State;
 
     #[test]
     fn parse_simple_counter() {
@@ -347,5 +349,31 @@ mod tests {
     #[test]
     fn format_days() {
         assert_eq!(format_uptime(90061), "1d 1h 1m");
+    }
+
+    #[tokio::test]
+    async fn gateway_info_returns_ok() {
+        let state = build_test_state(vec![]);
+        let result = gateway_info(State(state)).await;
+        assert!(result.ok);
+        assert!(result.data.get("version").is_some());
+        assert!(result.data.get("uptime_seconds").is_some());
+        assert!(result.data.get("routing_strategy").is_some());
+    }
+
+    #[tokio::test]
+    async fn flush_cache_returns_ok() {
+        let state = build_test_state(vec![]);
+        let result = flush_cache(State(state)).await;
+        assert!(result.ok);
+        assert!(result.data.get("flushed").is_some());
+    }
+
+    #[tokio::test]
+    async fn cache_stats_returns_ok() {
+        let state = build_test_state(vec![]);
+        let result = cache_stats(State(state)).await;
+        assert!(result.ok);
+        assert!(result.data.get("entries").is_some());
     }
 }

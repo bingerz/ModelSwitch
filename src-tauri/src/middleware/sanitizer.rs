@@ -32,7 +32,7 @@ use std::sync::LazyLock;
 use std::task::{Context, Poll};
 
 use crate::config::SanitizerConfig;
-use crate::proxy::openai::AppState;
+use crate::proxy::AppState;
 
 /// Maximum body size the sanitizer will buffer for scanning. Mirrors the
 /// router's `DefaultBodyLimit` so we can always fully consume proxy bodies.

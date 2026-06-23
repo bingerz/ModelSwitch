@@ -1,5 +1,5 @@
 use crate::middleware::error::ApiError;
-use crate::proxy::openai::AppState;
+use crate::proxy::AppState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -167,5 +167,65 @@ pub async fn delete_virtual_key(
         StatusCode::NO_CONTENT.into_response()
     } else {
         ApiError::new(StatusCode::NOT_FOUND, "Virtual key not found")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ChannelConfig;
+    use crate::test_helpers::build_test_state;
+    use axum::extract::{Path, State};
+    use axum::http::StatusCode;
+    use axum::Json;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn list_virtual_keys_returns_empty() {
+        let state = build_test_state(vec![]);
+        let result = list_virtual_keys(State(state)).await;
+        assert!(result.data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_virtual_key_succeeds() {
+        let state = build_test_state(vec![]);
+        let req = CreateVirtualKeyRequest {
+            name: "test-key".to_string(),
+            daily_budget_cents: Some(1000),
+            monthly_budget_cents: Some(30000),
+            allowed_models: None,
+        };
+        let result = create_virtual_key(State(state), Json(req)).await;
+        assert!(result.is_ok());
+        let data = result.unwrap().0.data;
+        assert!(data["key"].as_str().is_some());
+        assert!(data["key"].as_str().unwrap().starts_with("ms-vk-"));
+        assert_eq!(data["name"].as_str().unwrap(), "test-key");
+    }
+
+    #[tokio::test]
+    async fn create_then_delete_virtual_key() {
+        let state = build_test_state(vec![]);
+        let req = CreateVirtualKeyRequest {
+            name: "delete-me".to_string(),
+            daily_budget_cents: Some(500),
+            monthly_budget_cents: Some(10000),
+            allowed_models: None,
+        };
+        let create_result = create_virtual_key(State(state.clone()), Json(req))
+            .await
+            .unwrap();
+        let id_str = create_result.0.data["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let id: Uuid = id_str.parse().unwrap();
+
+        let delete_response = delete_virtual_key(State(state.clone()), Path(id)).await;
+        assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
+
+        let list_result = list_virtual_keys(State(state)).await;
+        assert!(list_result.data.is_empty());
     }
 }

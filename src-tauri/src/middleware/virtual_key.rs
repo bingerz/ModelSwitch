@@ -16,7 +16,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 use std::sync::Arc;
 
-use crate::proxy::openai::AppState;
+use crate::proxy::AppState;
 
 pub async fn virtual_key_middleware(
     State(state): State<Arc<AppState>>,
