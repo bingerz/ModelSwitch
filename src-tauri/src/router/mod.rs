@@ -76,6 +76,10 @@ pub async fn select_channel(
             if c.is_model_excluded(requested_model) {
                 return None;
             }
+            // Check per-model rate-limit cooldown
+            if c.is_model_in_cooldown(requested_model) {
+                return None;
+            }
             let mut cloned = c.clone();
             cloned.recover_if_expired();
             Some(cloned)

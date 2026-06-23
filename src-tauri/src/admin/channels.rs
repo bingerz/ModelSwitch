@@ -136,6 +136,7 @@ pub async fn create_channel(
         max_concurrent: req.max_concurrent,
         api_keys: vec![],
         excluded_models: vec![],
+        model_cooldowns: std::collections::HashMap::new(),
     };
 
     let created = state.channel_mgr.create(channel).await;

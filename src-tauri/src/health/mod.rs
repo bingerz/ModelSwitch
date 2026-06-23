@@ -124,6 +124,7 @@ mod tests {
             max_concurrent: None,
             api_keys: vec![],
             excluded_models: vec![],
+            model_cooldowns: HashMap::new(),
         }
     }
 

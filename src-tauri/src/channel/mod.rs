@@ -138,6 +138,11 @@ pub struct Channel {
     /// Uses simple wildcard matching: `*` matches any sequence, `?` matches one char.
     #[serde(default)]
     pub excluded_models: Vec<String>,
+    /// Per-model rate-limit cooldowns: model name -> expiry time.
+    /// When a model gets a 429 from upstream, it enters cooldown for this
+    /// channel specifically — other models on the same channel remain available.
+    #[serde(default)]
+    pub model_cooldowns: HashMap<String, DateTime<Utc>>,
 }
 
 impl Channel {
@@ -184,6 +189,33 @@ impl Channel {
         self.excluded_models
             .iter()
             .any(|pattern| matches_glob(pattern, model))
+    }
+
+    /// Mark a model as rate-limited on this channel with progressive backoff.
+    /// Cooldown duration: derived from `retry_after_secs` when provided,
+    /// otherwise a fixed 2-minute default. Capped at 30 minutes.
+    pub fn mark_model_rate_limited(&mut self, model: &str, retry_after_secs: Option<u64>) {
+        let duration_mins = retry_after_secs
+            .map(|s| ((s + 59) / 60).max(1).min(30))
+            .unwrap_or(2);
+        let expiry = Utc::now() + chrono::Duration::minutes(duration_mins as i64);
+        self.model_cooldowns.insert(model.to_string(), expiry);
+    }
+
+    /// Check if a model is currently in rate-limit cooldown on this channel.
+    pub fn is_model_in_cooldown(&self, model: &str) -> bool {
+        if let Some(&expiry) = self.model_cooldowns.get(model) {
+            if Utc::now() < expiry {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Remove expired model cooldowns to prevent the map from growing unbounded.
+    pub fn clean_expired_model_cooldowns(&mut self) {
+        let now = Utc::now();
+        self.model_cooldowns.retain(|_, expiry| *expiry > now);
     }
 
     /// Calculate cost from real token counts.
@@ -278,6 +310,7 @@ impl Channel {
             max_concurrent: c.max_concurrent,
             api_keys: c.api_keys.clone(),
             excluded_models: c.excluded_models.clone(),
+            model_cooldowns: HashMap::new(),
         }
     }
 }
@@ -363,6 +396,7 @@ mod tests {
             max_concurrent: None,
             api_keys: vec![],
             excluded_models: vec![],
+            model_cooldowns: HashMap::new(),
         }
     }
 
@@ -409,5 +443,35 @@ mod tests {
         assert!(matches_glob("gemini-*", "gemini-2.5-flash"));
         assert!(!matches_glob("gemini-*", "claude-3"));
         assert!(matches_glob("*-preview", "gemini-2.5-preview"));
+    }
+
+    #[test]
+    fn test_model_cooldown_blocks_specific_model() {
+        let mut ch = test_channel();
+        ch.mark_model_rate_limited("gpt-4", Some(120)); // 2 minutes
+        assert!(ch.is_model_in_cooldown("gpt-4"));
+        assert!(!ch.is_model_in_cooldown("gpt-3.5-turbo"));
+    }
+
+    #[test]
+    fn test_model_cooldown_expires() {
+        let mut ch = test_channel();
+        // Set cooldown with already-expired timestamp
+        let expiry = Utc::now() - chrono::Duration::seconds(1);
+        ch.model_cooldowns.insert("gpt-4".to_string(), expiry);
+        assert!(!ch.is_model_in_cooldown("gpt-4"));
+    }
+
+    #[test]
+    fn test_clean_expired_model_cooldowns() {
+        let mut ch = test_channel();
+        let past = Utc::now() - chrono::Duration::seconds(1);
+        let future = Utc::now() + chrono::Duration::minutes(5);
+        ch.model_cooldowns.insert("expired-model".to_string(), past);
+        ch.model_cooldowns
+            .insert("active-model".to_string(), future);
+        ch.clean_expired_model_cooldowns();
+        assert!(!ch.model_cooldowns.contains_key("expired-model"));
+        assert!(ch.model_cooldowns.contains_key("active-model"));
     }
 }

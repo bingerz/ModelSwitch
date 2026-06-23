@@ -391,6 +391,19 @@ fn spawn_background_services(state: &Arc<AppState>, config: &AppConfig) {
             }
         });
     }
+
+    // Periodic cleanup of expired per-model cooldowns (every 5 minutes)
+    {
+        let channel_mgr_cleanup = Arc::clone(&state.channel_mgr);
+        spawn_bg(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            interval.tick().await; // Skip first immediate tick
+            loop {
+                interval.tick().await;
+                channel_mgr_cleanup.clean_expired_model_cooldowns().await;
+            }
+        });
+    }
 }
 
 /// Start the hot config reload watcher.

@@ -118,6 +118,35 @@ impl ChannelManager {
         }
     }
 
+    /// Record a per-model rate-limit cooldown on a specific channel.
+    /// This allows the router to skip this channel for the rate-limited model
+    /// while still routing other models to it.
+    pub async fn mark_model_rate_limited(
+        &self,
+        id: Uuid,
+        model: &str,
+        retry_after_secs: Option<u64>,
+    ) {
+        let ch_arc = {
+            let channels = self.channels.read().await;
+            channels.get(&id).map(Arc::clone)
+        };
+        if let Some(ch_arc) = ch_arc {
+            let mut ch = ch_arc.write();
+            ch.mark_model_rate_limited(model, retry_after_secs);
+        }
+    }
+
+    /// Clean expired model cooldowns across all channels.
+    /// Call periodically to prevent the cooldown maps from growing unbounded.
+    pub async fn clean_expired_model_cooldowns(&self) {
+        let channels = self.channels.read().await;
+        for ch_arc in channels.values() {
+            let mut ch = ch_arc.write();
+            ch.clean_expired_model_cooldowns();
+        }
+    }
+
     pub async fn get_credential(&self, id: Uuid) -> Option<String> {
         // Snapshot the fields we need under the inner read lock, then release.
         // The credential-store lookup (keyring/file IO) happens outside any
@@ -326,6 +355,7 @@ mod tests {
             max_concurrent: None,
             api_keys: vec![],
             excluded_models: vec![],
+            model_cooldowns: HashMap::new(),
         }
     }
 

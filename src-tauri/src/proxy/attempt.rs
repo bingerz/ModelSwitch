@@ -280,6 +280,12 @@ pub(super) async fn try_channel_attempt(
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.parse::<u64>().ok());
         tracing::warn!(channel = %channel.name, retry_after_secs, "Rate limited (429)");
+        // Record per-model cooldown so other models on this channel remain available
+        state
+            .channel_mgr
+            .mark_model_rate_limited(channel.id, current_model, retry_after_secs)
+            .await;
+        // Also open the channel circuit breaker (existing behavior — may be refined later)
         state
             .channel_mgr
             .mark_circuit_open_with_retry(channel.id, retry_after_secs)
