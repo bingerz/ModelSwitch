@@ -164,6 +164,12 @@ pub struct GatewayConfig {
     /// Fields not specified fall back to the global defaults.
     #[serde(default)]
     pub model_retry_overrides: HashMap<String, ModelRetryConfig>,
+    /// Allowed CORS origins for web console mode.
+    /// When set, only these origins may access the gateway via browser.
+    /// When empty or None, defaults to localhost-only in release builds,
+    /// permissive in debug builds.
+    #[serde(default)]
+    pub allowed_origins: Option<Vec<String>>,
 }
 
 /// Per-model retry configuration overrides.
@@ -422,6 +428,7 @@ impl Default for GatewayConfig {
             retry_base_ms: default_retry_base_ms(),
             retry_max_ms: default_retry_max_ms(),
             model_retry_overrides: HashMap::new(),
+            allowed_origins: None,
         }
     }
 }

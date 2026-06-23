@@ -208,7 +208,7 @@ export function UsageChart({ buckets, window, onWindowChange }: { buckets: Usage
                     const channelId = segKey.split(":")[0];
                     const segPct = totalTokens > 0 ? (seg.tokens / totalTokens) * 100 : 0;
                     const segCacheTotal = seg.cacheHits + seg.cacheMisses;
-                    const segTooltip = `${seg.name} (${seg.model}): ${formatTokens(seg.tokens)} ${t("quota.tokens")} (${seg.requests} reqs)${segCacheTotal > 0 ? ` | ${t("quota.cacheHit")}: ${((seg.cacheHits / segCacheTotal) * 100).toFixed(0)}% ${t("quota.hit")}` : ""}`;
+                    const segTooltip = `${t("quota.usageTooltip", { name: seg.name, model: seg.model, tokens: formatTokens(seg.tokens), requests: seg.requests })}${segCacheTotal > 0 ? ` | ${t("quota.cacheHit")}: ${((seg.cacheHits / segCacheTotal) * 100).toFixed(0)}% ${t("quota.hit")}` : ""}`;
                     return (
                       <div
                         key={segKey}

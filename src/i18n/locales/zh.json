@@ -364,6 +364,7 @@
     "tpm": "TPM",
     "tokensAcrossRequests": "{{tokens}} Token，共 {{requests}} 个请求",
     "tokensAcrossRequestsCost": "{{tokens}} Token，共 {{requests}} 个请求 · 预估费用 {{cost}}",
+    "usageTooltip": "{{name}} ({{model}}): {{tokens}} Token ({{requests}} 请求)",
     "rateLimitHint": "速率限制数据将在此渠道代理请求时自动显示。",
     "webviewHint": "点击\"WebView 抓取\"从供应商控制台获取余额数据。",
     "sourceApi": "API",

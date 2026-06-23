@@ -149,6 +149,7 @@ pub(crate) fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppSt
         security: SecurityState {
             admin_token: None,
             sanitizer_config: SanitizerConfig::default(),
+            allowed_origins: None,
         },
         started_at: std::time::Instant::now(),
     })

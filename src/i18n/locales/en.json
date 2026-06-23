@@ -364,6 +364,7 @@
     "tpm": "TPM",
     "tokensAcrossRequests": "{{tokens}} tokens across {{requests}} requests",
     "tokensAcrossRequestsCost": "{{tokens}} tokens across {{requests}} requests · {{cost}} est. cost",
+    "usageTooltip": "{{name}} ({{model}}): {{tokens}} tokens ({{requests}} reqs)",
     "rateLimitHint": "Rate-limit data will appear automatically when this channel proxies requests.",
     "webviewHint": "Click \"WebView Scrape\" to fetch balance data from the provider console.",
     "sourceApi": "API",

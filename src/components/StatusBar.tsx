@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { api, type DispatchStats, type GwStatus, invokeTauri } from "../lib/api";
 import { isTauri, API_BASE } from "../lib/runtime";
@@ -12,9 +12,13 @@ export function StatusBar() {
   const [networkError, setNetworkError] = useState(false);
   const { totalBalance, channelsWithData, lowBalanceCount } = useQuota();
 
+  // Backoff tracking for adaptive polling in web mode
+  const backoffRef = useRef(3000); // Start at 3s
+
   const pollStatus = useCallback(async () => {
     if (isTauri) {
       // Desktop mode: use Tauri IPC for gateway lifecycle
+      backoffRef.current = 3000;
       try {
         const s = await invokeTauri<GwStatus>("gateway_status");
         setGw(s);
@@ -35,6 +39,7 @@ export function StatusBar() {
       try {
         const res = await fetch(`${API_BASE}/health`);
         setNetworkError(false);
+        backoffRef.current = 3000;
         setGw({
           running: res.ok,
           host: window.location.hostname,
@@ -49,6 +54,7 @@ export function StatusBar() {
         }
       } catch {
         setNetworkError(true);
+        backoffRef.current = Math.min(backoffRef.current * 1.5, 30000);
         setGw((prev) => prev ?? { running: false, host: "", port: 0 });
       }
     }
@@ -56,8 +62,16 @@ export function StatusBar() {
 
   useEffect(() => {
     pollStatus();
-    const interval = setInterval(pollStatus, 3000);
-    return () => clearInterval(interval);
+    // Use a recursive timeout instead of fixed interval for adaptive backoff
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const scheduleNext = () => {
+      timeoutId = setTimeout(async () => {
+        await pollStatus();
+        scheduleNext();
+      }, backoffRef.current);
+    };
+    scheduleNext();
+    return () => clearTimeout(timeoutId);
   }, [pollStatus]);
 
   const handleAction = async (cmd: "gateway_start" | "gateway_stop" | "gateway_restart") => {

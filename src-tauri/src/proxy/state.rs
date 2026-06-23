@@ -61,10 +61,11 @@ pub struct McpState {
     pub mcp_gateway_enabled: bool,
 }
 
-/// Security state (auth + sanitizer).
+/// Security state (auth + sanitizer + CORS).
 pub struct SecurityState {
     pub admin_token: Option<String>,
     pub sanitizer_config: crate::config::SanitizerConfig,
+    pub allowed_origins: Option<Vec<String>>,
 }
 
 /// Shared application state for the proxy.

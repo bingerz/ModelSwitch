@@ -176,6 +176,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         security: SecurityState {
             admin_token,
             sanitizer_config: config.gateway.sanitizer.clone(),
+            allowed_origins: config.gateway.allowed_origins.clone(),
         },
         started_at: std::time::Instant::now(),
     });
@@ -400,6 +401,15 @@ fn spawn_config_watcher(state: &Arc<AppState>, watcher_config_path: &Option<std:
 /// Proxy routes use optional virtual-key auth (pass-through when no keys configured);
 /// admin routes use optional Bearer token auth.
 pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Router {
+    // Warn loudly when web console is active without admin_token protection.
+    if state.security.admin_token.is_none() && web_console_dir.is_some() {
+        tracing::warn!("==========================================================");
+        tracing::warn!("  WARNING: Web console is active but admin_token is");
+        tracing::warn!("    not set. All admin endpoints are OPEN to the network.");
+        tracing::warn!("    Set [security] admin_token in config.toml immediately.");
+        tracing::warn!("==========================================================");
+    }
+
     let proxy_state = Arc::clone(&state);
     let proxy_auth_state = Arc::clone(&state);
     let sanitizer_state = Arc::clone(&state);
@@ -528,12 +538,18 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
         base_router
     };
 
+    // Build CORS layer — restrictive in production, permissive only when no origins configured
+    let cors_layer = build_cors_layer(&state.security.allowed_origins);
+
     let router = router
         .layer(axum::middleware::from_fn(
             middleware::request_id::request_id_middleware,
         ))
+        .layer(axum::middleware::from_fn(
+            middleware::security_headers::security_headers_middleware,
+        ))
         .layer(CompressionLayer::new())
-        .layer(CorsLayer::permissive())
+        .layer(cors_layer)
         .layer(TraceLayer::new_for_http())
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024));
 
@@ -550,6 +566,72 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
     };
 
     router
+}
+
+/// Build a configurable CORS layer.
+///
+/// * When `allowed_origins` is configured (non-empty), only those origins are allowed.
+/// * When `allowed_origins` is `None` or empty:
+///   - **Debug builds**: `CorsLayer::permissive()` — convenient for local development.
+///   - **Release builds**: localhost-only (127.0.0.1:8080, localhost:8080).
+fn build_cors_layer(allowed_origins: &Option<Vec<String>>) -> CorsLayer {
+    use axum::http::header;
+    use axum::http::{HeaderValue, Method};
+    use tower_http::cors::AllowOrigin;
+
+    let methods = [
+        Method::GET,
+        Method::POST,
+        Method::PUT,
+        Method::DELETE,
+        Method::PATCH,
+        Method::OPTIONS,
+        Method::HEAD,
+    ];
+    let headers = [
+        header::AUTHORIZATION,
+        header::CONTENT_TYPE,
+        header::ACCEPT,
+        header::ORIGIN,
+    ];
+
+    match allowed_origins {
+        Some(origins) if !origins.is_empty() => {
+            let origin_values: Vec<HeaderValue> = origins
+                .iter()
+                .filter_map(|o| match o.parse::<HeaderValue>() {
+                    Ok(v) => Some(v),
+                    Err(_) => {
+                        tracing::warn!("Invalid CORS origin in config: {o}");
+                        None
+                    }
+                })
+                .collect();
+
+            CorsLayer::new()
+                .allow_origin(AllowOrigin::list(origin_values))
+                .allow_methods(methods)
+                .allow_headers(headers)
+        }
+        _ => {
+            // No origins configured — localhost-only in release, permissive in debug
+            #[cfg(debug_assertions)]
+            {
+                CorsLayer::permissive()
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                let localhost_origins: Vec<HeaderValue> = vec![
+                    "http://127.0.0.1:8080".parse().unwrap(),
+                    "http://localhost:8080".parse().unwrap(),
+                ];
+                CorsLayer::new()
+                    .allow_origin(AllowOrigin::list(localhost_origins))
+                    .allow_methods(methods)
+                    .allow_headers(headers)
+            }
+        }
+    }
 }
 
 /// Handler for the `/metrics` Prometheus scrape endpoint.
@@ -574,6 +656,25 @@ pub async fn start_gateway(
     bind_notify: Option<oneshot::Sender<Result<(), String>>>,
     web_console_dir: Option<&str>,
 ) {
+    // Security gate: refuse to start in web console mode without admin_token
+    // on a non-loopback bind address. This prevents accidentally exposing
+    // unauthenticated admin endpoints to the network.
+    if state.security.admin_token.is_none() && web_console_dir.is_some() {
+        let is_loopback = host == "127.0.0.1" || host == "localhost" || host == "::1";
+        if !is_loopback {
+            let msg = format!(
+                "Refusing to start: web console mode without admin_token on non-loopback address ({}:{}). \
+                 Set [security] admin_token in config.toml or bind to 127.0.0.1.",
+                host, port
+            );
+            tracing::error!("{msg}");
+            if let Some(tx) = bind_notify {
+                let _ = tx.send(Err(msg));
+            }
+            return;
+        }
+    }
+
     let app = build_router(state.clone(), web_console_dir);
     let quota_for_shutdown = Arc::clone(&state.billing.quota_store);
     let provider_budgets_for_shutdown = Arc::clone(&state.billing.provider_budgets);
