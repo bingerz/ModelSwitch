@@ -72,6 +72,10 @@ pub async fn select_channel(
             if !c.model_mapping.is_empty() && !c.model_mapping.contains_key(requested_model) {
                 return None;
             }
+            // Check excluded-models patterns (glob match)
+            if c.is_model_excluded(requested_model) {
+                return None;
+            }
             let mut cloned = c.clone();
             cloned.recover_if_expired();
             Some(cloned)

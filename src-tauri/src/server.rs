@@ -528,7 +528,8 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
     let base_router = Router::new()
         .merge(proxy_router)
         .merge(admin_router)
-        .route("/metrics", get(metrics_handler));
+        .route("/metrics", get(metrics_handler))
+        .route("/healthz", get(healthz_handler));
 
     // Conditionally mount MCP Gateway Mode endpoint.
     let router = if state.mcp.mcp_gateway_enabled {
@@ -651,6 +652,16 @@ async fn metrics_handler() -> axum::response::Response {
         .header("Content-Type", "text/plain; version=0.0.4")
         .body(axum::body::Body::from(body))
         .expect("valid response")
+}
+
+/// Lightweight liveness probe returning a minimal `{"status":"ok"}` body.
+/// Intended for Kubernetes-style liveness checks that only need a 200 OK
+/// without the overhead of the full `/health` endpoint. Unauthenticated.
+async fn healthz_handler() -> axum::response::Response {
+    crate::proxy::stream::json_response(
+        axum::http::StatusCode::OK,
+        r#"{"status":"ok"}"#.to_string(),
+    )
 }
 
 /// Start the Axum gateway server with graceful shutdown.

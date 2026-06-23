@@ -135,6 +135,7 @@ pub async fn create_channel(
         account_group: req.account_group,
         max_concurrent: req.max_concurrent,
         api_keys: vec![],
+        excluded_models: vec![],
     };
 
     let created = state.channel_mgr.create(channel).await;

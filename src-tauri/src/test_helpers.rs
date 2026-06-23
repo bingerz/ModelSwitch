@@ -55,6 +55,7 @@ pub(crate) fn channel_config(id: &str, name: &str, base_url: &str, priority: u8)
         account_group: None,
         max_concurrent: None,
         api_keys: vec![],
+        excluded_models: vec![],
     }
 }
 

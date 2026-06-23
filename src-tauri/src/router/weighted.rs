@@ -63,6 +63,7 @@ mod tests {
             account_group: None,
             max_concurrent: None,
             api_keys: vec![],
+            excluded_models: vec![],
         }
     }
 

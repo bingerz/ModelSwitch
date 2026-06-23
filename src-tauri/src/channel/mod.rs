@@ -134,6 +134,10 @@ pub struct Channel {
     /// rotate through `[credential.api_key, ...api_keys]` round-robin.
     #[serde(default)]
     pub api_keys: Vec<String>,
+    /// Glob patterns for models this channel should NOT serve.
+    /// Uses simple wildcard matching: `*` matches any sequence, `?` matches one char.
+    #[serde(default)]
+    pub excluded_models: Vec<String>,
 }
 
 impl Channel {
@@ -169,6 +173,17 @@ impl Channel {
         }
         keys.extend(self.api_keys.clone());
         keys
+    }
+
+    /// Check if a model is excluded by this channel's exclusion patterns.
+    /// Returns `true` if the model matches any excluded pattern.
+    pub fn is_model_excluded(&self, model: &str) -> bool {
+        if self.excluded_models.is_empty() {
+            return false;
+        }
+        self.excluded_models
+            .iter()
+            .any(|pattern| matches_glob(pattern, model))
     }
 
     /// Calculate cost from real token counts.
@@ -262,6 +277,7 @@ impl Channel {
             account_group: c.account_group.clone(),
             max_concurrent: c.max_concurrent,
             api_keys: c.api_keys.clone(),
+            excluded_models: c.excluded_models.clone(),
         }
     }
 }
@@ -282,3 +298,116 @@ impl From<&ChannelConfig> for Channel {
 /// while the guard is live.
 pub type SharedChannels =
     Arc<tokio::sync::RwLock<HashMap<Uuid, Arc<parking_lot::RwLock<Channel>>>>>;
+
+/// Simple glob pattern matching: `*` matches any sequence, `?` matches one char.
+/// Case-sensitive. No regex — intentionally simple.
+fn matches_glob(pattern: &str, text: &str) -> bool {
+    fn match_helper(p: &[u8], t: &[u8]) -> bool {
+        if p.is_empty() {
+            return t.is_empty();
+        }
+        match p[0] {
+            b'*' => {
+                // Try matching zero or more characters
+                if match_helper(&p[1..], t) {
+                    return true;
+                }
+                if !t.is_empty() && match_helper(p, &t[1..]) {
+                    return true;
+                }
+                false
+            }
+            b'?' => !t.is_empty() && match_helper(&p[1..], &t[1..]),
+            c => !t.is_empty() && t[0] == c && match_helper(&p[1..], &t[1..]),
+        }
+    }
+    match_helper(pattern.as_bytes(), text.as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::channel::{ChannelStatus, Credential, CredentialType};
+    use chrono::Utc;
+
+    /// Build a minimal Channel with default fields for testing.
+    fn test_channel() -> Channel {
+        Channel {
+            id: Uuid::new_v4(),
+            name: "test-channel".to_string(),
+            provider: Provider::OpenAI,
+            priority: 1,
+            weight: 1,
+            cost_per_token: None,
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
+            credential: Credential {
+                cred_type: CredentialType::ApiKey,
+                key_ref: "test".to_string(),
+                api_key: Some("sk-test".to_string()),
+                expires_at: None,
+            },
+            enabled: true,
+            status: ChannelStatus::Healthy,
+            circuit_open_until: None,
+            base_url: "https://api.openai.com/v1".to_string(),
+            model_mapping: HashMap::new(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            avg_latency_ms: 0,
+            consecutive_failures: 0,
+            cooldown_minutes: None,
+            rpm_limit: None,
+            tpm_limit: None,
+            account_group: None,
+            max_concurrent: None,
+            api_keys: vec![],
+            excluded_models: vec![],
+        }
+    }
+
+    #[test]
+    fn test_excluded_models_empty_allows_all() {
+        let ch = test_channel();
+        assert!(!ch.is_model_excluded("gpt-4"));
+        assert!(!ch.is_model_excluded("anything"));
+    }
+
+    #[test]
+    fn test_excluded_models_wildcard() {
+        let ch = Channel {
+            excluded_models: vec!["*-preview".to_string(), "*flash*".to_string()],
+            ..test_channel()
+        };
+        assert!(ch.is_model_excluded("gemini-2.5-preview"));
+        assert!(ch.is_model_excluded("gemini-flash"));
+        assert!(ch.is_model_excluded("gemini-2.5-flash-preview"));
+        assert!(!ch.is_model_excluded("gpt-4"));
+    }
+
+    #[test]
+    fn test_excluded_models_exact() {
+        let ch = Channel {
+            excluded_models: vec!["gpt-3.5-turbo".to_string()],
+            ..test_channel()
+        };
+        assert!(ch.is_model_excluded("gpt-3.5-turbo"));
+        assert!(!ch.is_model_excluded("gpt-4"));
+        assert!(!ch.is_model_excluded("gpt-3.5-turbo-16k"));
+    }
+
+    #[test]
+    fn test_matches_glob_question_mark() {
+        assert!(matches_glob("gpt-?a", "gpt-4a"));
+        assert!(!matches_glob("gpt-?a", "gpt-4ab"));
+        assert!(!matches_glob("gpt-?a", "gpt-a"));
+    }
+
+    #[test]
+    fn test_matches_glob_star() {
+        assert!(matches_glob("*", "anything"));
+        assert!(matches_glob("gemini-*", "gemini-2.5-flash"));
+        assert!(!matches_glob("gemini-*", "claude-3"));
+        assert!(matches_glob("*-preview", "gemini-2.5-preview"));
+    }
+}

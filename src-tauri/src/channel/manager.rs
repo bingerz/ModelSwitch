@@ -204,6 +204,7 @@ impl ChannelManager {
                         quota: None,
                         max_concurrent: c.max_concurrent,
                         api_keys: c.api_keys.clone(),
+                        excluded_models: c.excluded_models.clone(),
                     })
                 })
                 .collect()
@@ -324,6 +325,7 @@ mod tests {
             account_group: None,
             max_concurrent: None,
             api_keys: vec![],
+            excluded_models: vec![],
         }
     }
 

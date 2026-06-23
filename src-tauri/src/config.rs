@@ -281,6 +281,10 @@ pub struct ChannelConfig {
     /// Additional API keys for round-robin rotation across a single channel.
     #[serde(default)]
     pub api_keys: Vec<String>,
+    /// Glob patterns for models to exclude from this channel (e.g., ["*-preview", "*flash*"]).
+    /// When non-empty, requests for matching models skip this channel.
+    #[serde(default)]
+    pub excluded_models: Vec<String>,
 }
 
 /// Per-channel quota polling configuration.

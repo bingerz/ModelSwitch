@@ -50,6 +50,7 @@ pub(crate) async fn apply_config_reload(
             updated.cooldown_minutes = cc.cooldown_minutes;
             updated.name = cc.name.clone();
             updated.provider = crate::channel::Provider::from_str(&cc.provider);
+            updated.excluded_models = cc.excluded_models.clone();
             new_channels.push(updated);
         } else {
             // New channel — create it
@@ -213,6 +214,7 @@ mod tests {
             account_group: None,
             max_concurrent: None,
             api_keys: vec![],
+            excluded_models: vec![],
         }
     }
 
