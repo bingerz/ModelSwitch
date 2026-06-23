@@ -157,18 +157,31 @@ export function FormFields({
             <label className="form-field">
               <span>{credentialType === "api_key" ? t("channels.apiKey") : t("channels.cookie")}</span>
               <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
-                <input
-                  type="password"
-                  value={credentialValue}
-                  onChange={(e) => setCredentialValue(e.target.value)}
-                  placeholder={
-                    credentialPlaceholder ||
-                    (credentialType === "api_key"
-                      ? t("channels.enterApiKey")
-                      : t("channels.enterCookie"))
-                  }
-                  style={{ flex: 1 }}
-                />
+                {credentialType === "web_session" ? (
+                  <textarea
+                    value={credentialValue}
+                    onChange={(e) => setCredentialValue(e.target.value)}
+                    placeholder={
+                      credentialPlaceholder || t("channels.enterCookie")
+                    }
+                    style={{
+                      flex: 1,
+                      minHeight: "60px",
+                      fontFamily: "monospace",
+                      fontSize: "var(--text-xs)",
+                    }}
+                  />
+                ) : (
+                  <input
+                    type="password"
+                    value={credentialValue}
+                    onChange={(e) => setCredentialValue(e.target.value)}
+                    placeholder={
+                      credentialPlaceholder || t("channels.enterApiKey")
+                    }
+                    style={{ flex: 1 }}
+                  />
+                )}
                 {apiKeyUrl && (
                   <a
                     href={apiKeyUrl}
@@ -193,6 +206,11 @@ export function FormFields({
                 )}
               </div>
             </label>
+            {credentialType === "web_session" && !onWebViewLogin && (
+              <div className="form-hint">
+                {t("channels.webSessionHint")}
+              </div>
+            )}
           </>
         )}
         {apiFormats && onApiFormatChange && (

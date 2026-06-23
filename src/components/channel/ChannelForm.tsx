@@ -122,7 +122,7 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
     setError(null);
     const validationError = validateChannelForm({ name, baseUrl });
     if (validationError) {
-      setError(validationError);
+      setError(t(validationError));
       return;
     }
     if (costPerToken && parseFloat(costPerToken) <= 0) {

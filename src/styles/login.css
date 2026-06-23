@@ -59,6 +59,13 @@
   text-align: center;
 }
 
+.login-warning {
+  width: 100%;
+  font-size: var(--text-xs);
+  color: var(--color-warning);
+  text-align: center;
+}
+
 .login-button {
   width: 100%;
   padding: var(--space-3);

@@ -55,13 +55,6 @@ export function statusKey(status: McpServerStatus): string {
   return "stopped";
 }
 
-export function statusLabel(status: McpServerStatus): string {
-  if (status === "stopped") return "Stopped";
-  if (statusIsRunning(status)) return `Running (${statusToolCount(status)} tools)`;
-  const errMsg = statusErrorMessage(status);
-  return errMsg ? `Error: ${truncate(errMsg, 50)}` : "Error";
-}
-
 // ─── Text Helpers ───────────────────────────────────────
 
 export function truncate(s: string, max: number): string {

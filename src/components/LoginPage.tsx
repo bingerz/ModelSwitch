@@ -1,10 +1,18 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 export function LoginPage({ onSuccess }: { onSuccess: () => void }) {
   const { t } = useTranslation();
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
+  const [expiredMsg, setExpiredMsg] = useState(false);
+
+  useEffect(() => {
+    if (sessionStorage.getItem("auth_expired") === "1") {
+      sessionStorage.removeItem("auth_expired");
+      setExpiredMsg(true);
+    }
+  }, []);
 
   const handleLogin = async () => {
     // Store token temporarily and test against gateway
@@ -14,9 +22,14 @@ export function LoginPage({ onSuccess }: { onSuccess: () => void }) {
       const { request } = await import("../lib/api");
       await request("/api/gateway/info");
       onSuccess();
-    } catch {
+    } catch (err) {
       localStorage.removeItem("admin_token");
-      setError(t("login.error"));
+      if (err instanceof TypeError && err.message.includes("fetch")) {
+        // Network error — can't reach the gateway
+        setError(t("login.networkError"));
+      } else {
+        setError(t("login.error"));
+      }
     }
   };
 
@@ -34,6 +47,7 @@ export function LoginPage({ onSuccess }: { onSuccess: () => void }) {
           onKeyDown={(e) => e.key === "Enter" && handleLogin()}
           autoFocus
         />
+        {expiredMsg && <div className="login-warning">{t("login.sessionExpired")}</div>}
         {error && <div className="login-error">{error}</div>}
         <button className="login-button" onClick={handleLogin}>
           {t("login.button")}

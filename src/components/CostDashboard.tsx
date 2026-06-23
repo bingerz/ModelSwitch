@@ -86,7 +86,9 @@ export function CostDashboard() {
       <div className="cost-tier-bars">
         {[1, 2, 3].map((priority) => {
           const data = stats.priority_breakdown.find((tier) => tier.priority === priority);
-          const meta = PRIORITY_TIERS[priority] || { label: t(`channels.priority${priority}Label`), desc: "", color: "var(--color-text-muted)" };
+          const meta = PRIORITY_TIERS[priority] || { color: "var(--color-text-muted)" };
+          const label = t(`channels.priority${priority}Label`);
+          const desc = t(`channels.priority${priority}Desc`);
           const requests = data?.requests || 0;
           const cost = data?.estimated_cost || 0;
           const pct = maxTierRequests > 0 ? (requests / maxTierRequests) * 100 : 0;
@@ -96,9 +98,9 @@ export function CostDashboard() {
               <div className="cost-tier-label">
                 <span className="cost-tier-dot" style={{ background: meta.color }} />
                 <span>
-                  <strong>{meta.label}</strong>
+                  <strong>{label}</strong>
                   <br />
-                  <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-muted)" }}>{meta.desc}</span>
+                  <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-muted)" }}>{desc}</span>
                 </span>
               </div>
               <div className="cost-tier-bar-track">

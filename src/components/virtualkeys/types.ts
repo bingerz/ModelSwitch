@@ -43,18 +43,30 @@ export function centsToDollars(cents: number | null): string {
 export interface BudgetBar {
   pct: number;
   color: string;
+  /** Formatted spend amount (e.g. "$1.23"). */
+  spendLabel: string;
+  /**
+   * Pre-formatted label for the limited case (`spend / budget`).
+   * When `unlimited` is true, callers must compose the label themselves
+   * using `spendLabel` and the translated `virtualKeys.unlimited` key.
+   */
   label: string;
+  /** True when there is no budget cap. */
+  unlimited: boolean;
 }
 
 export function computeBudgetBar(
   spendCents: number,
   budgetCents: number | null,
 ): BudgetBar {
+  const spendLabel = formatCents(spendCents);
   if (budgetCents === null || budgetCents <= 0) {
     return {
       pct: 0,
       color: "var(--color-text-muted)",
-      label: `${formatCents(spendCents)} / unlimited`,
+      spendLabel,
+      label: spendLabel,
+      unlimited: true,
     };
   }
   const pct = Math.min(100, (spendCents / budgetCents) * 100);
@@ -64,6 +76,8 @@ export function computeBudgetBar(
   return {
     pct,
     color,
-    label: `${formatCents(spendCents)} / ${formatCents(budgetCents)}`,
+    spendLabel,
+    label: `${spendLabel} / ${formatCents(budgetCents)}`,
+    unlimited: false,
   };
 }

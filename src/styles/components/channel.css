@@ -249,6 +249,13 @@
   margin-bottom: var(--space-3);
 }
 
+.form-hint {
+  grid-column: span 2;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
 .form-divider {
   display: flex;
   align-items: center;

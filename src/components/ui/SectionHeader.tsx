@@ -1,4 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { RefreshCw } from "lucide-react";
 
 interface SectionHeaderProps {
@@ -16,6 +17,7 @@ export function SectionHeader({
   refreshing,
   action,
 }: SectionHeaderProps) {
+  const { t } = useTranslation();
   return (
     <div className="ui-section-header">
       <div className="ui-section-title-group">
@@ -31,7 +33,7 @@ export function SectionHeader({
             disabled={refreshing}
           >
             <RefreshCw size={14} className={refreshing ? "ui-spin" : ""} />
-            <span>Refresh</span>
+            <span>{t("common.refresh")}</span>
           </button>
         )}
       </div>

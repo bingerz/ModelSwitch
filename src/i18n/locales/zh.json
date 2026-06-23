@@ -98,7 +98,9 @@
     "tokenPlaceholder": "管理员令牌",
     "button": "登录",
     "error": "令牌无效或网关不可达",
-    "hint": "输入网关配置中的管理员令牌。如果未配置令牌，请留空。"
+    "hint": "输入网关配置中的管理员令牌。如果未配置令牌，请留空。",
+    "sessionExpired": "会话已过期，请重新登录。",
+    "networkError": "无法连接到网关，请检查网络连接。"
   },
   "status": {
     "gateway": "网关",
@@ -205,7 +207,8 @@
     "openaiChat": "OpenAI Chat",
     "geminiFormat": "Gemini",
     "credentialApiKey": "API 密钥",
-    "credentialWebSession": "Web 会话"
+    "credentialWebSession": "Web 会话",
+    "webSessionHint": "在 Web 控制台模式下，请直接将您的会话 Cookie 粘贴到上方输入框中。"
   },
   "virtualKeys": {
     "title": "虚拟密钥",

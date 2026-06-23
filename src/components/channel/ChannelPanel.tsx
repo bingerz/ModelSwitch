@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { api, type Channel, PRIORITY_TIERS } from "../../lib/api";
+import { api, type Channel } from "../../lib/api";
 import { useQuota } from "../../hooks/useQuota";
 import type { QuotaInfo } from "../../lib/api";
 import { useToast } from "../Toast";
@@ -186,10 +186,8 @@ export function ChannelPanel() {
 
       <div className="tiers-container">
         {allPriorities.map((priority) => {
-          const meta = PRIORITY_TIERS[priority] || {
-            label: t(`channels.priority${priority}Label`),
-            desc: t(`channels.priority${priority}Desc`),
-          };
+          const tierLabel = t(`channels.priority${priority}Label`);
+          const tierDesc = t(`channels.priority${priority}Desc`);
           const channelsInPriority = priorities.get(priority) || [];
           return (
             <div
@@ -203,8 +201,8 @@ export function ChannelPanel() {
               onDrop={() => handleDrop(priority)}
             >
               <div className="tier-header">
-                <span className="tier-label">{meta.label}</span>
-                <span className="tier-desc">{meta.desc}</span>
+                <span className="tier-label">{tierLabel}</span>
+                <span className="tier-desc">{tierDesc}</span>
                 <span className="tier-count">{channelsInPriority.length}</span>
               </div>
               {channelsInPriority.length === 0 ? (

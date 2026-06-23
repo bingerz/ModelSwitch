@@ -29,6 +29,12 @@ export function VirtualKeyCard({
     vk.spend.this_month.cents,
     vk.monthly_budget_cents,
   );
+  const dailyLabel = dailyBar.unlimited
+    ? `${dailyBar.spendLabel} / ${t("virtualKeys.unlimited")}`
+    : dailyBar.label;
+  const monthlyLabel = monthlyBar.unlimited
+    ? `${monthlyBar.spendLabel} / ${t("virtualKeys.unlimited")}`
+    : monthlyBar.label;
 
   return (
     <div className="vk-card">
@@ -78,7 +84,7 @@ export function VirtualKeyCard({
         <div className="vk-budget-row">
           <div className="vk-budget-label">
             <span className="vk-budget-window">{t("common.today")}</span>
-            <span className="vk-budget-value">{dailyBar.label}</span>
+            <span className="vk-budget-value">{dailyLabel}</span>
           </div>
           <div className="vk-budget-bar">
             <div
@@ -96,7 +102,7 @@ export function VirtualKeyCard({
             <span className="vk-budget-window">
               {t("virtualKeys.monthLabel", { month: vk.spend.this_month.month })}
             </span>
-            <span className="vk-budget-value">{monthlyBar.label}</span>
+            <span className="vk-budget-value">{monthlyLabel}</span>
           </div>
           <div className="vk-budget-bar">
             <div

@@ -51,7 +51,7 @@ export function EditChannelForm({
     setError(null);
     const validationError = validateChannelForm({ name, baseUrl });
     if (validationError) {
-      setError(validationError);
+      setError(t(validationError));
       return;
     }
     setSubmitting(true);

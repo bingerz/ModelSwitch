@@ -6,7 +6,7 @@ import {
   statusErrorMessage,
   statusIsRunning,
   statusKey,
-  statusLabel,
+  statusToolCount,
   truncate,
 } from "./types";
 
@@ -39,6 +39,11 @@ export function McpServerCard({
   const sKey = statusKey(server.status);
   const isRunning = statusIsRunning(server.status);
   const errMsg = statusErrorMessage(server.status);
+  const statusText = isRunning
+    ? t("mcp.runningTools", { count: statusToolCount(server.status) })
+    : errMsg
+      ? t("mcp.errorLabel", { message: truncate(errMsg, 50) })
+      : t(sKey === "error" ? "mcp.error" : "mcp.stopped");
 
   return (
     <div className="mcp-server-card">
@@ -54,7 +59,7 @@ export function McpServerCard({
           {!server.expose_tools && <span className="meta-tag">{t("mcp.hiddenTools")}</span>}
         </div>
         <span className={`mcp-status-badge mcp-status-${sKey}`}>
-          {statusLabel(server.status)}
+          {statusText}
         </span>
       </div>
 
@@ -64,7 +69,9 @@ export function McpServerCard({
           <span className="meta-tag mono">{argsToText(server.args)}</span>
         )}
         {Object.keys(server.env).length > 0 && (
-          <span className="meta-tag">{Object.keys(server.env).length} env vars</span>
+          <span className="meta-tag">
+            {t("common.envVars", { count: Object.keys(server.env).length })}
+          </span>
         )}
       </div>
 

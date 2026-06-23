@@ -98,7 +98,9 @@
     "tokenPlaceholder": "Admin Token",
     "button": "Login",
     "error": "Invalid token or gateway not reachable",
-    "hint": "Enter the admin token from your gateway config. Leave empty if no token is configured."
+    "hint": "Enter the admin token from your gateway config. Leave empty if no token is configured.",
+    "sessionExpired": "Your session has expired. Please log in again.",
+    "networkError": "Cannot connect to the gateway. Please check your network connection."
   },
   "status": {
     "gateway": "Gateway",
@@ -205,7 +207,8 @@
     "openaiChat": "OpenAI Chat",
     "geminiFormat": "Gemini",
     "credentialApiKey": "API Key",
-    "credentialWebSession": "Web Session"
+    "credentialWebSession": "Web Session",
+    "webSessionHint": "In web console mode, paste your session cookies directly into the field above."
   },
   "virtualKeys": {
     "title": "Virtual Keys",

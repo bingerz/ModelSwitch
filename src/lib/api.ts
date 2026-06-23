@@ -148,6 +148,7 @@ export async function request<T>(path: string, options?: RequestInit): Promise<T
   if (res.status === 401) {
     // Token invalid or expired — clear and redirect to login
     localStorage.removeItem("admin_token");
+    sessionStorage.setItem("auth_expired", "1");
     window.location.reload();
     throw new Error("Unauthorized");
   }
@@ -195,17 +196,17 @@ export async function invokeTauri<T>(cmd: string, args?: Record<string, unknown>
   return tauriInvoke(cmd, args);
 }
 
-export const PRIORITY_TIERS: Record<number, { label: string; desc: string; color: string }> = {
-  1: { label: "Priority 1", desc: "Free / Subscription", color: "var(--color-success)" },
-  2: { label: "Priority 2", desc: "Economy API", color: "var(--color-warning)" },
-  3: { label: "Priority 3", desc: "Official API", color: "var(--color-danger)" },
+export const PRIORITY_TIERS: Record<number, { color: string }> = {
+  1: { color: "var(--color-success)" },
+  2: { color: "var(--color-warning)" },
+  3: { color: "var(--color-danger)" },
 };
 
 export function validateChannelForm(fields: { name: string; baseUrl: string }): string | null {
-  if (!fields.name.trim()) return "Name is required";
-  if (!fields.baseUrl.trim()) return "Base URL is required";
+  if (!fields.name.trim()) return "channels.nameRequired";
+  if (!fields.baseUrl.trim()) return "channels.baseUrlRequired";
   if (!fields.baseUrl.startsWith("http://") && !fields.baseUrl.startsWith("https://"))
-    return "Base URL must start with http:// or https://";
+    return "channels.baseUrlInvalid";
   return null;
 }
 
@@ -362,6 +363,7 @@ export const api = {
     });
     if (res.status === 401) {
       localStorage.removeItem("admin_token");
+      sessionStorage.setItem("auth_expired", "1");
       window.location.reload();
       throw new Error("Unauthorized");
     }
