@@ -21,6 +21,8 @@ pub struct CreateVirtualKeyRequest {
     pub monthly_budget_cents: Option<u64>,
     #[serde(default)]
     pub allowed_models: Option<Vec<String>>,
+    #[serde(default)]
+    pub denied_models: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -35,6 +37,8 @@ pub struct UpdateVirtualKeyRequest {
     pub enabled: Option<bool>,
     #[serde(default)]
     pub allowed_models: Option<Option<Vec<String>>>,
+    #[serde(default)]
+    pub denied_models: Option<Vec<String>>,
 }
 
 /// Response shape for the list endpoint -- never exposes `key_hash`.
@@ -49,6 +53,7 @@ pub struct VirtualKeyResponse {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub spend: crate::virtual_key::VirtualKeySpend,
     pub allowed_models: Option<Vec<String>>,
+    pub denied_models: Vec<String>,
 }
 
 impl From<&crate::virtual_key::VirtualKey> for VirtualKeyResponse {
@@ -63,6 +68,7 @@ impl From<&crate::virtual_key::VirtualKey> for VirtualKeyResponse {
             created_at: k.created_at,
             spend: k.spend.clone(),
             allowed_models: k.allowed_models.clone(),
+            denied_models: k.denied_models.clone(),
         }
     }
 }
@@ -116,6 +122,7 @@ pub async fn create_virtual_key(
             req.daily_budget_cents,
             req.monthly_budget_cents,
             req.allowed_models,
+            req.denied_models,
         )
         .await;
     persist_virtual_keys(&state).await;
@@ -130,6 +137,7 @@ pub async fn create_virtual_key(
         "created_at": vk.created_at,
         "spend": vk.spend,
         "allowed_models": vk.allowed_models,
+        "denied_models": vk.denied_models,
     });
     Ok(Json(ApiResponse::ok(body)))
 }
@@ -150,6 +158,7 @@ pub async fn update_virtual_key(
             req.monthly_budget_cents,
             req.enabled,
             req.allowed_models,
+            req.denied_models,
         )
         .await
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Virtual key not found"))?;
@@ -195,6 +204,7 @@ mod tests {
             daily_budget_cents: Some(1000),
             monthly_budget_cents: Some(30000),
             allowed_models: None,
+            denied_models: vec![],
         };
         let result = create_virtual_key(State(state), Json(req)).await;
         assert!(result.is_ok());
@@ -212,6 +222,7 @@ mod tests {
             daily_budget_cents: Some(500),
             monthly_budget_cents: Some(10000),
             allowed_models: None,
+            denied_models: vec![],
         };
         let create_result = create_virtual_key(State(state.clone()), Json(req))
             .await

@@ -129,6 +129,7 @@ pub(crate) fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppSt
             stream_bootstrap_retries: 0,
             disable_image_generation: false,
             model_groups: HashMap::new(),
+            model_pricing: HashMap::new(),
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),

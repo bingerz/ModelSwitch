@@ -162,6 +162,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             stream_bootstrap_retries: config.gateway.stream_bootstrap_retries,
             disable_image_generation: config.gateway.disable_image_generation,
             model_groups: config.gateway.model_groups.clone(),
+            model_pricing: config.gateway.model_pricing.clone(),
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),

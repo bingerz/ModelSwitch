@@ -22,14 +22,14 @@ use super::{estimate_tokens, make_log, FailureReason, RequestFormat};
 
 /// Check if a model is allowed for a virtual key, with model group awareness.
 /// A model is allowed if:
-/// 1. It passes the existing `is_model_allowed` check (direct or prefix match)
+/// 1. It passes the existing `is_model_allowed` check (glob match or None = all)
 /// 2. OR it is a member of a group whose name is in `allowed_models`
 fn is_model_allowed_with_groups(
     virtual_key: &crate::virtual_key::VirtualKey,
     model: &str,
     model_groups: &HashMap<String, Vec<String>>,
 ) -> bool {
-    // Direct check first (handles None = all allowed, and prefix matching)
+    // Direct check first (handles None = all allowed, and glob matching)
     if virtual_key.is_model_allowed(model) {
         return true;
     }
@@ -40,7 +40,7 @@ fn is_model_allowed_with_groups(
             if let Some(group_models) = model_groups.get(allowed_entry) {
                 if group_models
                     .iter()
-                    .any(|gm| model == gm || model.starts_with(gm))
+                    .any(|gm| crate::channel::matches_glob(gm, model))
                 {
                     return true;
                 }
@@ -243,7 +243,7 @@ pub(crate) async fn dispatch(
 
     let vk_id = extract_virtual_key_id(original_headers);
 
-    // Check virtual key model whitelist (with model group awareness)
+    // Check virtual key model whitelist (with model group awareness) and denylist
     if let Some(vk) = vk_id {
         if let Some(virtual_key) = state.billing.virtual_key_store.get(vk).await {
             if !is_model_allowed_with_groups(&virtual_key, &original_model, &state.gateway.model_groups) {
@@ -252,6 +252,16 @@ pub(crate) async fn dispatch(
                         "message": format!("Model '{}' is not allowed for this virtual key", original_model),
                         "type": "model_not_allowed",
                         "code": "virtual_key_model_not_allowed"
+                    }
+                });
+                return json_response(reqwest::StatusCode::FORBIDDEN, error_body.to_string());
+            }
+            if virtual_key.is_model_denied(&original_model) {
+                let error_body = serde_json::json!({
+                    "error": {
+                        "message": format!("Model '{}' is denied for this virtual key", original_model),
+                        "type": "model_denied",
+                        "code": "virtual_key_model_denied"
                     }
                 });
                 return json_response(reqwest::StatusCode::FORBIDDEN, error_body.to_string());

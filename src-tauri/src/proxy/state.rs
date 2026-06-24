@@ -38,6 +38,8 @@ pub struct ProxyParams {
     /// Named model groups for routing and access control.
     /// Key = group name, Value = list of model names in the group.
     pub model_groups: HashMap<String, Vec<String>>,
+    /// Per-model pricing overrides. Key = model name.
+    pub model_pricing: HashMap<String, crate::config::ModelPricing>,
 }
 
 /// Router state (session affinity, active request tracking, latency tracking).

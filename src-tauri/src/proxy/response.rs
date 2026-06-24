@@ -169,13 +169,18 @@ pub(super) async fn handle_streaming_success(
     );
 
     let est_tokens = estimate_tokens(body, true);
-    let estimated_cost = channel
-        .calculate_cost(Some(est_tokens / 2), Some(est_tokens / 2))
-        .or_else(|| {
-            channel
-                .cost_per_token
-                .map(|rate| rate * est_tokens as f64 / 1000.0)
-        });
+    // Determine effective rates: model_pricing overrides channel rates.
+    let mp = state.gateway.model_pricing.get(current_model);
+    let eff_in = mp.and_then(|p| p.input_cost_per_mtok).or(channel.input_cost_per_mtok);
+    let eff_out = mp.and_then(|p| p.output_cost_per_mtok).or(channel.output_cost_per_mtok);
+    let estimated_cost = if eff_in.is_some() || eff_out.is_some() {
+        let half = (est_tokens / 2) as f64;
+        Some(half / 1_000_000.0 * eff_in.unwrap_or(0.0) + half / 1_000_000.0 * eff_out.unwrap_or(0.0))
+    } else {
+        channel
+            .cost_per_token
+            .map(|rate| rate * est_tokens as f64 / 1000.0)
+    };
     let log_id = Uuid::new_v4();
     let mut log_entry = make_log(
         current_model,
@@ -221,11 +226,10 @@ pub(super) async fn handle_streaming_success(
         let bg_provider_budgets = Arc::clone(&state.billing.provider_budgets);
         let bg_channel_id = channel.id;
         let bg_provider_name = channel.provider.as_str().to_string();
-        let bg_cost_fn =
-            channel.input_cost_per_mtok.is_some() || channel.output_cost_per_mtok.is_some();
         let bg_input_cost = channel.input_cost_per_mtok;
         let bg_output_cost = channel.output_cost_per_mtok;
         let bg_cost_per_token = channel.cost_per_token;
+        let bg_model_pricing = state.gateway.model_pricing.get(current_model).cloned();
         let bg_vk_id = vk_id;
         let bg_reserved_cents = reserved_cents;
         let bg_request_cache = Arc::clone(&state.cache.request_cache);
@@ -293,13 +297,16 @@ pub(super) async fn handle_streaming_success(
             let input_tokens = token_usage.input_tokens;
             let output_tokens = token_usage.output_tokens;
             if input_tokens.is_some() || output_tokens.is_some() {
-                // Re-calculate cost using real tokens
-                let real_cost = if bg_cost_fn {
+                // Re-calculate cost using real tokens.
+                // Model-level pricing overrides channel rates when present.
+                let mp_in = bg_model_pricing.as_ref().and_then(|p| p.input_cost_per_mtok);
+                let mp_out = bg_model_pricing.as_ref().and_then(|p| p.output_cost_per_mtok);
+                let eff_in = mp_in.or(bg_input_cost);
+                let eff_out = mp_out.or(bg_output_cost);
+                let real_cost = if eff_in.is_some() || eff_out.is_some() {
                     let in_tok = input_tokens.unwrap_or(0) as f64;
                     let out_tok = output_tokens.unwrap_or(0) as f64;
-                    let in_rate = bg_input_cost.unwrap_or(0.0);
-                    let out_rate = bg_output_cost.unwrap_or(0.0);
-                    Some(in_tok / 1_000_000.0 * in_rate + out_tok / 1_000_000.0 * out_rate)
+                    Some(in_tok / 1_000_000.0 * eff_in.unwrap_or(0.0) + out_tok / 1_000_000.0 * eff_out.unwrap_or(0.0))
                 } else {
                     bg_cost_per_token.map(|rate_per_1k| {
                         ((input_tokens.unwrap_or(0) + output_tokens.unwrap_or(0)) as f64 / 1000.0)
@@ -523,12 +530,22 @@ pub(super) async fn handle_json_success(
     let token_usage = extract_usage(response_str);
     let input_tokens = token_usage.input_tokens;
     let output_tokens = token_usage.output_tokens;
-    let estimated_cost = channel
-        .calculate_cost(input_tokens, output_tokens)
-        .or_else(|| {
-            let est = estimate_tokens(body, false);
-            channel.calculate_cost(Some(est / 2), Some(est / 2))
-        });
+    // Determine effective rates: model_pricing overrides channel rates.
+    let mp = state.gateway.model_pricing.get(current_model);
+    let eff_in = mp.and_then(|p| p.input_cost_per_mtok).or(channel.input_cost_per_mtok);
+    let eff_out = mp.and_then(|p| p.output_cost_per_mtok).or(channel.output_cost_per_mtok);
+    let estimated_cost = if eff_in.is_some() || eff_out.is_some() {
+        let in_tok = input_tokens.unwrap_or(0) as f64;
+        let out_tok = output_tokens.unwrap_or(0) as f64;
+        Some(in_tok / 1_000_000.0 * eff_in.unwrap_or(0.0) + out_tok / 1_000_000.0 * eff_out.unwrap_or(0.0))
+    } else {
+        channel
+            .calculate_cost(input_tokens, output_tokens)
+            .or_else(|| {
+                let est = estimate_tokens(body, false);
+                channel.calculate_cost(Some(est / 2), Some(est / 2))
+            })
+    };
     // Cache non-streaming responses (inline — coalesced waiters depend on
     // ordering: insert must precede complete()).
     state.cache.request_cache.insert(

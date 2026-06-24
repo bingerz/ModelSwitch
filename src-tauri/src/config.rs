@@ -221,9 +221,25 @@ pub struct GatewayConfig {
     /// access to all models in the group.
     #[serde(default)]
     pub model_groups: HashMap<String, Vec<String>>,
+    /// Per-model pricing overrides. Key = model name. When an entry exists,
+    /// its `input_cost_per_mtok` / `output_cost_per_mtok` override the
+    /// channel-level rates for cost calculation.
+    #[serde(default)]
+    pub model_pricing: HashMap<String, ModelPricing>,
     /// TLS configuration for native HTTPS binding.
     #[serde(default)]
     pub tls: TlsConfig,
+}
+
+/// Per-model pricing overrides. When present, these rates override the
+/// channel-level `input_cost_per_mtok` / `output_cost_per_mtok` for the
+/// matching model key.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ModelPricing {
+    #[serde(default)]
+    pub input_cost_per_mtok: Option<f64>,
+    #[serde(default)]
+    pub output_cost_per_mtok: Option<f64>,
 }
 
 /// Per-model retry configuration overrides.
@@ -581,6 +597,7 @@ impl Default for GatewayConfig {
             disable_cooling: false,
             disable_image_generation: false,
             model_groups: HashMap::new(),
+            model_pricing: HashMap::new(),
             tls: TlsConfig::default(),
         }
     }
