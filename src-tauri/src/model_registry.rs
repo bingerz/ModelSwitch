@@ -1,5 +1,25 @@
 use std::collections::HashMap;
+use std::net::IpAddr;
 use url::Url;
+
+/// Check if an IP address is in a private/reserved range.
+fn is_private_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private() // covers 10.x, 172.16-31.x, 192.168.x
+                || v4.is_link_local() // covers 169.254.x including cloud metadata
+                || v4.is_unspecified() // 0.0.0.0
+                || v4.is_broadcast() // 255.255.255.255
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback() // ::1
+                || v6.is_unspecified() // ::
+                || (v6.segments()[0] & 0xfe00) == 0xfc00 // unique local fc00::/7
+                || (v6.segments()[0] & 0xffc0) == 0xfe80 // link-local fe80::/10
+        }
+    }
+}
 
 /// Supported thinking parameter formats for a model family.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -220,14 +240,16 @@ pub async fn refresh_from_endpoint(endpoint: &str, api_key: &str) -> anyhow::Res
         anyhow::bail!("models_endpoint must use HTTPS");
     }
     let host = parsed.host_str().unwrap_or("");
-    if host == "localhost"
-        || host == "127.0.0.1"
-        || host == "0.0.0.0"
-        || host.starts_with("10.")
-        || host.starts_with("192.168.")
-        || host.starts_with("172.16.")
-    {
-        anyhow::bail!("models_endpoint must not point to a private IP");
+    // Check if the hostname is a literal IP address
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_private_ip(&ip) {
+            anyhow::bail!("models_endpoint must not point to a private/reserved IP");
+        }
+    }
+    // For hostnames, also check common dangerous patterns
+    let host_lower = host.to_lowercase();
+    if host_lower == "localhost" || host_lower == "metadata.google.internal" {
+        anyhow::bail!("models_endpoint must not point to a private/internal host");
     }
 
     let client = reqwest::Client::builder()
@@ -239,13 +261,17 @@ pub async fn refresh_from_endpoint(endpoint: &str, api_key: &str) -> anyhow::Res
         .get(endpoint)
         .header("Authorization", format!("Bearer {}", api_key))
         .send()
-        .await?;
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to fetch models from endpoint: {}", e))?;
 
     if !resp.status().is_success() {
         anyhow::bail!("Failed to fetch models: HTTP {}", resp.status());
     }
 
-    let body: serde_json::Value = resp.json().await?;
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to parse models response: {}", e))?;
     let models = body["data"]
         .as_array()
         .map(|arr| {
@@ -352,5 +378,20 @@ mod tests {
         assert!(caps.supports_thinking);
         assert_eq!(caps.thinking_format, ThinkingFormat::Budget);
         assert_eq!(caps.max_context_tokens, Some(1_000_000));
+    }
+
+    #[test]
+    fn is_private_ip_detects_dangerous_ranges() {
+        assert!(is_private_ip(&"127.0.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"10.0.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"172.16.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"172.31.255.255".parse().unwrap()));
+        assert!(!is_private_ip(&"172.32.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"192.168.1.1".parse().unwrap()));
+        assert!(is_private_ip(&"169.254.169.254".parse().unwrap()));
+        assert!(is_private_ip(&"0.0.0.0".parse().unwrap()));
+        assert!(is_private_ip(&"::1".parse().unwrap()));
+        assert!(!is_private_ip(&"8.8.8.8".parse().unwrap()));
+        assert!(!is_private_ip(&"1.1.1.1".parse().unwrap()));
     }
 }
