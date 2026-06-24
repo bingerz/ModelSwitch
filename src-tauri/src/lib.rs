@@ -9,6 +9,7 @@ mod mcp;
 pub mod metrics;
 mod middleware;
 pub mod model_registry;
+pub mod notification;
 pub mod persisted_store;
 mod provider_budget;
 mod proxy;

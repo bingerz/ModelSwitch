@@ -229,6 +229,9 @@ pub struct GatewayConfig {
     /// TLS configuration for native HTTPS binding.
     #[serde(default)]
     pub tls: TlsConfig,
+    /// Notification/alert configuration for budget thresholds and channel events.
+    #[serde(default)]
+    pub notification: crate::notification::NotificationConfig,
 }
 
 /// Per-model pricing overrides. When present, these rates override the
@@ -599,6 +602,7 @@ impl Default for GatewayConfig {
             model_groups: HashMap::new(),
             model_pricing: HashMap::new(),
             tls: TlsConfig::default(),
+            notification: crate::notification::NotificationConfig::default(),
         }
     }
 }
