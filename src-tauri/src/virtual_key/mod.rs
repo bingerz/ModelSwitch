@@ -122,12 +122,13 @@ impl VirtualKey {
     }
 
     /// Check if a model is explicitly denied for this key.
-    /// Uses prefix matching (backward compat) and glob matching against the
-    /// `denied_models` patterns. An empty list denies nothing.
+    /// Uses glob matching only against the `denied_models` patterns.
+    /// To deny a model family, use explicit glob patterns like `gpt-4*`.
+    /// An empty list denies nothing.
     pub fn is_model_denied(&self, model: &str) -> bool {
-        self.denied_models.iter().any(|pattern| {
-            model.starts_with(pattern) || crate::channel::matches_glob(pattern, model)
-        })
+        self.denied_models
+            .iter()
+            .any(|pattern| crate::channel::matches_glob(pattern, model))
     }
 }
 
@@ -924,5 +925,66 @@ mod tests {
         assert!(vk.is_model_allowed("claude-3-opus"));
         assert!(!vk.is_model_allowed("gemini-pro"));
         assert!(!vk.is_model_allowed("llama-2"));
+    }
+
+    #[test]
+    fn is_model_denied_exact_match() {
+        let vk = VirtualKey {
+            id: Uuid::new_v4(),
+            key_hash: "deadbeef".to_string(),
+            key_prefix: "ms-vk-abcdef".to_string(),
+            name: "t".to_string(),
+            daily_budget_cents: None,
+            monthly_budget_cents: None,
+            enabled: true,
+            created_at: Utc::now(),
+            spend: VirtualKeySpend::default(),
+            allowed_models: None,
+            denied_models: vec!["gpt-4".to_string()],
+        };
+        assert!(vk.is_model_denied("gpt-4"));
+        // Prefix matching must NOT apply to denylist — only glob
+        assert!(!vk.is_model_denied("gpt-4o"));
+        assert!(!vk.is_model_denied("gpt-4-turbo"));
+    }
+
+    #[test]
+    fn is_model_denied_glob_pattern() {
+        let vk = VirtualKey {
+            id: Uuid::new_v4(),
+            key_hash: "deadbeef".to_string(),
+            key_prefix: "ms-vk-abcdef".to_string(),
+            name: "t".to_string(),
+            daily_budget_cents: None,
+            monthly_budget_cents: None,
+            enabled: true,
+            created_at: Utc::now(),
+            spend: VirtualKeySpend::default(),
+            allowed_models: None,
+            denied_models: vec!["gpt-4*".to_string()],
+        };
+        assert!(vk.is_model_denied("gpt-4"));
+        assert!(vk.is_model_denied("gpt-4o"));
+        assert!(vk.is_model_denied("gpt-4-turbo"));
+        assert!(!vk.is_model_denied("gpt-3.5"));
+    }
+
+    #[test]
+    fn is_model_denied_empty_list_denies_nothing() {
+        let vk = VirtualKey {
+            id: Uuid::new_v4(),
+            key_hash: "deadbeef".to_string(),
+            key_prefix: "ms-vk-abcdef".to_string(),
+            name: "t".to_string(),
+            daily_budget_cents: None,
+            monthly_budget_cents: None,
+            enabled: true,
+            created_at: Utc::now(),
+            spend: VirtualKeySpend::default(),
+            allowed_models: None,
+            denied_models: vec![],
+        };
+        assert!(!vk.is_model_denied("gpt-4"));
+        assert!(!vk.is_model_denied("claude-3"));
     }
 }
