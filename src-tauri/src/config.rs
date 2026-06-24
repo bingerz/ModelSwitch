@@ -213,6 +213,14 @@ pub struct GatewayConfig {
     /// Currently supports: false, true.
     #[serde(default)]
     pub disable_image_generation: bool,
+    /// Named model groups for routing, access control, and organization.
+    /// Key = group name, Value = list of model names in the group.
+    /// Clients can request a group name (e.g., `"model": "reasoning"`) and the
+    /// gateway resolves it to the first available model in the group.
+    /// Group names can also be used in virtual key `allowed_models` to grant
+    /// access to all models in the group.
+    #[serde(default)]
+    pub model_groups: HashMap<String, Vec<String>>,
     /// TLS configuration for native HTTPS binding.
     #[serde(default)]
     pub tls: TlsConfig,
@@ -488,6 +496,15 @@ fn default_log_max_files() -> usize {
 }
 
 impl GatewayConfig {
+    /// Resolve a model name through groups: if the name matches a group,
+    /// return the group's model list; otherwise return single-element vec.
+    pub fn resolve_model_group(&self, model: &str) -> Vec<String> {
+        if let Some(group) = self.model_groups.get(model) {
+            return group.clone();
+        }
+        vec![model.to_string()]
+    }
+
     /// Returns the effective passthrough headers: configured list if non-empty, otherwise built-in defaults.
     pub fn effective_passthrough_headers(&self) -> Vec<String> {
         if self.passthrough_headers.is_empty() {
@@ -563,6 +580,7 @@ impl Default for GatewayConfig {
             stream_bootstrap_retries: 0,
             disable_cooling: false,
             disable_image_generation: false,
+            model_groups: HashMap::new(),
             tls: TlsConfig::default(),
         }
     }

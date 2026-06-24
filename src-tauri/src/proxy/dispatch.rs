@@ -20,6 +20,37 @@ use super::provider::ProviderAdaptor;
 use super::request_meta::{extract_request_meta, extract_virtual_key_id, RequestMeta};
 use super::{estimate_tokens, make_log, FailureReason, RequestFormat};
 
+/// Check if a model is allowed for a virtual key, with model group awareness.
+/// A model is allowed if:
+/// 1. It passes the existing `is_model_allowed` check (direct or prefix match)
+/// 2. OR it is a member of a group whose name is in `allowed_models`
+fn is_model_allowed_with_groups(
+    virtual_key: &crate::virtual_key::VirtualKey,
+    model: &str,
+    model_groups: &HashMap<String, Vec<String>>,
+) -> bool {
+    // Direct check first (handles None = all allowed, and prefix matching)
+    if virtual_key.is_model_allowed(model) {
+        return true;
+    }
+
+    // Check if any group in allowed_models contains this model
+    if let Some(ref allowed) = virtual_key.allowed_models {
+        for allowed_entry in allowed {
+            if let Some(group_models) = model_groups.get(allowed_entry) {
+                if group_models
+                    .iter()
+                    .any(|gm| model == gm || model.starts_with(gm))
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
 /// RAII guard that increments `active_requests` on creation and decrements on drop.
 /// Ensures the gauge is always balanced regardless of which return path dispatch takes.
 struct ActiveRequestGuard;
@@ -199,12 +230,23 @@ pub(crate) async fn dispatch(
         .cloned()
         .unwrap_or(original_model);
 
+    // Check if the requested model is a group name. If so, the fallback chain
+    // will be expanded to the group's member models so the dispatch loop tries
+    // each until one has an available channel.
+    let is_group_request = state.gateway.model_groups.contains_key(&original_model);
+    if is_group_request {
+        tracing::info!(
+            model = %original_model,
+            "Model group requested — will expand to group members in fallback chain"
+        );
+    }
+
     let vk_id = extract_virtual_key_id(original_headers);
 
-    // Check virtual key model whitelist
+    // Check virtual key model whitelist (with model group awareness)
     if let Some(vk) = vk_id {
         if let Some(virtual_key) = state.billing.virtual_key_store.get(vk).await {
-            if !virtual_key.is_model_allowed(&original_model) {
+            if !is_model_allowed_with_groups(&virtual_key, &original_model, &state.gateway.model_groups) {
                 let error_body = serde_json::json!({
                     "error": {
                         "message": format!("Model '{}' is not allowed for this virtual key", original_model),
@@ -265,9 +307,20 @@ pub(crate) async fn dispatch(
         return cached;
     }
 
-    // Resolve fallback chain: [original_model, fallback1, fallback2, ...]
-    let mut fallback_chain =
-        router::fallback::resolve_fallback_chain(&original_model, &state.gateway.model_fallbacks);
+    // Resolve fallback chain. If the requested model is a group name, expand
+    // to the group's member models — the dispatch loop tries each in order
+    // until one has an available channel. Otherwise use the normal chain:
+    // [original_model, fallback1, fallback2, ...]
+    let mut fallback_chain = if is_group_request {
+        state
+            .gateway
+            .model_groups
+            .get(&original_model)
+            .cloned()
+            .unwrap_or_else(|| vec![original_model.clone()])
+    } else {
+        router::fallback::resolve_fallback_chain(&original_model, &state.gateway.model_fallbacks)
+    };
 
     // Append context window fallbacks to the chain. When a request fails due
     // to context length exceeded, the dispatch loop moves to the next model

@@ -35,6 +35,9 @@ pub struct ProxyParams {
     pub stream_bootstrap_retries: u32,
     /// When true, image generation endpoints return 404.
     pub disable_image_generation: bool,
+    /// Named model groups for routing and access control.
+    /// Key = group name, Value = list of model names in the group.
+    pub model_groups: HashMap<String, Vec<String>>,
 }
 
 /// Router state (session affinity, active request tracking, latency tracking).
