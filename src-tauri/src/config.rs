@@ -634,7 +634,12 @@ impl AppConfig {
             fs::create_dir_all(parent)?;
         }
         let content = toml::to_string_pretty(self)?;
-        fs::write(&config_path, content)?;
+        // Write to a temp file then rename for atomicity — prevents a
+        // partially written config if the process crashes mid-write.
+        let tmp_path = config_path.with_extension("toml.tmp");
+        fs::write(&tmp_path, &content)
+            .and_then(|_| fs::rename(&tmp_path, &config_path))
+            .map_err(|e| anyhow::anyhow!("Failed to save config atomically: {}", e))?;
         Ok(())
     }
 
