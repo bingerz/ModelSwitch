@@ -143,6 +143,11 @@ pub struct Channel {
     /// channel specifically — other models on the same channel remain available.
     #[serde(default)]
     pub model_cooldowns: HashMap<String, DateTime<Utc>>,
+    /// Optional proxy URL for this channel (e.g., "socks5://host:port", "http://host:port").
+    /// When set, requests to this channel's upstream use a dedicated reqwest client with this proxy.
+    /// Use "direct" to explicitly bypass any global proxy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
 }
 
 impl Channel {
@@ -311,6 +316,7 @@ impl Channel {
             api_keys: c.api_keys.clone(),
             excluded_models: c.excluded_models.clone(),
             model_cooldowns: HashMap::new(),
+            proxy_url: c.proxy_url.clone(),
         }
     }
 }
@@ -397,6 +403,7 @@ mod tests {
             api_keys: vec![],
             excluded_models: vec![],
             model_cooldowns: HashMap::new(),
+            proxy_url: None,
         }
     }
 

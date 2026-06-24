@@ -178,6 +178,19 @@ pub struct GatewayConfig {
     /// permissive in debug builds.
     #[serde(default)]
     pub allowed_origins: Option<Vec<String>>,
+    /// Interval (seconds) for sending keepalive whitespace on non-streaming
+    /// responses. 0 = disabled (default). Recommended: 10-15 for long
+    /// inference times. When enabled, the gateway sends newline bytes as
+    /// HTTP chunked transfer encoding while waiting for the upstream
+    /// response, preventing client-side TCP timeouts.
+    #[serde(default)]
+    pub nonstream_keepalive_interval_secs: u64,
+    /// Maximum log file size in MB before rotation (default 100).
+    #[serde(default = "default_log_max_file_size_mb")]
+    pub log_max_file_size_mb: u64,
+    /// Maximum number of rotated log files to retain (default 5).
+    #[serde(default = "default_log_max_files")]
+    pub log_max_files: usize,
 }
 
 /// Per-model retry configuration overrides.
@@ -293,6 +306,11 @@ pub struct ChannelConfig {
     /// When non-empty, requests for matching models skip this channel.
     #[serde(default)]
     pub excluded_models: Vec<String>,
+    /// Optional proxy URL for this channel (e.g., "socks5://host:port", "http://host:port").
+    /// When set, requests to this channel's upstream use a dedicated reqwest client with this proxy.
+    /// Use "direct" to explicitly bypass any global proxy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
 }
 
 /// Per-channel quota polling configuration.
@@ -399,6 +417,12 @@ fn default_enabled() -> bool {
 fn default_mcp_expose_tools() -> bool {
     true
 }
+fn default_log_max_file_size_mb() -> u64 {
+    100
+}
+fn default_log_max_files() -> usize {
+    5
+}
 
 impl Default for GatewayConfig {
     fn default() -> Self {
@@ -441,6 +465,9 @@ impl Default for GatewayConfig {
             retry_max_ms: default_retry_max_ms(),
             model_retry_overrides: HashMap::new(),
             allowed_origins: None,
+            nonstream_keepalive_interval_secs: 0,
+            log_max_file_size_mb: default_log_max_file_size_mb(),
+            log_max_files: default_log_max_files(),
         }
     }
 }

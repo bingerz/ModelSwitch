@@ -6,6 +6,9 @@ use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use bytes::Bytes;
+use tokio::sync::mpsc;
+
 use crate::channel::Channel;
 use crate::proxy::stream::{json_response, keepalive_stream, sse_stream_response_with_telemetry};
 use crate::router::active_requests::ActiveRequestGuard;
@@ -372,6 +375,12 @@ pub(super) async fn handle_streaming_success(
 /// Handle a successful non-streaming (JSON) response from upstream.
 /// Extracts usage, accumulates quota, logs, caches the response, and returns it.
 ///
+/// When `nonstream_keepalive_interval_secs` is enabled (> 0), the gateway sends
+/// periodic `\n` whitespace bytes as HTTP chunked transfer encoding while waiting
+/// for the upstream response body. This prevents client-side TCP timeouts for
+/// long-running inference. The whitespace is valid JSON leading whitespace and
+/// is silently ignored by JSON parsers.
+///
 /// The `pool_guard` is held for the entire function body and dropped at
 /// function end — after `resp.text().await` completes and all processing
 /// finishes. This is correct because the non-streaming response body is
@@ -404,7 +413,44 @@ pub(super) async fn handle_json_success(
     let _pool_guard = pool_guard;
     let _active_guard = active_guard;
 
-    let body_bytes = resp.bytes().await.unwrap_or_default();
+    // Check if non-stream keepalive is enabled. When enabled, we race
+    // resp.bytes() against a keepalive interval, sending `\n` whitespace
+    // chunks to keep the TCP connection alive.
+    let keepalive_secs = state.gateway.nonstream_keepalive_interval_secs;
+
+    // When keepalive is active, we create an mpsc channel. The sender (`tx`)
+    // is used during the select loop to enqueue `\n` keepalive chunks. After
+    // the upstream response arrives, `tx` is used again to send the final JSON
+    // body, then dropped to close the channel. The receiver (`rx`) becomes the
+    // HTTP response body via `Body::from_stream`.
+    let (body_bytes, keepalive_tx, keepalive_rx) = if keepalive_secs > 0 {
+        let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(16);
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(keepalive_secs));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        interval.tick().await; // skip first immediate tick
+
+        let bytes_fut = resp.bytes();
+        tokio::pin!(bytes_fut);
+
+        let bytes = loop {
+            tokio::select! {
+                result = &mut bytes_fut => {
+                    break result.unwrap_or_default();
+                }
+                _ = interval.tick() => {
+                    // Send whitespace keepalive chunk
+                    if tx.send(Ok(Bytes::from("\n"))).await.is_err() {
+                        // Client disconnected — still consume the response
+                        break bytes_fut.await.unwrap_or_default();
+                    }
+                }
+            }
+        };
+
+        (bytes, Some(tx), Some(rx))
+    } else {
+        (resp.bytes().await.unwrap_or_default(), None, None)
+    };
 
     // Translate response body via provider (pass-through for OpenAI/Anthropic,
     // Gemini-to-OpenAI translation for Gemini).
@@ -556,11 +602,27 @@ pub(super) async fn handle_json_success(
         });
     }
 
+    // Build the response body. If keepalive was active, we stream the final
+    // JSON through the existing channel (which may already contain keepalive
+    // `\n` chunks from the select loop above). The ReceiverStream drains the
+    // keepalive chunks followed by this final payload, then closes when the
+    // sender drops. Otherwise, use a simple inline body.
+    let response_body = if let (Some(tx), Some(rx)) = (keepalive_tx, keepalive_rx) {
+        let final_bytes = response_bytes.clone();
+        crate::spawn_bg(async move {
+            let _ = tx.send(Ok(final_bytes)).await;
+            // tx drops here, closing the channel
+        });
+        Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx))
+    } else {
+        Body::from(response_bytes)
+    };
+
     let mut resp = inject_passthrough_headers(
         Response::builder()
             .status(StatusCode::OK)
             .header("Content-Type", "application/json")
-            .body(Body::from(response_bytes))
+            .body(response_body)
             .expect("valid HTTP response construction"),
         upstream_headers,
     );

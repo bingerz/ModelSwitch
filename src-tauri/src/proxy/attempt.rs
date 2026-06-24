@@ -186,7 +186,33 @@ pub(super) async fn try_channel_attempt(
     // Build URL via provider (Gemini embeds model in URL; others use base_url + path)
     let url = provider.build_url(&channel.base_url, &upstream_model, is_stream);
 
-    let pool_guard = state.http_pool.get();
+    let pool_guard = if let Some(ref proxy_url) = channel.proxy_url {
+        match state.http_pool.proxied_pooled_client(proxy_url) {
+            Ok(guard) => guard,
+            Err(e) => {
+                tracing::error!(
+                    channel = %channel.name,
+                    proxy_url = %proxy_url,
+                    error = %e,
+                    "Failed to build proxied client"
+                );
+                state.channel_mgr.mark_circuit_open(channel.id).await;
+                log_attempt_failure(
+                    &state.logger,
+                    current_model,
+                    channel,
+                    attempt,
+                    FailureReason::ConnectionError,
+                    start,
+                    request_id,
+                )
+                .await;
+                return AttemptOutcome::Retry;
+            }
+        }
+    } else {
+        state.http_pool.get()
+    };
     let mut req_builder = pool_guard.post(&url).json(&upstream_body);
 
     // Forward original request headers (excluding hop-by-hop and auth headers)

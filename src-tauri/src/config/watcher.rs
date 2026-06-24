@@ -51,6 +51,7 @@ pub(crate) async fn apply_config_reload(
             updated.name = cc.name.clone();
             updated.provider = crate::channel::Provider::from_str(&cc.provider);
             updated.excluded_models = cc.excluded_models.clone();
+            updated.proxy_url = cc.proxy_url.clone();
             new_channels.push(updated);
         } else {
             // New channel — create it
@@ -218,6 +219,7 @@ mod tests {
             max_concurrent: None,
             api_keys: vec![],
             excluded_models: vec![],
+            proxy_url: None,
         }
     }
 

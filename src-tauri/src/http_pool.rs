@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
@@ -24,6 +25,9 @@ const HTTP2_MAX_CONCURRENT_STREAMS: u8 = 100;
 /// Selection picks the client with the lowest active count.
 pub struct HttpPool {
     clients: Vec<ClientEntry>,
+    /// Cache of per-proxy reqwest clients, keyed by proxy URL string.
+    /// Built lazily via `get_proxied()` / `proxied_pooled_client()`.
+    proxied_clients: parking_lot::Mutex<HashMap<String, reqwest::Client>>,
 }
 
 struct ClientEntry {
@@ -70,6 +74,7 @@ impl Clone for HttpPool {
     fn clone(&self) -> Self {
         Self {
             clients: self.clients.clone(),
+            proxied_clients: parking_lot::Mutex::new(self.proxied_clients.lock().clone()),
         }
     }
 }
@@ -88,7 +93,10 @@ impl HttpPool {
                 })
             })
             .collect::<reqwest::Result<Vec<_>>>()?;
-        Ok(Self { clients })
+        Ok(Self {
+            clients,
+            proxied_clients: parking_lot::Mutex::new(HashMap::new()),
+        })
     }
 
     /// Get the least-busy client with an owned RAII guard.
@@ -122,6 +130,48 @@ impl HttpPool {
             }
         }
         best_idx
+    }
+
+    /// Build a reqwest client with the same defaults as the pool but with a proxy.
+    /// The special value `"direct"` produces a client with no proxy at all.
+    pub fn build_proxied_client(proxy_url: &str) -> anyhow::Result<reqwest::Client> {
+        let mut builder = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .read_timeout(std::time::Duration::from_secs(300))
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .pool_max_idle_per_host(20)
+            .tcp_keepalive(std::time::Duration::from_secs(60))
+            .tcp_nodelay(true);
+
+        if proxy_url != "direct" {
+            builder = builder.proxy(reqwest::Proxy::all(proxy_url)?);
+        }
+
+        Ok(builder.build()?)
+    }
+
+    /// Return a cached proxied `reqwest::Client` for the given proxy URL,
+    /// building and caching one on first use.
+    pub fn get_proxied(&self, proxy_url: &str) -> anyhow::Result<reqwest::Client> {
+        let mut cache = self.proxied_clients.lock();
+        if let Some(client) = cache.get(proxy_url) {
+            return Ok(client.clone());
+        }
+        let client = Self::build_proxied_client(proxy_url)?;
+        cache.insert(proxy_url.to_string(), client.clone());
+        Ok(client)
+    }
+
+    /// Return a `PooledClient` wrapping a cached proxied client.
+    /// The active counter is standalone (not connected to pool routing),
+    /// but ensures the RAII guard pattern works identically for response handlers.
+    pub fn proxied_pooled_client(&self, proxy_url: &str) -> anyhow::Result<PooledClient> {
+        let client = self.get_proxied(proxy_url)?;
+        Ok(PooledClient {
+            client,
+            active: Arc::new(AtomicU8::new(1)),
+        })
     }
 }
 
@@ -229,6 +279,58 @@ mod tests {
             cloned.clients[1].active.load(Ordering::Acquire),
             1,
             "clone's get() should pick least-busy (index 1)"
+        );
+    }
+
+    #[test]
+    fn build_proxied_client_direct_succeeds() {
+        let client = HttpPool::build_proxied_client("direct");
+        assert!(client.is_ok(), "direct proxy should build without error");
+    }
+
+    #[test]
+    fn build_proxied_client_with_url_succeeds() {
+        // Proxy resolution is lazy — reqwest does not validate connectivity at build time.
+        let client = HttpPool::build_proxied_client("http://invalid:9999");
+        assert!(
+            client.is_ok(),
+            "proxy URL should build without connection error"
+        );
+    }
+
+    #[test]
+    fn get_proxied_caches_client() {
+        let pool = HttpPool::new(1, reqwest::Client::builder).unwrap();
+        let c1 = pool.get_proxied("http://proxy:8080").unwrap();
+        let c2 = pool.get_proxied("http://proxy:8080").unwrap();
+        // reqwest::Client implements Clone by cloning the inner Arc,
+        // so the same cached client should be returned.
+        // Verify the cache has exactly one entry.
+        assert_eq!(
+            pool.proxied_clients.lock().len(),
+            1,
+            "cached client should be reused"
+        );
+        // A different proxy URL should create a new entry.
+        let _c3 = pool.get_proxied("http://other:9090").unwrap();
+        assert_eq!(
+            pool.proxied_clients.lock().len(),
+            2,
+            "different proxy URL should create a new cache entry"
+        );
+    }
+
+    #[test]
+    fn proxied_pooled_client_returns_guard() {
+        let pool = HttpPool::new(1, reqwest::Client::builder).unwrap();
+        let guard = pool.proxied_pooled_client("direct").unwrap();
+        // Verify it derefs to reqwest::Client
+        let _builder = guard.post("http://example.com");
+        // Active count should start at 1
+        assert_eq!(
+            guard.active.load(Ordering::Acquire),
+            1u8,
+            "proxied pooled client should start with active=1"
         );
     }
 }

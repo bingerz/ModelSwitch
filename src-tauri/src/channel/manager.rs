@@ -234,6 +234,7 @@ impl ChannelManager {
                         max_concurrent: c.max_concurrent,
                         api_keys: c.api_keys.clone(),
                         excluded_models: c.excluded_models.clone(),
+                        proxy_url: c.proxy_url.clone(),
                     })
                 })
                 .collect()
@@ -356,6 +357,7 @@ mod tests {
             api_keys: vec![],
             excluded_models: vec![],
             model_cooldowns: HashMap::new(),
+            proxy_url: None,
         }
     }
 

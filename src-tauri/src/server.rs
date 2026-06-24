@@ -58,6 +58,8 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     let logger = Arc::new(DispatchLogger::with_persistence(
         config.gateway.log_max_entries,
         log_file,
+        config.gateway.log_max_file_size_mb,
+        config.gateway.log_max_files,
     ));
 
     // Build shared components
@@ -151,6 +153,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             retry_base_ms: config.gateway.retry_base_ms,
             retry_max_ms: config.gateway.retry_max_ms,
             model_retry_overrides: config.gateway.model_retry_overrides.clone(),
+            nonstream_keepalive_interval_secs: config.gateway.nonstream_keepalive_interval_secs,
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),

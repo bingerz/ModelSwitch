@@ -117,6 +117,7 @@ mod tests {
             api_keys: vec![],
             excluded_models: vec![],
             model_cooldowns: HashMap::new(),
+            proxy_url: None,
         }
     }
 

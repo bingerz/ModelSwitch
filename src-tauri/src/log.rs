@@ -7,6 +7,8 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 const MAX_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024; // 10MB
+/// Check file size for rotation every N writes to amortize stat() cost.
+const ROTATION_CHECK_INTERVAL: u64 = 100;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DispatchLog {
@@ -32,6 +34,10 @@ pub struct DispatchLogger {
     logs: Arc<RwLock<VecDeque<DispatchLog>>>,
     max_entries: usize,
     log_file: Option<PathBuf>,
+    max_file_size_bytes: u64,
+    max_file_count: usize,
+    /// Monotonic write counter — rotation check runs every N writes.
+    write_counter: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl DispatchLogger {
@@ -40,14 +46,25 @@ impl DispatchLogger {
             logs: Arc::new(RwLock::new(VecDeque::with_capacity(max_entries))),
             max_entries,
             log_file: None,
+            max_file_size_bytes: MAX_FILE_SIZE_BYTES,
+            max_file_count: 1,
+            write_counter: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
-    pub fn with_persistence(max_entries: usize, log_file: PathBuf) -> Self {
+    pub fn with_persistence(
+        max_entries: usize,
+        log_file: PathBuf,
+        max_file_size_mb: u64,
+        max_file_count: usize,
+    ) -> Self {
         Self {
             logs: Arc::new(RwLock::new(VecDeque::with_capacity(max_entries))),
             max_entries,
+            max_file_size_bytes: max_file_size_mb.saturating_mul(1024 * 1024),
+            max_file_count: max_file_count.max(1),
             log_file: Some(log_file),
+            write_counter: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -62,7 +79,9 @@ impl DispatchLogger {
             return;
         }
 
-        if let Err(e) = Self::rotate_if_oversized(&path).await {
+        if let Err(e) =
+            Self::rotate_if_needed(&path, self.max_file_size_bytes, self.max_file_count).await
+        {
             tracing::warn!("failed to rotate log file: {e}");
         }
 
@@ -97,7 +116,23 @@ impl DispatchLogger {
             };
             if !line.is_empty() {
                 let file_path = path.clone();
+                let max_bytes = self.max_file_size_bytes;
+                let max_count = self.max_file_count;
+                // Increment counter and check if rotation is due. Using
+                // fetch_add + modulo to amortize stat() overhead — only every
+                // ROTATION_CHECK_INTERVAL writes trigger a file size check.
+                let count = self
+                    .write_counter
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let check_rotation = count % ROTATION_CHECK_INTERVAL == 0;
                 crate::spawn_bg(async move {
+                    if check_rotation {
+                        if let Err(e) =
+                            Self::rotate_if_needed(&file_path, max_bytes, max_count).await
+                        {
+                            tracing::warn!("failed to rotate log file: {e}");
+                        }
+                    }
                     let _ = Self::append_line(&file_path, &line).await;
                 });
             }
@@ -303,22 +338,49 @@ impl DispatchLogger {
         Ok(())
     }
 
-    async fn rotate_if_oversized(path: &PathBuf) -> std::io::Result<()> {
-        match tokio::fs::metadata(path).await {
-            Ok(meta) if meta.len() > MAX_FILE_SIZE_BYTES => {
-                let rotated = Self::rotated_path(path);
-                let _ = tokio::fs::remove_file(&rotated).await;
-                tokio::fs::rename(path, &rotated).await?;
-                tracing::info!(
-                    from = %path.display(),
-                    to = %rotated.display(),
-                    "rotated oversized log file"
-                );
-            }
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+    /// Rotate the log file if it exceeds `max_bytes`.
+    /// Rotates: `logs.ndjson` → `logs.ndjson.1` → `logs.ndjson.2` → ...
+    /// Files beyond `max_count` are deleted.
+    async fn rotate_if_needed(
+        path: &Path,
+        max_bytes: u64,
+        max_count: usize,
+    ) -> std::io::Result<()> {
+        let needs_rotation = match tokio::fs::metadata(path).await {
+            Ok(meta) => meta.len() > max_bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
             Err(e) => return Err(e),
+        };
+        if !needs_rotation {
+            return Ok(());
         }
+
+        // Delete the oldest backup if it would exceed max_count after shift.
+        // After shifting, files are numbered .1 through .max_count.
+        // The oldest (max_count) is deleted to make room.
+        let oldest = Self::rotated_path_with_index(path, max_count);
+        let _ = tokio::fs::remove_file(&oldest).await;
+
+        // Shift existing backups: .(n-1) → .n, for n = max_count-1 down to 1.
+        // Process in descending order to avoid overwriting.
+        for i in (1..max_count).rev() {
+            let from = Self::rotated_path_with_index(path, i);
+            let to = Self::rotated_path_with_index(path, i + 1);
+            // Ignore errors — file may not exist yet
+            let _ = tokio::fs::rename(&from, &to).await;
+        }
+
+        // Rotate current file to .1
+        let first_backup = Self::rotated_path_with_index(path, 1);
+        tokio::fs::rename(path, &first_backup).await?;
+        tracing::info!(
+            from = %path.display(),
+            to = %first_backup.display(),
+            max_bytes,
+            max_count,
+            "rotated log file"
+        );
+
         Ok(())
     }
 
@@ -352,8 +414,12 @@ impl DispatchLogger {
         Ok(())
     }
 
-    fn rotated_path(path: &Path) -> PathBuf {
-        path.with_extension("ndjson.1")
+    /// Build the rotated backup path for a given index (1-based).
+    /// e.g., `/path/logs.ndjson` with index 2 → `/path/logs.ndjson.2`
+    fn rotated_path_with_index(path: &Path, index: usize) -> PathBuf {
+        let mut new_path = path.as_os_str().to_os_string();
+        new_path.push(format!(".{index}"));
+        PathBuf::from(new_path)
     }
 }
 

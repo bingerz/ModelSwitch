@@ -107,6 +107,7 @@ fn channel_config(id: &str, name: &str, base_url: &str, priority: u8) -> Channel
         max_concurrent: None,
         api_keys: vec![],
         excluded_models: vec![],
+        proxy_url: None,
     }
 }
 
@@ -188,6 +189,7 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
             retry_base_ms: config.gateway.retry_base_ms,
             retry_max_ms: config.gateway.retry_max_ms,
             model_retry_overrides: HashMap::new(),
+            nonstream_keepalive_interval_secs: 0,
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),
