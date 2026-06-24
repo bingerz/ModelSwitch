@@ -334,7 +334,7 @@ pub type SharedChannels =
 
 /// Simple glob pattern matching: `*` matches any sequence, `?` matches one char.
 /// Case-sensitive. No regex — intentionally simple.
-fn matches_glob(pattern: &str, text: &str) -> bool {
+pub(crate) fn matches_glob(pattern: &str, text: &str) -> bool {
     fn match_helper(p: &[u8], t: &[u8]) -> bool {
         if p.is_empty() {
             return t.is_empty();

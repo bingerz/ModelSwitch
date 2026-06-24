@@ -405,6 +405,7 @@ pub async fn set_payload_rules(
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Channel not found"))?;
 
     use crate::proxy::payload_rules::PayloadRules;
+    let model_rules = rules.model_rules.clone();
     state.limits.payload_rules.add(
         id,
         PayloadRules {
@@ -413,6 +414,9 @@ pub async fn set_payload_rules(
             strip: rules.strip,
         },
     );
+    if !model_rules.is_empty() {
+        state.limits.payload_rules.set_model_rules(id, model_rules);
+    }
 
     Ok(Json(ApiResponse::ok(serde_json::json!({
         "channel_id": id,

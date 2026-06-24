@@ -92,11 +92,15 @@ pub(super) async fn try_channel_attempt(
                 obj.insert("model".to_string(), Value::String(upstream_model.clone()));
             }
         }
-        // Apply per-channel payload rules (defaults, overrides, strip)
+        // Apply per-channel payload rules (defaults, overrides, strip),
+        // including any per-model rules whose glob/protocol match.
         if has_payload_rules {
-            if let Some(rules) = state.limits.payload_rules.get(channel.id) {
-                cloned = rules.apply(cloned);
-            }
+            cloned = state.limits.payload_rules.apply_for_model(
+                channel.id,
+                cloned,
+                current_model,
+                channel.provider.as_str(),
+            );
         }
         Cow::Owned(cloned)
     } else {

@@ -112,6 +112,9 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
                     strip: rules.strip.clone(),
                 },
             );
+            if !rules.model_rules.is_empty() {
+                payload_rules.set_model_rules(id, rules.model_rules.clone());
+            }
         }
     }
 

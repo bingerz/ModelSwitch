@@ -14,6 +14,10 @@ pub fn app_config_dir() -> PathBuf {
 }
 
 /// Per-channel payload rules configuration.
+///
+/// All field keys use dotted JSON path notation
+/// (e.g., `"generationConfig.thinkingConfig.thinkingBudget"`).
+/// Top-level keys like `"temperature"` are single-segment paths.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PayloadRulesConfig {
     #[serde(default)]
@@ -22,6 +26,10 @@ pub struct PayloadRulesConfig {
     pub overrides: HashMap<String, serde_json::Value>,
     #[serde(default)]
     pub strip: Vec<String>,
+    /// Optional per-model rules applied after the channel-level rules above.
+    /// Each entry can match by model glob pattern and optional protocol.
+    #[serde(default)]
+    pub model_rules: Vec<crate::proxy::payload_rules::ModelPayloadRule>,
 }
 
 /// MCP server configuration for subprocess-based tool providers.

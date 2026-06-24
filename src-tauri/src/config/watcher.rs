@@ -99,6 +99,9 @@ pub(crate) async fn apply_config_reload(
                     strip: rules.strip.clone(),
                 },
             );
+            if !rules.model_rules.is_empty() {
+                payload_rules.set_model_rules(id, rules.model_rules.clone());
+            }
         }
     }
     tracing::info!("Rate limits and payload rules reloaded");
