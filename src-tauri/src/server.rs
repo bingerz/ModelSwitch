@@ -782,6 +782,41 @@ async fn healthz_handler() -> axum::response::Response {
     )
 }
 
+/// Validate a TLS file path: canonicalize to prevent traversal, check extension.
+/// Returns the canonical path or panics with a redacted error message.
+fn validate_tls_path(path: &str, kind: &str) -> std::path::PathBuf {
+    let allowed_extensions = match kind {
+        "cert" => &["pem", "crt"][..],
+        "key" => &["pem", "key"][..],
+        _ => &["pem"][..],
+    };
+
+    // Reject empty paths
+    if path.trim().is_empty() {
+        panic!("TLS {} path is empty", kind);
+    }
+
+    // Canonicalize to resolve any .. or symlink traversal
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| {
+        panic!("TLS {} file not found or inaccessible", kind);
+    });
+
+    // Validate file extension
+    let ext = canonical
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    if !allowed_extensions.contains(&ext) {
+        panic!(
+            "TLS {} file must have one of these extensions: {:?}",
+            kind, allowed_extensions
+        );
+    }
+
+    tracing::info!(kind, path = %canonical.display(), "Loading TLS {} file", kind);
+    canonical
+}
+
 /// Start the Axum gateway server with graceful shutdown.
 /// Binds to `host:port` and drains in-flight requests on SIGINT/SIGTERM.
 /// Drain is bounded by `drain_timeout_secs` to prevent hanging.
@@ -883,14 +918,11 @@ pub async fn start_gateway(
     };
 
     if tls_config.enable {
-        let cert_path = &tls_config.cert;
-        let key_path = &tls_config.key;
+        let cert_path = validate_tls_path(&tls_config.cert, "cert");
+        let key_path = validate_tls_path(&tls_config.key, "key");
 
-        // Load TLS certificate and key from PEM files
-        let cert_file = File::open(cert_path).unwrap_or_else(|e| {
-            tracing::error!("Failed to open TLS cert file '{}': {}", cert_path, e);
-            // Return empty file handle — will fail later with clearer error
-            panic!("TLS cert file not found: {}", cert_path);
+        let cert_file = File::open(&cert_path).unwrap_or_else(|_| {
+            panic!("TLS cert file cannot be opened");
         });
         let mut cert_reader = BufReader::new(cert_file);
         let certs: Vec<rustls::pki_types::CertificateDer<'static>> =
@@ -898,18 +930,17 @@ pub async fn start_gateway(
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap_or_else(|e| {
                     tracing::error!("Failed to parse TLS certificate: {}", e);
-                    panic!("TLS cert parse error: {}", e);
+                    panic!("TLS cert parse error");
                 });
 
-        let key_file = File::open(key_path).unwrap_or_else(|e| {
-            tracing::error!("Failed to open TLS key file '{}': {}", key_path, e);
-            panic!("TLS key file not found: {}", key_path);
+        let key_file = File::open(&key_path).unwrap_or_else(|_| {
+            panic!("TLS key file cannot be opened");
         });
         let mut key_reader = BufReader::new(key_file);
         let key = rustls_pemfile::private_key(&mut key_reader)
             .unwrap_or_else(|e| {
                 tracing::error!("Failed to parse TLS private key: {}", e);
-                panic!("TLS key parse error: {}", e);
+                panic!("TLS key parse error");
             })
             .expect("No private key found in TLS key file");
 
