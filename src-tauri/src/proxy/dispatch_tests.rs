@@ -214,6 +214,7 @@ fn build_test_state_with_opts(
             session_affinity: SessionAffinity::default(),
             active_requests,
             latency_tracker: Arc::new(crate::router::latency_tracker::LatencyTracker::new()),
+            cooldown_tracker: Arc::new(crate::router::cooldown::CooldownTracker::new()),
         },
         cache: CacheState {
             request_cache,

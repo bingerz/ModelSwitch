@@ -250,6 +250,7 @@ pub async fn delete_channel(
 
     if state.channel_mgr.delete(id).await {
         state.billing.quota_store.delete(id).await;
+        state.router.cooldown_tracker.remove(id);
         state.channel_mgr.persist().await;
         StatusCode::NO_CONTENT.into_response()
     } else {

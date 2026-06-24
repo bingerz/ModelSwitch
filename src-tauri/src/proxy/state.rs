@@ -47,6 +47,7 @@ pub struct RouterState {
     pub session_affinity: SessionAffinity,
     pub active_requests: Arc<ActiveRequests>,
     pub latency_tracker: Arc<crate::router::latency_tracker::LatencyTracker>,
+    pub cooldown_tracker: Arc<crate::router::cooldown::CooldownTracker>,
 }
 
 /// Cache state (request cache + coalescing).

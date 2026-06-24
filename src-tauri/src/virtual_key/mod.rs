@@ -113,11 +113,9 @@ impl VirtualKey {
     pub fn is_model_allowed(&self, model: &str) -> bool {
         match &self.allowed_models {
             None => true,
-            Some(allowed) => {
-                allowed.iter().any(|pattern| {
-                    model.starts_with(pattern) || crate::channel::matches_glob(pattern, model)
-                })
-            }
+            Some(allowed) => allowed.iter().any(|pattern| {
+                model.starts_with(pattern) || crate::channel::matches_glob(pattern, model)
+            }),
         }
     }
 
@@ -455,7 +453,9 @@ mod tests {
     #[tokio::test]
     async fn validate_rejects_wrong_key() {
         let store = VirtualKeyStore::new();
-        let _ = store.create("test".to_string(), None, None, None, vec![]).await;
+        let _ = store
+            .create("test".to_string(), None, None, None, vec![])
+            .await;
         let result = store.validate("ms-vk-wrongkey").await;
         assert!(result.is_none());
     }
@@ -463,7 +463,9 @@ mod tests {
     #[tokio::test]
     async fn validate_returns_key_when_correct() {
         let store = VirtualKeyStore::new();
-        let (created, plaintext) = store.create("test".to_string(), None, None, None, vec![]).await;
+        let (created, plaintext) = store
+            .create("test".to_string(), None, None, None, vec![])
+            .await;
         let validated = store.validate(&plaintext).await;
         assert!(validated.is_some());
         assert_eq!(validated.unwrap().id, created.id);
@@ -472,7 +474,9 @@ mod tests {
     #[tokio::test]
     async fn validate_returns_none_when_disabled() {
         let store = VirtualKeyStore::new();
-        let (created, plaintext) = store.create("test".to_string(), None, None, None, vec![]).await;
+        let (created, plaintext) = store
+            .create("test".to_string(), None, None, None, vec![])
+            .await;
         store
             .update(created.id, None, None, None, Some(false), None, None)
             .await;
@@ -483,7 +487,9 @@ mod tests {
     #[tokio::test]
     async fn accumulate_spend_updates_daily_and_monthly() {
         let store = VirtualKeyStore::new();
-        let (vk, _plaintext) = store.create("test".to_string(), None, None, None, vec![]).await;
+        let (vk, _plaintext) = store
+            .create("test".to_string(), None, None, None, vec![])
+            .await;
         store.accumulate_spend(vk.id, 50).await;
         store.accumulate_spend(vk.id, 25).await;
         let fetched = store.get(vk.id).await.unwrap();
@@ -495,7 +501,9 @@ mod tests {
     #[tokio::test]
     async fn accumulate_spend_resets_stale_periods() {
         let store = VirtualKeyStore::new();
-        let (mut vk, _plaintext) = store.create("test".to_string(), None, None, None, vec![]).await;
+        let (mut vk, _plaintext) = store
+            .create("test".to_string(), None, None, None, vec![])
+            .await;
         // Manually backdate the spend to a stale day/month
         vk.spend.today = DailySpend {
             date: "1999-01-01".to_string(),
@@ -644,7 +652,9 @@ mod tests {
     #[tokio::test]
     async fn reserve_spend_skips_unlimited_key() {
         let store = VirtualKeyStore::new();
-        let (vk, _) = store.create("test".to_string(), None, None, None, vec![]).await;
+        let (vk, _) = store
+            .create("test".to_string(), None, None, None, vec![])
+            .await;
         let result = store.reserve_spend(vk.id, 10).await;
         assert!(matches!(result, ReserveResult::NoBudget));
         let fetched = store.get(vk.id).await.unwrap();
@@ -840,14 +850,18 @@ mod tests {
     async fn has_keys_reflects_state() {
         let store = VirtualKeyStore::new();
         assert!(!store.has_keys().await);
-        let _ = store.create("a".to_string(), None, None, None, vec![]).await;
+        let _ = store
+            .create("a".to_string(), None, None, None, vec![])
+            .await;
         assert!(store.has_keys().await);
     }
 
     #[tokio::test]
     async fn delete_removes_key() {
         let store = VirtualKeyStore::new();
-        let (vk, _) = store.create("a".to_string(), None, None, None, vec![]).await;
+        let (vk, _) = store
+            .create("a".to_string(), None, None, None, vec![])
+            .await;
         assert!(store.delete(vk.id).await);
         assert!(store.get(vk.id).await.is_none());
         assert!(!store.delete(vk.id).await);

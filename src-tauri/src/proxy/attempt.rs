@@ -382,6 +382,10 @@ pub(super) async fn try_channel_attempt(
                             .rate_limiter
                             .record(channel.id, estimated_tokens);
                         state.channel_mgr.mark_circuit_open(channel.id).await;
+                        state
+                            .router
+                            .cooldown_tracker
+                            .record_attempt(channel.id, false);
                         log_attempt_failure(
                             &state.logger,
                             current_model,
@@ -413,6 +417,10 @@ pub(super) async fn try_channel_attempt(
         Err(e) => {
             tracing::error!(channel = %channel.name, error = %e, "Request failed");
             state.channel_mgr.mark_circuit_open(channel.id).await;
+            state
+                .router
+                .cooldown_tracker
+                .record_attempt(channel.id, false);
             log_attempt_failure(
                 &state.logger,
                 current_model,
@@ -451,6 +459,10 @@ pub(super) async fn try_channel_attempt(
             .channel_mgr
             .mark_circuit_open_with_retry(channel.id, retry_after_secs)
             .await;
+        state
+            .router
+            .cooldown_tracker
+            .record_attempt(channel.id, false);
         log_attempt_failure(
             &state.logger,
             current_model,
@@ -467,6 +479,10 @@ pub(super) async fn try_channel_attempt(
     if status.is_server_error() {
         tracing::warn!(channel = %channel.name, status = %status, "Server error");
         state.channel_mgr.mark_circuit_open(channel.id).await;
+        state
+            .router
+            .cooldown_tracker
+            .record_attempt(channel.id, false);
         log_attempt_failure(
             &state.logger,
             current_model,
@@ -521,7 +537,11 @@ pub(super) async fn try_channel_attempt(
         return AttemptOutcome::Respond(json_response(status_code, body_text));
     }
 
-    // Success — record session affinity if applicable
+    // Success — record for cooldown tracking and session affinity
+    state
+        .router
+        .cooldown_tracker
+        .record_attempt(channel.id, true);
     if let Some(ref sid) = session_id {
         state
             .router
@@ -592,6 +612,10 @@ pub(super) async fn try_channel_attempt(
                                 "Bootstrap retry: first SSE chunk indicates upstream error"
                             );
                             state.channel_mgr.mark_circuit_open(channel.id).await;
+                            state
+                                .router
+                                .cooldown_tracker
+                                .record_attempt(channel.id, false);
                             log_attempt_failure(
                                 &state.logger,
                                 current_model,
@@ -617,6 +641,10 @@ pub(super) async fn try_channel_attempt(
                             error = %_e,
                             "Bootstrap retry: stream error on first chunk"
                         );
+                        state
+                            .router
+                            .cooldown_tracker
+                            .record_attempt(channel.id, false);
                         log_attempt_failure(
                             &state.logger,
                             current_model,
@@ -634,6 +662,10 @@ pub(super) async fn try_channel_attempt(
                             channel = %channel.name,
                             "Bootstrap retry: upstream stream ended before first chunk"
                         );
+                        state
+                            .router
+                            .cooldown_tracker
+                            .record_attempt(channel.id, false);
                         log_attempt_failure(
                             &state.logger,
                             current_model,
@@ -657,6 +689,10 @@ pub(super) async fn try_channel_attempt(
                             .rate_limiter
                             .record(channel.id, estimated_tokens);
                         state.channel_mgr.mark_circuit_open(channel.id).await;
+                        state
+                            .router
+                            .cooldown_tracker
+                            .record_attempt(channel.id, false);
                         log_attempt_failure(
                             &state.logger,
                             current_model,

@@ -1,5 +1,6 @@
 pub mod active_requests;
 pub mod affinity;
+pub mod cooldown;
 pub mod fallback;
 pub mod latency_tracker;
 pub mod strategy;
@@ -7,6 +8,7 @@ pub mod weighted;
 
 use crate::channel::{Channel, SharedChannels};
 use crate::proxy::rate_limiter::RateLimiter;
+use crate::router::cooldown::CooldownTracker;
 use active_requests::ActiveRequests;
 use latency_tracker::LatencyTracker;
 use std::sync::Arc;
@@ -23,6 +25,7 @@ pub struct RoutingContext<'a> {
     pub active_requests: &'a std::sync::Arc<ActiveRequests>,
     pub rate_limiter: &'a Arc<RateLimiter>,
     pub latency_tracker: &'a Arc<LatencyTracker>,
+    pub cooldown_tracker: &'a Arc<CooldownTracker>,
 }
 
 /// Select a healthy channel using the specified routing strategy.
@@ -78,6 +81,10 @@ pub async fn select_channel(
             }
             // Check per-model rate-limit cooldown
             if c.is_model_in_cooldown(requested_model) {
+                return None;
+            }
+            // Check failure-rate-based cooldown
+            if ctx.cooldown_tracker.is_in_cooldown(c.id) {
                 return None;
             }
             let mut cloned = c.clone();

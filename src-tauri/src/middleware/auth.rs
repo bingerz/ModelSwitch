@@ -42,10 +42,7 @@ fn attempts() -> &'static Mutex<HashMap<String, AuthAttemptInfo>> {
 fn extract_client_ip(req: &Request<Body>) -> String {
     let headers = req.headers();
 
-    if let Some(xff) = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-    {
+    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
         if let Some(first) = xff.split(',').next() {
             let ip = first.trim();
             if !ip.is_empty() {
@@ -208,10 +205,7 @@ mod tests {
             }
         }
 
-        assert!(
-            !is_rate_limited(ip),
-            "IP should not be blocked initially"
-        );
+        assert!(!is_rate_limited(ip), "IP should not be blocked initially");
 
         record_auth_failure(ip);
         assert!(!is_rate_limited(ip), "1st failure — not blocked");

@@ -11,7 +11,11 @@ use crate::proxy::AppState;
 use crate::proxy::SKIP_HEADERS;
 
 /// Apply the appropriate authorization header based on the provider.
-fn apply_auth(mut builder: reqwest::RequestBuilder, provider: &Provider, api_key: &str) -> reqwest::RequestBuilder {
+fn apply_auth(
+    mut builder: reqwest::RequestBuilder,
+    provider: &Provider,
+    api_key: &str,
+) -> reqwest::RequestBuilder {
     builder = builder.header("Content-Type", "application/json");
     match provider {
         Provider::OpenAI => {
@@ -203,9 +207,10 @@ async fn find_image_channel(
             candidates.push(ch.id);
         }
 
-        let has_image_mapping = ch.model_mapping.keys().any(|k| {
-            k.contains("dall-e") || k.contains("image") || k.contains("imagen")
-        });
+        let has_image_mapping = ch
+            .model_mapping
+            .keys()
+            .any(|k| k.contains("dall-e") || k.contains("image") || k.contains("imagen"));
 
         if has_image_mapping {
             fallback.push(ch.id);

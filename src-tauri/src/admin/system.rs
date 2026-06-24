@@ -260,6 +260,7 @@ pub async fn reload_config(
                 if !config_ids.contains(&ch.id) {
                     state.channel_mgr.delete(ch.id).await;
                     state.billing.quota_store.delete(ch.id).await;
+                    state.router.cooldown_tracker.remove(ch.id);
                     removed += 1;
                 }
             }

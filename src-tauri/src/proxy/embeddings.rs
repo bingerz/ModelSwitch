@@ -88,6 +88,7 @@ pub async fn handle_embeddings(
         active_requests: &state.router.active_requests,
         rate_limiter: &state.limits.rate_limiter,
         latency_tracker: &state.router.latency_tracker,
+        cooldown_tracker: &state.router.cooldown_tracker,
     };
 
     let channel = match router::select_channel(

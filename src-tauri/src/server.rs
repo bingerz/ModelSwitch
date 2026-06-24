@@ -168,6 +168,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             session_affinity: SessionAffinity::default(),
             active_requests: Arc::clone(&active_requests),
             latency_tracker: Arc::clone(&latency_tracker),
+            cooldown_tracker: Arc::new(crate::router::cooldown::CooldownTracker::new()),
         },
         cache: CacheState {
             request_cache: Arc::clone(&request_cache),
@@ -549,10 +550,7 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
             "/v1/images/generations",
             post(proxy::images::handle_image_generation),
         )
-        .route(
-            "/v1/images/edits",
-            post(proxy::images::handle_image_edits),
-        )
+        .route("/v1/images/edits", post(proxy::images::handle_image_edits))
         .route("/v1/models", get(proxy::openai::handle_list_models))
         .route(
             "/v1/models/{model_id}",
@@ -815,10 +813,7 @@ fn validate_tls_path(path: &str, kind: &str) -> std::path::PathBuf {
     });
 
     // Validate file extension
-    let ext = canonical
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = canonical.extension().and_then(|e| e.to_str()).unwrap_or("");
     if !allowed_extensions.contains(&ext) {
         panic!(
             "TLS {} file must have one of these extensions: {:?}",

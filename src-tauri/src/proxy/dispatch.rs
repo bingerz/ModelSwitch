@@ -171,7 +171,11 @@ async fn select_channel_for_attempt(
             });
             let model_ok =
                 ch.model_mapping.is_empty() || ch.model_mapping.contains_key(current_model);
-            if group_ok && model_ok && ch.is_available() {
+            if group_ok
+                && model_ok
+                && ch.is_available()
+                && !ctx.cooldown_tracker.is_in_cooldown(ch.id)
+            {
                 let mut c = ch.clone();
                 c.recover_if_expired();
                 return Some(c);
@@ -246,7 +250,11 @@ pub(crate) async fn dispatch(
     // Check virtual key model whitelist (with model group awareness) and denylist
     if let Some(vk) = vk_id {
         if let Some(virtual_key) = state.billing.virtual_key_store.get(vk).await {
-            if !is_model_allowed_with_groups(&virtual_key, &original_model, &state.gateway.model_groups) {
+            if !is_model_allowed_with_groups(
+                &virtual_key,
+                &original_model,
+                &state.gateway.model_groups,
+            ) {
                 let error_body = serde_json::json!({
                     "error": {
                         "message": format!("Model '{}' is not allowed for this virtual key", original_model),
@@ -405,8 +413,8 @@ pub(crate) async fn dispatch(
                 ch.enabled
                     && ch.is_available()
                     && !ch.is_model_excluded(current_model)
-                    && (ch.model_mapping.is_empty()
-                        || ch.model_mapping.contains_key(current_model))
+                    && (ch.model_mapping.is_empty() || ch.model_mapping.contains_key(current_model))
+                    && !state.router.cooldown_tracker.is_in_cooldown(ch.id)
             });
             if !has_channel {
                 tracing::debug!(
@@ -441,6 +449,7 @@ pub(crate) async fn dispatch(
                     active_requests: &state.router.active_requests,
                     rate_limiter: &state.limits.rate_limiter,
                     latency_tracker: &state.router.latency_tracker,
+                    cooldown_tracker: &state.router.cooldown_tracker,
                 },
                 account_group.as_deref(),
             )
@@ -671,11 +680,13 @@ mod tests {
         active_requests: &'a Arc<ActiveRequests>,
         rate_limiter: &'a Arc<RateLimiter>,
         latency_tracker: &'a Arc<LatencyTracker>,
+        cooldown_tracker: &'a Arc<crate::router::cooldown::CooldownTracker>,
     ) -> RoutingContext<'a> {
         RoutingContext {
             active_requests,
             rate_limiter,
             latency_tracker,
+            cooldown_tracker,
         }
     }
 
@@ -694,7 +705,13 @@ mod tests {
         let active_requests = Arc::new(ActiveRequests::new());
         let rate_limiter = Arc::new(RateLimiter::new(None));
         let latency_tracker = Arc::new(LatencyTracker::new());
-        let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
+        let cooldown_tracker = Arc::new(crate::router::cooldown::CooldownTracker::new());
+        let ctx = make_routing_context(
+            &active_requests,
+            &rate_limiter,
+            &latency_tracker,
+            &cooldown_tracker,
+        );
         let result = select_channel_for_attempt(
             None,
             &channels,
@@ -717,7 +734,13 @@ mod tests {
         let active_requests = Arc::new(ActiveRequests::new());
         let rate_limiter = Arc::new(RateLimiter::new(None));
         let latency_tracker = Arc::new(LatencyTracker::new());
-        let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
+        let cooldown_tracker = Arc::new(crate::router::cooldown::CooldownTracker::new());
+        let ctx = make_routing_context(
+            &active_requests,
+            &rate_limiter,
+            &latency_tracker,
+            &cooldown_tracker,
+        );
         let result = select_channel_for_attempt(
             None,
             &channels,
@@ -740,7 +763,13 @@ mod tests {
         let active_requests = Arc::new(ActiveRequests::new());
         let rate_limiter = Arc::new(RateLimiter::new(None));
         let latency_tracker = Arc::new(LatencyTracker::new());
-        let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
+        let cooldown_tracker = Arc::new(crate::router::cooldown::CooldownTracker::new());
+        let ctx = make_routing_context(
+            &active_requests,
+            &rate_limiter,
+            &latency_tracker,
+            &cooldown_tracker,
+        );
         let result = select_channel_for_attempt(
             Some(channel_id),
             &channels,
@@ -783,7 +812,13 @@ mod tests {
         let active_requests = Arc::new(ActiveRequests::new());
         let rate_limiter = Arc::new(RateLimiter::new(None));
         let latency_tracker = Arc::new(LatencyTracker::new());
-        let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
+        let cooldown_tracker = Arc::new(crate::router::cooldown::CooldownTracker::new());
+        let ctx = make_routing_context(
+            &active_requests,
+            &rate_limiter,
+            &latency_tracker,
+            &cooldown_tracker,
+        );
 
         // Call 10 times — should never pick the "staging" channel
         for _ in 0..10 {
@@ -820,7 +855,13 @@ mod tests {
         let active_requests = Arc::new(ActiveRequests::new());
         let rate_limiter = Arc::new(RateLimiter::new(None));
         let latency_tracker = Arc::new(LatencyTracker::new());
-        let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
+        let cooldown_tracker = Arc::new(crate::router::cooldown::CooldownTracker::new());
+        let ctx = make_routing_context(
+            &active_requests,
+            &rate_limiter,
+            &latency_tracker,
+            &cooldown_tracker,
+        );
 
         // No account_group filter — both channels should be reachable.
         let mut seen_ids = std::collections::HashSet::new();
@@ -864,7 +905,13 @@ mod tests {
         let active_requests = Arc::new(ActiveRequests::new());
         let rate_limiter = Arc::new(RateLimiter::new(None));
         let latency_tracker = Arc::new(LatencyTracker::new());
-        let ctx = make_routing_context(&active_requests, &rate_limiter, &latency_tracker);
+        let cooldown_tracker = Arc::new(crate::router::cooldown::CooldownTracker::new());
+        let ctx = make_routing_context(
+            &active_requests,
+            &rate_limiter,
+            &latency_tracker,
+            &cooldown_tracker,
+        );
 
         let result = select_channel_for_attempt(
             None,

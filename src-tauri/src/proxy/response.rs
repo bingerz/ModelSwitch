@@ -171,11 +171,18 @@ pub(super) async fn handle_streaming_success(
     let est_tokens = estimate_tokens(body, true);
     // Determine effective rates: model_pricing overrides channel rates.
     let mp = state.gateway.model_pricing.get(current_model);
-    let eff_in = mp.and_then(|p| p.input_cost_per_mtok).or(channel.input_cost_per_mtok);
-    let eff_out = mp.and_then(|p| p.output_cost_per_mtok).or(channel.output_cost_per_mtok);
+    let eff_in = mp
+        .and_then(|p| p.input_cost_per_mtok)
+        .or(channel.input_cost_per_mtok);
+    let eff_out = mp
+        .and_then(|p| p.output_cost_per_mtok)
+        .or(channel.output_cost_per_mtok);
     let estimated_cost = if eff_in.is_some() || eff_out.is_some() {
         let half = (est_tokens / 2) as f64;
-        Some(half / 1_000_000.0 * eff_in.unwrap_or(0.0) + half / 1_000_000.0 * eff_out.unwrap_or(0.0))
+        Some(
+            half / 1_000_000.0 * eff_in.unwrap_or(0.0)
+                + half / 1_000_000.0 * eff_out.unwrap_or(0.0),
+        )
     } else {
         channel
             .cost_per_token
@@ -299,14 +306,21 @@ pub(super) async fn handle_streaming_success(
             if input_tokens.is_some() || output_tokens.is_some() {
                 // Re-calculate cost using real tokens.
                 // Model-level pricing overrides channel rates when present.
-                let mp_in = bg_model_pricing.as_ref().and_then(|p| p.input_cost_per_mtok);
-                let mp_out = bg_model_pricing.as_ref().and_then(|p| p.output_cost_per_mtok);
+                let mp_in = bg_model_pricing
+                    .as_ref()
+                    .and_then(|p| p.input_cost_per_mtok);
+                let mp_out = bg_model_pricing
+                    .as_ref()
+                    .and_then(|p| p.output_cost_per_mtok);
                 let eff_in = mp_in.or(bg_input_cost);
                 let eff_out = mp_out.or(bg_output_cost);
                 let real_cost = if eff_in.is_some() || eff_out.is_some() {
                     let in_tok = input_tokens.unwrap_or(0) as f64;
                     let out_tok = output_tokens.unwrap_or(0) as f64;
-                    Some(in_tok / 1_000_000.0 * eff_in.unwrap_or(0.0) + out_tok / 1_000_000.0 * eff_out.unwrap_or(0.0))
+                    Some(
+                        in_tok / 1_000_000.0 * eff_in.unwrap_or(0.0)
+                            + out_tok / 1_000_000.0 * eff_out.unwrap_or(0.0),
+                    )
                 } else {
                     bg_cost_per_token.map(|rate_per_1k| {
                         ((input_tokens.unwrap_or(0) + output_tokens.unwrap_or(0)) as f64 / 1000.0)
@@ -532,12 +546,19 @@ pub(super) async fn handle_json_success(
     let output_tokens = token_usage.output_tokens;
     // Determine effective rates: model_pricing overrides channel rates.
     let mp = state.gateway.model_pricing.get(current_model);
-    let eff_in = mp.and_then(|p| p.input_cost_per_mtok).or(channel.input_cost_per_mtok);
-    let eff_out = mp.and_then(|p| p.output_cost_per_mtok).or(channel.output_cost_per_mtok);
+    let eff_in = mp
+        .and_then(|p| p.input_cost_per_mtok)
+        .or(channel.input_cost_per_mtok);
+    let eff_out = mp
+        .and_then(|p| p.output_cost_per_mtok)
+        .or(channel.output_cost_per_mtok);
     let estimated_cost = if eff_in.is_some() || eff_out.is_some() {
         let in_tok = input_tokens.unwrap_or(0) as f64;
         let out_tok = output_tokens.unwrap_or(0) as f64;
-        Some(in_tok / 1_000_000.0 * eff_in.unwrap_or(0.0) + out_tok / 1_000_000.0 * eff_out.unwrap_or(0.0))
+        Some(
+            in_tok / 1_000_000.0 * eff_in.unwrap_or(0.0)
+                + out_tok / 1_000_000.0 * eff_out.unwrap_or(0.0),
+        )
     } else {
         channel
             .calculate_cost(input_tokens, output_tokens)

@@ -135,6 +135,7 @@ pub(crate) fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppSt
             session_affinity: SessionAffinity::default(),
             active_requests,
             latency_tracker: Arc::new(crate::router::latency_tracker::LatencyTracker::new()),
+            cooldown_tracker: Arc::new(crate::router::cooldown::CooldownTracker::new()),
         },
         cache: CacheState {
             request_cache,

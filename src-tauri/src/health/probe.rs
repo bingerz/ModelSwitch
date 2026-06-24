@@ -431,7 +431,10 @@ mod tests {
 
         let channel = make_channel(Provider::OpenAI, &server.uri());
         let result = probe_connectivity(&http_client(), &channel).await;
-        assert!(result, "405 Method Not Allowed still means host is reachable");
+        assert!(
+            result,
+            "405 Method Not Allowed still means host is reachable"
+        );
     }
 
     #[tokio::test]
