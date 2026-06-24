@@ -9,6 +9,7 @@ pub mod rate_limiter;
 pub mod responses;
 pub mod state;
 pub mod stream;
+pub mod thinking;
 pub mod translate;
 
 mod attempt;
