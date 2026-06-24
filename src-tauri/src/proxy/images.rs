@@ -157,104 +157,24 @@ pub async fn handle_image_generation(
     json_response(status, body_text)
 }
 
-/// Handle /v1/images/edits — same pattern as generations but different upstream path.
+/// Handle /v1/images/edits — returns 501 because OpenAI requires multipart/form-data
+/// for this endpoint, which is not yet supported.
 pub async fn handle_image_edits(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(body): Json<Value>,
+    State(_state): State<Arc<AppState>>,
+    _headers: HeaderMap,
+    Json(_body): Json<Value>,
 ) -> axum::response::Response {
-    // Validate JSON body is an object
-    if !body.is_object() {
-        return json_response(
-            StatusCode::BAD_REQUEST,
-            serde_json::json!({
-                "error": {
-                    "message": "Request body must be a JSON object",
-                    "type": "invalid_request_error",
-                    "code": "invalid_body"
-                }
-            })
-            .to_string(),
-        );
-    }
-
-    // Check if image generation is disabled
-    if state.gateway.disable_image_generation {
-        return json_response(
-            StatusCode::NOT_FOUND,
-            serde_json::json!({
-                "error": {
-                    "message": "Image generation is disabled",
-                    "type": "invalid_request_error",
-                    "code": "image_generation_disabled"
-                }
-            })
-            .to_string(),
-        );
-    }
-
-    let model = body
-        .get("model")
-        .and_then(|m| m.as_str())
-        .unwrap_or("dall-e-2");
-
-    let (channel, api_key) = match find_image_channel(&state, model).await {
-        Some(result) => result,
-        None => {
-            return json_response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                serde_json::json!({
-                    "error": {
-                        "message": format!("No available channel for image model '{}'", model),
-                        "type": "server_error",
-                        "code": "no_available_channel"
-                    }
-                })
-                .to_string(),
-            );
-        }
-    };
-
-    let upstream_model = channel
-        .model_mapping
-        .get(model)
-        .cloned()
-        .unwrap_or_else(|| model.to_string());
-
-    let base_url = channel.base_url.trim_end_matches('/');
-    let url = format!("{}/v1/images/edits", base_url);
-
-    let mut upstream_body = body.clone();
-    if let Some(obj) = upstream_body.as_object_mut() {
-        obj.insert("model".to_string(), Value::String(upstream_model));
-    }
-
-    let client = state.http_pool.get();
-    let req_builder = client.post(&url).json(&upstream_body);
-    let req_builder = apply_auth(req_builder, &channel.provider, &api_key);
-    let req_builder = forward_headers(req_builder, &headers);
-
-    let resp = match req_builder.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!(channel = %channel.name, error = %e, "Image edit request failed");
-            return json_response(
-                StatusCode::BAD_GATEWAY,
-                serde_json::json!({
-                    "error": {
-                        "message": "Upstream image edit request failed",
-                        "type": "server_error",
-                        "code": "upstream_error"
-                    }
-                })
-                .to_string(),
-            );
-        }
-    };
-
-    let status = resp.status();
-    let body_text = resp.text().await.unwrap_or_default();
-    json_response(status, body_text)
+    json_response(
+        StatusCode::NOT_IMPLEMENTED,
+        serde_json::json!({
+            "error": {
+                "message": "Image edits require multipart/form-data which is not yet supported. Use /v1/images/generations instead.",
+                "type": "invalid_request_error",
+                "code": "not_implemented"
+            }
+        })
+        .to_string(),
+    )
 }
 
 /// Find the best available channel for image generation.

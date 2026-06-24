@@ -69,6 +69,24 @@ pub struct UpdateChannelRequest {
     pub output_cost_per_mtok: Option<f64>,
     pub rpm_limit: Option<u64>,
     pub tpm_limit: Option<u64>,
+    #[serde(default)]
+    pub account_group: Option<String>,
+    #[serde(default)]
+    pub max_concurrent: Option<u32>,
+    #[serde(default)]
+    pub excluded_models: Vec<String>,
+    #[serde(default)]
+    pub api_keys: Vec<String>,
+    #[serde(default)]
+    pub proxy_url: Option<String>,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    #[serde(default)]
+    pub max_retries: Option<u32>,
+    #[serde(default)]
+    pub models_endpoint: Option<String>,
+    #[serde(default)]
+    pub models_refresh_interval_secs: Option<u64>,
 }
 
 fn default_priority() -> u8 {
@@ -178,6 +196,15 @@ pub async fn update_channel(
     existing.enabled = req.enabled;
     existing.model_mapping = req.model_mapping;
     existing.cooldown_minutes = req.cooldown_minutes;
+    existing.account_group = req.account_group;
+    existing.max_concurrent = req.max_concurrent;
+    existing.excluded_models = req.excluded_models;
+    existing.api_keys = req.api_keys;
+    existing.proxy_url = req.proxy_url;
+    existing.headers = req.headers;
+    existing.max_retries = req.max_retries;
+    existing.models_endpoint = req.models_endpoint;
+    existing.models_refresh_interval_secs = req.models_refresh_interval_secs.unwrap_or(300);
     existing.updated_at = chrono::Utc::now();
 
     // Update credential if a new value is provided
