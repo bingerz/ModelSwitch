@@ -14,6 +14,8 @@ pub struct ChannelManager {
     credential_store: SharedCredentialStore,
     /// Per-channel rotation counter for multi-key round-robin selection.
     key_indices: Mutex<HashMap<Uuid, usize>>,
+    /// When true, globally disables circuit breaker cooldown on failures.
+    disable_cooling: bool,
 }
 
 impl ChannelManager {
@@ -33,7 +35,13 @@ impl ChannelManager {
             gateway_config: config.gateway.clone(),
             credential_store,
             key_indices: Mutex::new(HashMap::new()),
+            disable_cooling: config.gateway.disable_cooling,
         }
+    }
+
+    /// Set the global disable-cooling override at runtime.
+    pub fn set_disable_cooling(&mut self, value: bool) {
+        self.disable_cooling = value;
     }
 
     pub fn channels(&self) -> SharedChannels {
@@ -93,6 +101,10 @@ impl ChannelManager {
         if let Some(ch_arc) = ch_arc {
             let mut ch = ch_arc.write();
             ch.consecutive_failures += 1;
+            if self.disable_cooling {
+                // Track the failure, but skip cooldown entirely.
+                return;
+            }
             let base_minutes = ch.cooldown_minutes.unwrap_or(self.circuit_breaker_minutes);
             // Progressive backoff: 1x, 2x, 4x, 8x... capped at 30 min
             let backoff = (base_minutes as u32)
@@ -104,6 +116,9 @@ impl ChannelManager {
 
     /// Mark circuit open with an optional retry-after duration (in seconds).
     pub async fn mark_circuit_open_with_retry(&self, id: Uuid, retry_after_secs: Option<u64>) {
+        if self.disable_cooling {
+            return;
+        }
         let duration_mins = retry_after_secs
             .map(|s| (s / 60).max(1))
             .unwrap_or(self.circuit_breaker_minutes);
@@ -127,6 +142,9 @@ impl ChannelManager {
         model: &str,
         retry_after_secs: Option<u64>,
     ) {
+        if self.disable_cooling {
+            return;
+        }
         let ch_arc = {
             let channels = self.channels.read().await;
             channels.get(&id).map(Arc::clone)

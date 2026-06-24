@@ -203,6 +203,13 @@ pub struct GatewayConfig {
     /// Default: 0 (disabled).
     #[serde(default)]
     pub stream_bootstrap_retries: u32,
+    /// When true, globally disables circuit breaker cooldown on failures.
+    /// Useful for testing or deployments where cooling is not desired.
+    #[serde(default)]
+    pub disable_cooling: bool,
+    /// TLS configuration for native HTTPS binding.
+    #[serde(default)]
+    pub tls: TlsConfig,
 }
 
 /// Per-model retry configuration overrides.
@@ -218,6 +225,30 @@ pub struct ModelRetryConfig {
     /// Override the global retry_max_ms for this model.
     #[serde(default)]
     pub retry_max_ms: Option<u64>,
+}
+
+/// TLS configuration for native HTTPS binding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsConfig {
+    /// Enable TLS/HTTPS binding.
+    #[serde(default)]
+    pub enable: bool,
+    /// Path to PEM-encoded certificate file.
+    #[serde(default)]
+    pub cert: String,
+    /// Path to PEM-encoded private key file.
+    #[serde(default)]
+    pub key: String,
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            enable: false,
+            cert: String::new(),
+            key: String::new(),
+        }
+    }
 }
 
 /// Privacy guardrail configuration for the sanitizer middleware.
@@ -524,6 +555,8 @@ impl Default for GatewayConfig {
             log_max_file_size_mb: default_log_max_file_size_mb(),
             log_max_files: default_log_max_files(),
             stream_bootstrap_retries: 0,
+            disable_cooling: false,
+            tls: TlsConfig::default(),
         }
     }
 }

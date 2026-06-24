@@ -31,6 +31,8 @@ use crate::GatewayHandles;
 
 use axum::routing::{delete, get, post, put};
 use axum::Router;
+use std::fs::File;
+use std::io::BufReader;
 use std::sync::Arc;
 use tokio::sync::{oneshot, Notify};
 use tower_http::compression::CompressionLayer;
@@ -202,6 +204,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         port,
         drain_timeout_secs: config.gateway.drain_timeout_secs,
         web_console_dir: config.gateway.web_console_dir.clone(),
+        tls: config.gateway.tls.clone(),
     }
 }
 
@@ -659,7 +662,13 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
         .layer(axum::middleware::from_fn(
             middleware::security_headers::security_headers_middleware,
         ))
-        .layer(CompressionLayer::new().gzip(true))
+        .layer(
+            CompressionLayer::new()
+                .gzip(true)
+                .br(true)
+                .zstd(true)
+                .deflate(true),
+        )
         .layer(cors_layer)
         .layer(TraceLayer::new_for_http())
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024));
@@ -776,6 +785,7 @@ pub async fn start_gateway(
     shutdown_notify: Option<Arc<Notify>>,
     bind_notify: Option<oneshot::Sender<Result<(), String>>>,
     web_console_dir: Option<&str>,
+    tls_config: config::TlsConfig,
 ) {
     // Security gate: refuse to start in web console mode without admin_token
     // on a non-loopback bind address. This prevents accidentally exposing
@@ -863,28 +873,137 @@ pub async fn start_gateway(
         }
     };
 
-    let shutdown_fut: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
-        match shutdown_notify {
-            Some(notify) => Box::pin(async move {
-                notify.notified().await;
-                tracing::info!("Gateway shutdown requested via notify");
-            }),
-            None => Box::pin(shutdown_signal()),
-        };
-    let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_fut);
+    if tls_config.enable {
+        let cert_path = &tls_config.cert;
+        let key_path = &tls_config.key;
 
-    match tokio::time::timeout(std::time::Duration::from_secs(drain_timeout_secs), server).await {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => {
-            tracing::error!("Gateway error: {e}");
+        // Load TLS certificate and key from PEM files
+        let cert_file = File::open(cert_path).unwrap_or_else(|e| {
+            tracing::error!("Failed to open TLS cert file '{}': {}", cert_path, e);
+            // Return empty file handle — will fail later with clearer error
+            panic!("TLS cert file not found: {}", cert_path);
+        });
+        let mut cert_reader = BufReader::new(cert_file);
+        let certs: Vec<rustls::pki_types::CertificateDer<'static>> =
+            rustls_pemfile::certs(&mut cert_reader)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to parse TLS certificate: {}", e);
+                    panic!("TLS cert parse error: {}", e);
+                });
+
+        let key_file = File::open(key_path).unwrap_or_else(|e| {
+            tracing::error!("Failed to open TLS key file '{}': {}", key_path, e);
+            panic!("TLS key file not found: {}", key_path);
+        });
+        let mut key_reader = BufReader::new(key_file);
+        let key = rustls_pemfile::private_key(&mut key_reader)
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to parse TLS private key: {}", e);
+                panic!("TLS key parse error: {}", e);
+            })
+            .expect("No private key found in TLS key file");
+
+        let tls_server_config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to build TLS config: {}", e);
+                panic!("TLS config error: {}", e);
+            });
+        let tls_acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(tls_server_config));
+
+        let shutdown_fut: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
+            match shutdown_notify {
+                Some(notify) => Box::pin(async move {
+                    notify.notified().await;
+                    tracing::info!("Gateway TLS shutdown requested via notify");
+                }),
+                None => Box::pin(shutdown_signal()),
+            };
+
+        // TLS accept loop: wrap each connection with TLS, then serve via hyper HTTP/1.1
+        let tls_serve = async {
+            tokio::pin!(shutdown_fut);
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = &mut shutdown_fut => {
+                        tracing::info!("Gateway TLS accept loop shutting down");
+                        break;
+                    }
+                    result = listener.accept() => {
+                        match result {
+                            Ok((stream, peer)) => {
+                                let acceptor = tls_acceptor.clone();
+                                let app_clone = app.clone();
+                                tokio::spawn(async move {
+                                    match acceptor.accept(stream).await {
+                                        Ok(tls_stream) => {
+                                            let io = hyper_util::rt::TokioIo::new(tls_stream);
+                                            let svc = hyper_util::service::TowerToHyperService::new(app_clone);
+                                            if let Err(e) = hyper::server::conn::http1::Builder::new()
+                                                .serve_connection(io, svc)
+                                                .await
+                                            {
+                                                tracing::error!("TLS connection error from {}: {}", peer, e);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("TLS handshake failed from {}: {}", peer, e);
+                                        }
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                tracing::error!("Accept error on TLS listener: {}", e);
+                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(drain_timeout_secs),
+            tls_serve,
+        )
+        .await
+        {
+            Ok(()) => {}
+            Err(_elapsed) => {
+                tracing::warn!(
+                    "Graceful drain timed out after {drain_timeout_secs}s — forcing shutdown"
+                );
+            }
         }
-        Err(_elapsed) => {
-            tracing::warn!(
-                "Graceful drain timed out after {drain_timeout_secs}s — forcing shutdown"
-            );
+        tracing::info!("Gateway TLS server exited");
+    } else {
+        let shutdown_fut: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
+            match shutdown_notify {
+                Some(notify) => Box::pin(async move {
+                    notify.notified().await;
+                    tracing::info!("Gateway shutdown requested via notify");
+                }),
+                None => Box::pin(shutdown_signal()),
+            };
+        let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_fut);
+
+        match tokio::time::timeout(std::time::Duration::from_secs(drain_timeout_secs), server).await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                tracing::error!("Gateway error: {e}");
+            }
+            Err(_elapsed) => {
+                tracing::warn!(
+                    "Graceful drain timed out after {drain_timeout_secs}s — forcing shutdown"
+                );
+            }
         }
+        tracing::info!("Gateway server exited");
     }
-    tracing::info!("Gateway server exited");
 
     // Persist quota data on shutdown
     quota_for_shutdown.persist_sync();

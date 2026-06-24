@@ -68,6 +68,7 @@ pub struct GatewayHandles {
     pub port: u16,
     pub drain_timeout_secs: u64,
     pub web_console_dir: Option<String>,
+    pub tls: crate::config::TlsConfig,
 }
 
 // -- Tauri entry point -------------------------------------------------------

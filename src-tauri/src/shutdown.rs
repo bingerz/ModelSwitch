@@ -35,6 +35,7 @@ pub async fn run_gateway(handles: GatewayHandles) {
         port,
         drain_timeout_secs,
         web_console_dir,
+        tls,
     } = handles;
     start_gateway(
         state,
@@ -44,6 +45,7 @@ pub async fn run_gateway(handles: GatewayHandles) {
         None,
         None,
         web_console_dir.as_deref(),
+        tls,
     )
     .await;
 }
