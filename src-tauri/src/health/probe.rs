@@ -1,5 +1,25 @@
 use crate::channel::{Channel, Provider};
 
+/// Simple connectivity probe — checks that the channel's base URL is reachable
+/// without sending any API-specific requests or using credentials.
+///
+/// Returns `true` if the server responds with any HTTP status code (even an
+/// error like 404 or 405), indicating the host is up and accepting connections.
+/// Returns `false` only on network-level failures (connection refused, DNS
+/// resolution failure, timeout).
+///
+/// This is intentionally simpler than [`probe_channel`]: it does not use API
+/// keys, hit provider-specific endpoints, or validate credentials. It only
+/// verifies that the upstream host is alive.
+pub async fn probe_connectivity(http_client: &reqwest::Client, channel: &Channel) -> bool {
+    let result = http_client
+        .get(&channel.base_url)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await;
+    result.is_ok()
+}
+
 /// Send a lightweight probe request to check if a channel is healthy.
 /// Uses provider-appropriate endpoints with real auth:
 /// - OpenAI/DeepSeek/OpenRouter/Custom: GET /v1/models with Bearer token
@@ -9,6 +29,7 @@ use crate::channel::{Channel, Provider};
 /// 200/429 = healthy (endpoint reachable, key valid / rate-limited)
 /// 401/403 = unhealthy (key invalid or unauthorized)
 /// Connection error = unhealthy
+#[allow(dead_code)]
 pub async fn probe_channel(
     http_client: &reqwest::Client,
     channel: &Channel,
@@ -380,5 +401,44 @@ mod tests {
         let channel = make_channel(Provider::Ollama, &server.uri());
         let result = probe_channel(&http_client(), &channel, Some("ollama")).await;
         assert!(!result, "Ollama 401 should indicate unhealthy");
+    }
+
+    // -- probe_connectivity tests --------------------------------------------
+
+    #[tokio::test]
+    async fn connectivity_probe_returns_true_on_any_http_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let channel = make_channel(Provider::OpenAI, &server.uri());
+        let result = probe_connectivity(&http_client(), &channel).await;
+        assert!(
+            result,
+            "Any HTTP response (even 404) means the host is reachable"
+        );
+    }
+
+    #[tokio::test]
+    async fn connectivity_probe_returns_true_on_405() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(405))
+            .mount(&server)
+            .await;
+
+        let channel = make_channel(Provider::OpenAI, &server.uri());
+        let result = probe_connectivity(&http_client(), &channel).await;
+        assert!(result, "405 Method Not Allowed still means host is reachable");
+    }
+
+    #[tokio::test]
+    async fn connectivity_probe_returns_false_on_connection_error() {
+        // Port 1 is reserved and will refuse connections
+        let channel = make_channel(Provider::OpenAI, "http://127.0.0.1:1");
+        let result = probe_connectivity(&http_client(), &channel).await;
+        assert!(!result, "Connection refused should return false");
     }
 }

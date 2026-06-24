@@ -9,6 +9,7 @@ use std::time::Duration;
 /// When the probe succeeds, latency is recorded and circuit-open channels
 /// are force-recovered. When it fails, healthy channels are tripped to
 /// circuit-open.
+#[allow(dead_code)]
 pub(crate) async fn check_channel_health(
     channel_mgr: &ChannelManager,
     http_client: &reqwest::Client,
@@ -44,6 +45,11 @@ pub(crate) async fn check_channel_health(
 
 /// Start the background health checker loop.
 /// Periodically probes all enabled channels and updates their status.
+///
+/// This is the more thorough probe that sends provider-specific API requests
+/// to validate credentials and endpoint reachability. For a simpler
+/// connectivity-only check, use [`run_periodic_probe`] instead.
+#[allow(dead_code)]
 pub fn start_health_checker(
     channel_mgr: Arc<ChannelManager>,
     interval_secs: u64,
@@ -71,6 +77,69 @@ pub fn start_health_checker(
             futures::future::join_all(futures).await;
         }
     });
+}
+
+/// Run a periodic connectivity probe against all enabled channels.
+///
+/// This is a simplified health check (P2-7) that only verifies each channel's
+/// base URL is reachable via a simple HTTP GET — no API-specific endpoints,
+/// no credentials, no model requests. Suitable as a lightweight liveness check
+/// that runs alongside (or instead of) the more thorough [`start_health_checker`].
+///
+/// When `interval_secs` is 0, the function returns immediately (disabled).
+///
+/// When a previously circuit-open channel responds to the connectivity probe,
+/// it is force-recovered. When a healthy channel fails connectivity, its
+/// circuit breaker is opened.
+pub async fn run_periodic_probe(state: Arc<crate::proxy::AppState>, interval_secs: u64) {
+    if interval_secs == 0 {
+        tracing::debug!("Periodic connectivity probe disabled (interval_secs = 0)");
+        return;
+    }
+
+    tracing::info!(interval_secs, "Starting periodic connectivity probe");
+    // PooledClient derefs to reqwest::Client; .clone() on the derefed target
+    // produces an owned reqwest::Client suitable for moving into the loop.
+    let http_client: reqwest::Client = state.http_pool.first().clone();
+    let mut ticker = tokio::time::interval(Duration::from_secs(interval_secs));
+
+    loop {
+        ticker.tick().await;
+
+        let channels = state.channel_mgr.list().await;
+        let channel_mgr = Arc::clone(&state.channel_mgr);
+
+        // Probe all enabled channels concurrently
+        let futures: Vec<_> = channels
+            .iter()
+            .filter(|ch| ch.enabled)
+            .map(|ch| {
+                let http_client = http_client.clone();
+                let channel_mgr = Arc::clone(&channel_mgr);
+                let channel = ch.clone();
+                async move {
+                    let healthy = probe::probe_connectivity(&http_client, &channel).await;
+                    if healthy {
+                        if channel.status == ChannelStatus::CircuitOpen {
+                            tracing::info!(
+                                channel = %channel.name,
+                                "Connectivity probe succeeded — recovering channel"
+                            );
+                            channel_mgr.force_recover(channel.id).await;
+                        }
+                    } else if channel.status == ChannelStatus::Healthy {
+                        tracing::warn!(
+                            channel = %channel.name,
+                            "Connectivity probe failed — opening circuit"
+                        );
+                        channel_mgr.mark_circuit_open(channel.id).await;
+                    }
+                }
+            })
+            .collect();
+
+        futures::future::join_all(futures).await;
+    }
 }
 
 #[cfg(test)]

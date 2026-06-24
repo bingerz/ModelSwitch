@@ -359,6 +359,11 @@ pub(crate) async fn dispatch(
     let deadline =
         start + std::time::Duration::from_secs(state.gateway.request_timeout_secs.unwrap_or(120));
 
+    // P2-8: Pre-compute serialized body length for pre-flight context estimation.
+    // This is a rough heuristic (chars / 4 ≈ tokens) used to skip models whose
+    // context window is definitely too small before entering the retry loop.
+    let body_str_len = serde_json::to_string(body).unwrap_or_default().len();
+
     for (model_idx, current_model) in fallback_chain.iter().enumerate() {
         let model_max_retries = model_retry_counts[model_idx];
         let model_cfg =
@@ -367,6 +372,50 @@ pub(crate) async fn dispatch(
             .retry_base_ms
             .unwrap_or(state.gateway.retry_base_ms);
         let model_max_ms = model_cfg.retry_max_ms.unwrap_or(state.gateway.retry_max_ms);
+
+        // P2-8: Pre-flight context validation — skip models whose context window
+        // is definitely too small for the request body. This avoids wasting retry
+        // budget on a model that cannot possibly fit the request. The per-attempt
+        // check in attempt.rs provides a more accurate check after body mutation;
+        // this dispatch-level check is a fast early-exit heuristic.
+        {
+            let registry = state.model_registry.read();
+            let caps = registry.get(current_model);
+            if let Some(max_ctx) = caps.max_context_tokens {
+                let estimated_tokens = (body_str_len / 4) as u64;
+                if estimated_tokens > max_ctx {
+                    tracing::warn!(
+                        model = %current_model,
+                        estimated_tokens,
+                        max_context = max_ctx,
+                        "Pre-flight: request likely exceeds model context window, skipping model"
+                    );
+                    continue;
+                }
+            }
+        }
+
+        // P2-9: Fallback negative caching — skip models with no available channel.
+        // If no enabled, available channel can serve this model, there is no point
+        // entering the retry loop (channel selection will fail immediately anyway).
+        {
+            let guard = channels.read().await;
+            let has_channel = guard.values().any(|ch_arc| {
+                let ch = ch_arc.read();
+                ch.enabled
+                    && ch.is_available()
+                    && !ch.is_model_excluded(current_model)
+                    && (ch.model_mapping.is_empty()
+                        || ch.model_mapping.contains_key(current_model))
+            });
+            if !has_channel {
+                tracing::debug!(
+                    model = %current_model,
+                    "Skipping fallback model — no available channel"
+                );
+                continue;
+            }
+        }
 
         let mut attempt: u32 = 0;
 

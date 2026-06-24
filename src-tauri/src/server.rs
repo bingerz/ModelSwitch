@@ -349,12 +349,15 @@ fn spawn_persistence_tasks(state: &Arc<AppState>) {
 
 /// Spawn background services: health checker, quota poller, session affinity cleanup, cache sweep.
 fn spawn_background_services(state: &Arc<AppState>, config: &AppConfig) {
-    // Start background health checker
-    if config.gateway.health_check_enabled {
-        let hc_mgr = Arc::clone(&state.channel_mgr);
-        let hc_client = state.http_pool.first().clone();
-        let hc_interval = config.gateway.health_check_interval_secs;
-        health::start_health_checker(hc_mgr, hc_interval, hc_client);
+    // Start background health probe (P2-7: simplified periodic connectivity check).
+    // When health_check_interval_secs > 0, spawns a lightweight probe that
+    // verifies each channel's base URL is reachable without sending API requests.
+    if config.gateway.health_check_enabled && config.gateway.health_check_interval_secs > 0 {
+        let probe_state = Arc::clone(state);
+        let probe_interval = config.gateway.health_check_interval_secs;
+        spawn_bg(async move {
+            health::run_periodic_probe(probe_state, probe_interval).await;
+        });
     }
 
     // Start background quota poller
