@@ -9,6 +9,7 @@ use crate::health;
 use crate::log::DispatchLogger;
 use crate::mcp::McpManager;
 use crate::middleware;
+use crate::model_registry::{refresh_from_endpoint, ModelRegistry};
 use crate::provider_budget::ProviderBudgetStore;
 use crate::proxy;
 use crate::proxy::cache::{CacheMode, InFlightRequests, RequestCache};
@@ -141,6 +142,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         credential_store,
         logger: Arc::clone(&logger),
         http_pool: http_pool.clone(),
+        model_registry: Arc::new(parking_lot::RwLock::new(ModelRegistry::new())),
         gateway: ProxyParams {
             request_timeout_secs: config.gateway.request_timeout_secs,
             stream_keepalive_secs: config.gateway.stream_keepalive_secs,
@@ -154,6 +156,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             retry_max_ms: config.gateway.retry_max_ms,
             model_retry_overrides: config.gateway.model_retry_overrides.clone(),
             nonstream_keepalive_interval_secs: config.gateway.nonstream_keepalive_interval_secs,
+            passthrough_headers: config.gateway.effective_passthrough_headers(),
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),
@@ -410,6 +413,15 @@ fn spawn_background_services(state: &Arc<AppState>, config: &AppConfig) {
             }
         });
     }
+
+    // Start background model discovery for channels with models_endpoint configured
+    {
+        let channel_mgr = Arc::clone(&state.channel_mgr);
+        let registry = Arc::clone(&state.model_registry);
+        spawn_bg(async move {
+            run_model_discovery(channel_mgr, registry).await;
+        });
+    }
 }
 
 /// Start the hot config reload watcher.
@@ -426,6 +438,73 @@ fn spawn_config_watcher(state: &Arc<AppState>, watcher_config_path: &Option<std:
             Arc::clone(&state.limits.rate_limiter),
             Arc::clone(&state.limits.payload_rules),
         );
+    }
+}
+
+/// Background model discovery for channels with `models_endpoint` configured.
+///
+/// Scans all channels on startup, finds those with a configured endpoint, and
+/// spawns a per-channel tokio task that periodically fetches available models
+/// and updates the shared registry.
+async fn run_model_discovery(
+    channel_mgr: Arc<ChannelManager>,
+    registry: Arc<parking_lot::RwLock<ModelRegistry>>,
+) {
+    use uuid::Uuid;
+
+    // Collect channels with models_endpoint
+    let configs: Vec<(Uuid, String, u64)> = {
+        let channels = channel_mgr.channels();
+        let guard = channels.read().await;
+        guard
+            .values()
+            .filter_map(|ch_arc| {
+                let ch = ch_arc.read();
+                ch.models_endpoint
+                    .as_ref()
+                    .map(|ep| (ch.id, ep.clone(), ch.models_refresh_interval_secs))
+            })
+            .collect()
+    };
+
+    for (channel_id, endpoint, interval_secs) in configs {
+        let mgr = Arc::clone(&channel_mgr);
+        let reg = Arc::clone(&registry);
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+            // First tick completes immediately, subsequent ticks wait for the interval
+            loop {
+                ticker.tick().await;
+                let api_key = mgr.get_credential(channel_id).await;
+                if let Some(key) = api_key {
+                    match refresh_from_endpoint(&endpoint, &key).await {
+                        Ok(models) => {
+                            tracing::info!(
+                                channel_id = %channel_id,
+                                count = models.len(),
+                                "Discovered {} models from endpoint {}",
+                                models.len(),
+                                endpoint,
+                            );
+                            reg.write().update_models(models, &endpoint);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                channel_id = %channel_id,
+                                error = %e,
+                                "Failed to refresh models from endpoint {}",
+                                endpoint,
+                            );
+                        }
+                    }
+                } else {
+                    tracing::warn!(
+                        channel_id = %channel_id,
+                        "No API key found for model discovery",
+                    );
+                }
+            }
+        });
     }
 }
 
@@ -579,7 +658,7 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
         .layer(axum::middleware::from_fn(
             middleware::security_headers::security_headers_middleware,
         ))
-        .layer(CompressionLayer::new())
+        .layer(CompressionLayer::new().gzip(true))
         .layer(cors_layer)
         .layer(TraceLayer::new_for_http())
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024));

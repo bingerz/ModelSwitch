@@ -20,11 +20,12 @@ use crate::config::{AppConfig, ChannelConfig, GatewayConfig, SanitizerConfig};
 use crate::credential::{create_credential_store, SharedCredentialStore};
 use crate::log::DispatchLogger;
 use crate::mcp::McpManager;
+use crate::model_registry::ModelRegistry;
 use crate::proxy::cache::{CacheMode, InFlightRequests, RequestCache};
-use crate::proxy::dispatch;
 use crate::proxy::payload_rules::ChannelPayloadRules;
 use crate::proxy::provider::OpenAIAdaptor;
 use crate::proxy::rate_limiter::RateLimiter;
+use crate::proxy::{dispatch, RequestFormat};
 use crate::proxy::{
     AppState, BillingState, CacheState, LimitsState, McpState, ProxyParams, RouterState,
     SecurityState,
@@ -175,6 +176,7 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
     let quota_store = Arc::new(QuotaStore::new());
     let virtual_key_store = Arc::new(VirtualKeyStore::new());
     let mcp_manager = Arc::new(McpManager::new());
+    let model_registry = Arc::new(parking_lot::RwLock::new(ModelRegistry::new()));
 
     Arc::new(AppState {
         channel_mgr,
@@ -194,6 +196,7 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
             retry_max_ms: config.gateway.retry_max_ms,
             model_retry_overrides: HashMap::new(),
             nonstream_keepalive_interval_secs: 0,
+            passthrough_headers: vec![],
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),
@@ -224,6 +227,7 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
             sanitizer_config: SanitizerConfig::default(),
             allowed_origins: None,
         },
+        model_registry,
         started_at: std::time::Instant::now(),
     })
 }
@@ -269,7 +273,14 @@ async fn dispatch_success() {
     let body = chat_request_body("gpt-4", "Say hello");
     let provider = openai_provider();
 
-    let response = dispatch(&state, &headers, &body, &provider).await;
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
 
     assert_eq!(response_status(&response), 200);
     let json = response_json(response).await;
@@ -322,7 +333,14 @@ async fn dispatch_retry_on_429() {
     let body = chat_request_body("gpt-4", "Test retry");
     let provider = openai_provider();
 
-    let response = dispatch(&state, &headers, &body, &provider).await;
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
 
     assert_eq!(
         response_status(&response),
@@ -387,7 +405,14 @@ async fn dispatch_all_channels_exhausted() {
     let body = chat_request_body("gpt-4", "This should fail");
     let provider = openai_provider();
 
-    let response = dispatch(&state, &headers, &body, &provider).await;
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
 
     // The all-exhausted response is a 429
     assert_eq!(
@@ -426,13 +451,27 @@ async fn dispatch_cache_hit() {
     let provider = openai_provider();
 
     // First request — should hit the upstream
-    let response1 = dispatch(&state, &headers, &body, &provider).await;
+    let response1 = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
     assert_eq!(response_status(&response1), 200);
     let json1 = response_json(response1).await;
     assert_eq!(json1["choices"][0]["message"]["content"], "Cached!");
 
     // Second identical request — should be served from cache
-    let response2 = dispatch(&state, &headers, &body, &provider).await;
+    let response2 = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
     assert_eq!(response_status(&response2), 200);
     let json2 = response_json(response2).await;
     assert_eq!(json2["choices"][0]["message"]["content"], "Cached!");
@@ -492,7 +531,14 @@ async fn dispatch_retry_on_5xx() {
     let body = chat_request_body("gpt-4", "Test 5xx retry");
     let provider = openai_provider();
 
-    let response = dispatch(&state, &headers, &body, &provider).await;
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
 
     assert_eq!(
         response_status(&response),
@@ -557,7 +603,14 @@ async fn dispatch_connection_error() {
     let body = chat_request_body("gpt-4", "Test connection error retry");
     let provider = openai_provider();
 
-    let response = dispatch(&state, &headers, &body, &provider).await;
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
 
     assert_eq!(
         response_status(&response),
@@ -605,12 +658,26 @@ async fn dispatch_cache_miss_different_body() {
 
     // First request with "first message"
     let body1 = chat_request_body("gpt-4", "first message");
-    let response1 = dispatch(&state, &headers, &body1, &provider).await;
+    let response1 = dispatch(
+        &state,
+        &headers,
+        &body1,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
     assert_eq!(response_status(&response1), 200);
 
     // Second request with "second message" — different body, should NOT be cached
     let body2 = chat_request_body("gpt-4", "second message");
-    let response2 = dispatch(&state, &headers, &body2, &provider).await;
+    let response2 = dispatch(
+        &state,
+        &headers,
+        &body2,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
     assert_eq!(response_status(&response2), 200);
 
     // The mock server should have received BOTH requests
@@ -651,7 +718,14 @@ async fn dispatch_streaming_success() {
     let body = streaming_request_body("gpt-4", "Stream test");
     let provider = openai_provider();
 
-    let response = dispatch(&state, &headers, &body, &provider).await;
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
 
     assert_eq!(
         response_status(&response),
@@ -696,7 +770,14 @@ async fn dispatch_no_available_channel() {
     let body = chat_request_body("gpt-4", "No channel available");
     let provider = openai_provider();
 
-    let response = dispatch(&state, &headers, &body, &provider).await;
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
 
     assert_eq!(
         response_status(&response),
@@ -767,7 +848,14 @@ async fn dispatch_with_account_group_header_routes_to_matching_channel() {
     let body = chat_request_body("gpt-4", "Route by group");
     let provider = openai_provider();
 
-    let response = dispatch(&state, &headers, &body, &provider).await;
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
 
     assert_eq!(response_status(&response), 200);
     let json = response_json(response).await;
@@ -831,7 +919,14 @@ async fn dispatch_without_account_group_header_uses_all_channels() {
     let body = chat_request_body("gpt-4", "No group header");
     let provider = openai_provider();
 
-    let response = dispatch(&state, &headers, &body, &provider).await;
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
 
     assert_eq!(
         response_status(&response),
@@ -868,7 +963,14 @@ async fn dispatch_with_account_group_includes_ungrouped_channels() {
     let body = chat_request_body("gpt-4", "Ungrouped fallback");
     let provider = openai_provider();
 
-    let response = dispatch(&state, &headers, &body, &provider).await;
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
 
     assert_eq!(response_status(&response), 200);
     let json = response_json(response).await;
@@ -906,7 +1008,14 @@ async fn dispatch_with_non_matching_group_excludes_all_channels() {
     let body = chat_request_body("gpt-4", "No matching group");
     let provider = openai_provider();
 
-    let response = dispatch(&state, &headers, &body, &provider).await;
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
 
     assert_eq!(
         response_status(&response),

@@ -11,7 +11,8 @@ use crate::proxy::stream::json_response;
 
 use super::provider::ProviderAdaptor;
 use super::response::{extract_passthrough_headers, handle_json_success, handle_streaming_success};
-use super::{estimate_tokens, make_log, FailureReason, SKIP_HEADERS};
+use super::translate::translate_request;
+use super::{estimate_tokens, make_log, FailureReason, RequestFormat, SKIP_HEADERS};
 
 /// Outcome of a single channel dispatch attempt.
 pub(super) enum AttemptOutcome {
@@ -76,8 +77,10 @@ pub(super) async fn try_channel_attempt(
     reserved_cents: u64,
     cache_key: u128,
     cache_key_material: &str,
+    request_format: RequestFormat,
 ) -> AttemptOutcome {
     let upstream_model = channel.map_model(current_model);
+    let upstream_format = provider.provider_request_format();
     let has_payload_rules = state.limits.payload_rules.has_rules(channel.id);
     let model_needs_change = upstream_model != current_model;
 
@@ -179,6 +182,22 @@ pub(super) async fn try_channel_attempt(
             return AttemptOutcome::Retry;
         }
     };
+
+    // If the request format differs from the channel's upstream provider format,
+    // translate the body before provider-specific transformation.
+    if request_format != upstream_format {
+        tracing::info!(
+            from = ?request_format,
+            to = ?upstream_format,
+            channel = %channel.name,
+            "Translating request body"
+        );
+        upstream_body = Cow::Owned(translate_request(
+            &upstream_body,
+            request_format,
+            upstream_format,
+        ));
+    }
 
     // Transform request body for provider-specific format (e.g., Gemini)
     let upstream_body = provider.transform_request(&upstream_body);
@@ -399,8 +418,10 @@ pub(super) async fn try_channel_attempt(
             .await;
     }
 
-    // Extract upstream response headers for passthrough before consuming body
-    let upstream_headers = extract_passthrough_headers(&resp);
+    // Extract upstream response headers for passthrough before consuming body.
+    // Uses the configurable list from gateway state (falls back to built-in
+    // defaults when the user hasn't customized it).
+    let upstream_headers = extract_passthrough_headers(&resp, &state.gateway.passthrough_headers);
 
     // Passive rate-limit extraction — update quota store from response headers
     {
@@ -429,6 +450,14 @@ pub(super) async fn try_channel_attempt(
     };
 
     if is_stream {
+        let needs_proto_translate =
+            request_format != upstream_format && !provider.is_gemini_stream();
+        let protocol_translation = if needs_proto_translate {
+            Some((request_format, upstream_format))
+        } else {
+            None
+        };
+
         let response = handle_streaming_success(
             state,
             channel,
@@ -449,6 +478,7 @@ pub(super) async fn try_channel_attempt(
             cache_key_material,
             pool_guard,
             _active_guard,
+            protocol_translation,
         )
         .await;
         AttemptOutcome::Respond(response)
@@ -473,6 +503,8 @@ pub(super) async fn try_channel_attempt(
             cache_key_material,
             pool_guard,
             _active_guard,
+            request_format,
+            upstream_format,
         )
         .await;
         AttemptOutcome::Respond(response)

@@ -18,6 +18,7 @@ use crate::config::{AppConfig, ChannelConfig, GatewayConfig, SanitizerConfig};
 use crate::credential::{create_credential_store, SharedCredentialStore};
 use crate::log::DispatchLogger;
 use crate::mcp::McpManager;
+use crate::model_registry::ModelRegistry;
 use crate::proxy::cache::{CacheMode, InFlightRequests, RequestCache};
 use crate::proxy::payload_rules::ChannelPayloadRules;
 use crate::proxy::rate_limiter::RateLimiter;
@@ -110,6 +111,7 @@ pub(crate) fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppSt
         credential_store,
         logger,
         http_pool,
+        model_registry: Arc::new(parking_lot::RwLock::new(ModelRegistry::new())),
         gateway: ProxyParams {
             request_timeout_secs: Some(30),
             stream_keepalive_secs: None,
@@ -123,6 +125,7 @@ pub(crate) fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppSt
             retry_max_ms: config.gateway.retry_max_ms,
             model_retry_overrides: HashMap::new(),
             nonstream_keepalive_interval_secs: 0,
+            passthrough_headers: vec![],
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),

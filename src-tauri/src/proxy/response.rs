@@ -15,7 +15,7 @@ use crate::router::active_requests::ActiveRequestGuard;
 
 use super::provider::ProviderAdaptor;
 use super::usage::{extract_usage, extract_usage_from_stream};
-use super::{estimate_tokens, make_log, PASSTHROUGH_RESPONSE_HEADERS};
+use super::{estimate_tokens, make_log, RequestFormat};
 
 #[cfg(test)]
 mod tests {
@@ -66,15 +66,21 @@ mod tests {
     }
 }
 
-/// Extract passthrough headers from an upstream response.
-pub(super) fn extract_passthrough_headers(resp: &reqwest::Response) -> Vec<(String, String)> {
-    PASSTHROUGH_RESPONSE_HEADERS
+/// Extract passthrough headers from an upstream response using a configurable
+/// list of header names. When `passthrough_list` is empty, no headers are
+/// extracted (the caller is responsible for providing the effective list,
+/// typically from `state.gateway.passthrough_headers`).
+pub(super) fn extract_passthrough_headers(
+    resp: &reqwest::Response,
+    passthrough_list: &[String],
+) -> Vec<(String, String)> {
+    passthrough_list
         .iter()
         .filter_map(|name| {
             resp.headers()
-                .get(*name)
+                .get(name.as_str())
                 .and_then(|v| v.to_str().ok())
-                .map(|v| (name.to_string(), v.to_string()))
+                .map(|v| (name.clone(), v.to_string()))
         })
         .collect()
 }
@@ -122,6 +128,7 @@ pub(super) async fn handle_streaming_success(
     cache_key_material: &str,
     pool_guard: crate::http_pool::PooledClient,
     active_guard: ActiveRequestGuard,
+    protocol_translation: Option<(RequestFormat, RequestFormat)>,
 ) -> Response {
     let is_gemini = provider.is_gemini_stream();
 
@@ -140,6 +147,7 @@ pub(super) async fn handle_streaming_success(
         is_gemini,
         upstream_model.to_string(),
         first_byte_timeout,
+        protocol_translation,
     );
 
     let est_tokens = estimate_tokens(body, true);
@@ -406,6 +414,8 @@ pub(super) async fn handle_json_success(
     cache_key_material: &str,
     pool_guard: crate::http_pool::PooledClient,
     active_guard: ActiveRequestGuard,
+    request_format: RequestFormat,
+    upstream_format: RequestFormat,
 ) -> Response {
     // Hold the pool guard and active-request guard until the function returns —
     // the non-streaming response body is fully consumed after `resp.bytes().await`
@@ -467,6 +477,27 @@ pub(super) async fn handle_json_success(
     } else {
         // Pass-through — use original bytes, no parse/re-serialize
         body_bytes
+    };
+
+    // Protocol translation: if the request format differs from upstream format,
+    // translate the response body from upstream_format to request_format.
+    let response_bytes: bytes::Bytes = if request_format != upstream_format {
+        let body_str = std::str::from_utf8(&response_bytes).unwrap_or("");
+        if let Ok(body_value) = serde_json::from_str::<serde_json::Value>(body_str) {
+            let translated = crate::proxy::translate::translate_response(
+                &body_value,
+                upstream_format,
+                request_format,
+                upstream_model,
+            );
+            bytes::Bytes::from(
+                serde_json::to_string(&translated).unwrap_or_else(|_| body_str.to_string()),
+            )
+        } else {
+            response_bytes
+        }
+    } else {
+        response_bytes
     };
 
     // Zero-copy str borrow from Bytes for usage extraction

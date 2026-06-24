@@ -2,6 +2,7 @@ use crate::channel::manager::ChannelManager;
 use crate::credential::SharedCredentialStore;
 use crate::log::DispatchLogger;
 use crate::mcp::McpManager;
+use crate::model_registry::ModelRegistry;
 use crate::proxy::cache::{InFlightRequests, RequestCache};
 use crate::proxy::payload_rules::ChannelPayloadRules;
 use crate::proxy::rate_limiter::RateLimiter;
@@ -9,6 +10,7 @@ use crate::quota::SharedQuotaStore;
 use crate::router::active_requests::ActiveRequests;
 use crate::router::affinity::SessionAffinity;
 use crate::virtual_key::SharedVirtualKeyStore;
+use parking_lot::RwLock as StdRwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -26,6 +28,9 @@ pub struct ProxyParams {
     pub retry_max_ms: u64,
     pub model_retry_overrides: HashMap<String, crate::config::ModelRetryConfig>,
     pub nonstream_keepalive_interval_secs: u64,
+    /// Upstream response headers to forward to the client.
+    /// When empty, the built-in default passthrough list is used.
+    pub passthrough_headers: Vec<String>,
 }
 
 /// Router state (session affinity, active request tracking, latency tracking).
@@ -75,6 +80,7 @@ pub struct AppState {
     pub credential_store: SharedCredentialStore,
     pub logger: Arc<DispatchLogger>,
     pub http_pool: crate::http_pool::HttpPool,
+    pub model_registry: Arc<StdRwLock<ModelRegistry>>,
     pub gateway: ProxyParams,
     pub router: RouterState,
     pub cache: CacheState,
