@@ -173,7 +173,7 @@ fn path_exists(body: &serde_json::Value, path: &str) -> bool {
 /// notation (e.g., `"generationConfig.thinkingConfig.thinkingBudget"`).
 /// Simple top-level keys like `"temperature"` are still supported — they are
 /// just single-segment paths.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PayloadRules {
     /// Default parameters to merge into the request if not present.
     #[serde(default)]
@@ -211,16 +211,6 @@ impl PayloadRules {
             delete_path(&mut body, path);
         }
         body
-    }
-}
-
-impl Default for PayloadRules {
-    fn default() -> Self {
-        Self {
-            defaults: HashMap::new(),
-            overrides: HashMap::new(),
-            strip: Vec::new(),
-        }
     }
 }
 
