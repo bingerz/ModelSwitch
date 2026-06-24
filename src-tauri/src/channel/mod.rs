@@ -148,6 +148,14 @@ pub struct Channel {
     /// Use "direct" to explicitly bypass any global proxy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_url: Option<String>,
+    /// Custom HTTP headers injected into upstream requests.
+    pub headers: HashMap<String, String>,
+    /// Per-channel max retries override.
+    pub max_retries: Option<u32>,
+    /// Optional endpoint for periodic model list refresh.
+    pub models_endpoint: Option<String>,
+    /// Interval between model list refreshes in seconds.
+    pub models_refresh_interval_secs: u64,
 }
 
 impl Channel {
@@ -317,6 +325,10 @@ impl Channel {
             excluded_models: c.excluded_models.clone(),
             model_cooldowns: HashMap::new(),
             proxy_url: c.proxy_url.clone(),
+            headers: c.headers.clone().unwrap_or_default(),
+            max_retries: c.max_retries,
+            models_endpoint: c.models_endpoint.clone(),
+            models_refresh_interval_secs: c.models_refresh_interval_secs,
         }
     }
 }
@@ -404,6 +416,10 @@ mod tests {
             excluded_models: vec![],
             model_cooldowns: HashMap::new(),
             proxy_url: None,
+            headers: HashMap::new(),
+            max_retries: None,
+            models_endpoint: None,
+            models_refresh_interval_secs: 300,
         }
     }
 

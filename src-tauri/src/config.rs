@@ -185,6 +185,10 @@ pub struct GatewayConfig {
     /// response, preventing client-side TCP timeouts.
     #[serde(default)]
     pub nonstream_keepalive_interval_secs: u64,
+    /// Upstream response headers to forward to the client.
+    /// If empty, defaults to the built-in passthrough list (rate limit headers, x-request-id).
+    #[serde(default)]
+    pub passthrough_headers: Vec<String>,
     /// Maximum log file size in MB before rotation (default 100).
     #[serde(default = "default_log_max_file_size_mb")]
     pub log_max_file_size_mb: u64,
@@ -311,6 +315,20 @@ pub struct ChannelConfig {
     /// Use "direct" to explicitly bypass any global proxy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_url: Option<String>,
+    /// Custom HTTP headers to inject into requests to this channel's upstream.
+    /// Headers are set after forwarding original request headers (last-value-wins).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headers: Option<HashMap<String, String>>,
+    /// Per-channel max retries override. If set, overrides the gateway-level max_retries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_retries: Option<u32>,
+    /// Optional endpoint to fetch available models from (e.g., "https://api.openai.com/v1/models").
+    /// When set, the model registry will periodically fetch and update the model list for this channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models_endpoint: Option<String>,
+    /// Interval in seconds between model list refresh polls. Defaults to 300 (5 minutes).
+    #[serde(default)]
+    pub models_refresh_interval_secs: u64,
 }
 
 /// Per-channel quota polling configuration.
@@ -424,6 +442,34 @@ fn default_log_max_files() -> usize {
     5
 }
 
+impl GatewayConfig {
+    /// Returns the effective passthrough headers: configured list if non-empty, otherwise built-in defaults.
+    pub fn effective_passthrough_headers(&self) -> Vec<String> {
+        if self.passthrough_headers.is_empty() {
+            vec![
+                "x-ratelimit-remaining".into(),
+                "x-ratelimit-limit".into(),
+                "x-ratelimit-reset".into(),
+                "x-ratelimit-limit-requests".into(),
+                "x-ratelimit-remaining-requests".into(),
+                "x-ratelimit-reset-requests".into(),
+                "x-ratelimit-limit-tokens".into(),
+                "x-ratelimit-remaining-tokens".into(),
+                "x-ratelimit-reset-tokens".into(),
+                "anthropic-ratelimit-requests-limit".into(),
+                "anthropic-ratelimit-requests-remaining".into(),
+                "anthropic-ratelimit-requests-reset".into(),
+                "anthropic-ratelimit-tokens-limit".into(),
+                "anthropic-ratelimit-tokens-remaining".into(),
+                "anthropic-ratelimit-tokens-reset".into(),
+                "x-request-id".into(),
+            ]
+        } else {
+            self.passthrough_headers.clone()
+        }
+    }
+}
+
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
@@ -466,6 +512,7 @@ impl Default for GatewayConfig {
             model_retry_overrides: HashMap::new(),
             allowed_origins: None,
             nonstream_keepalive_interval_secs: 0,
+            passthrough_headers: vec![],
             log_max_file_size_mb: default_log_max_file_size_mb(),
             log_max_files: default_log_max_files(),
         }

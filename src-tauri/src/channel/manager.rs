@@ -235,6 +235,14 @@ impl ChannelManager {
                         api_keys: c.api_keys.clone(),
                         excluded_models: c.excluded_models.clone(),
                         proxy_url: c.proxy_url.clone(),
+                        headers: if c.headers.is_empty() {
+                            None
+                        } else {
+                            Some(c.headers.clone())
+                        },
+                        max_retries: c.max_retries,
+                        models_endpoint: c.models_endpoint.clone(),
+                        models_refresh_interval_secs: c.models_refresh_interval_secs,
                     })
                 })
                 .collect()
@@ -358,6 +366,10 @@ mod tests {
             excluded_models: vec![],
             model_cooldowns: HashMap::new(),
             proxy_url: None,
+            headers: HashMap::new(),
+            max_retries: None,
+            models_endpoint: None,
+            models_refresh_interval_secs: 300,
         }
     }
 

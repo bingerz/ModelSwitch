@@ -64,6 +64,10 @@ fn config_changed(old: &ChannelConfig, new: &ChannelConfig) -> bool {
         || old.credential_ref != new.credential_ref
         || old.api_key != new.api_key
         || old.max_concurrent != new.max_concurrent
+        || old.headers != new.headers
+        || old.max_retries != new.max_retries
+        || old.models_endpoint != new.models_endpoint
+        || old.models_refresh_interval_secs != new.models_refresh_interval_secs
 }
 
 /// Convert a runtime `Channel` back into a `ChannelConfig` for diffing.
@@ -98,6 +102,14 @@ fn channel_to_config(ch: &Channel) -> ChannelConfig {
         api_keys: ch.api_keys.clone(),
         excluded_models: ch.excluded_models.clone(),
         proxy_url: ch.proxy_url.clone(),
+        headers: if ch.headers.is_empty() {
+            None
+        } else {
+            Some(ch.headers.clone())
+        },
+        max_retries: ch.max_retries,
+        models_endpoint: ch.models_endpoint.clone(),
+        models_refresh_interval_secs: ch.models_refresh_interval_secs,
     }
 }
 
@@ -296,6 +308,10 @@ mod tests {
             api_keys: vec![],
             excluded_models: vec![],
             proxy_url: None,
+            headers: None,
+            max_retries: None,
+            models_endpoint: None,
+            models_refresh_interval_secs: 0,
         }
     }
 

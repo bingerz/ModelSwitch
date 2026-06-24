@@ -1,6 +1,8 @@
 use serde_json::Value;
 
-/// Translate an OpenAI-format request body to Gemini format.
+use crate::proxy::RequestFormat;
+
+/// Translate a Gemini streaming response chunk to OpenAI SSE format.
 /// OpenAI: { model, messages: [{role, content}], stream }
 /// Gemini: { contents: [{role: "user"|"model", parts: [{text}]}], generationConfig }
 pub fn openai_to_gemini(body: &Value) -> Value {

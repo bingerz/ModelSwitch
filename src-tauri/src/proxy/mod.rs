@@ -36,6 +36,19 @@ use reqwest::StatusCode;
 use serde_json::Value;
 use uuid::Uuid;
 
+/// The wire-format of a proxy request/response.
+///
+/// Used by the translation registry to detect when the incoming request
+/// format differs from the upstream provider format, triggering automatic
+/// protocol translation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RequestFormat {
+    OpenAIChat,
+    AnthropicMessages,
+    Gemini,
+    OpenAIResponses,
+}
+
 /// Build a DispatchLog entry.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn make_log(

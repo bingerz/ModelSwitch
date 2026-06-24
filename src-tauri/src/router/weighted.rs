@@ -66,6 +66,10 @@ mod tests {
             excluded_models: vec![],
             model_cooldowns: HashMap::new(),
             proxy_url: None,
+            headers: HashMap::new(),
+            max_retries: None,
+            models_endpoint: None,
+            models_refresh_interval_secs: 300,
         }
     }
 

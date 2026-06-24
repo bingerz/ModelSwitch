@@ -57,6 +57,10 @@ pub(crate) fn channel_config(id: &str, name: &str, base_url: &str, priority: u8)
         api_keys: vec![],
         excluded_models: vec![],
         proxy_url: None,
+        headers: None,
+        max_retries: None,
+        models_endpoint: None,
+        models_refresh_interval_secs: 0,
     }
 }
 
