@@ -194,6 +194,11 @@ impl ModelRegistry {
         }
     }
 
+    /// Return all registered model IDs (both built-in and dynamically discovered).
+    pub fn list_models(&self) -> Vec<String> {
+        self.models.keys().cloned().collect()
+    }
+
     /// Look up capabilities for a model.
     ///
     /// Tries exact match first, then longest-prefix match (e.g.

@@ -549,6 +549,10 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
             post(proxy::images::handle_image_edits),
         )
         .route("/v1/models", get(proxy::openai::handle_list_models))
+        .route(
+            "/v1/models/{model_id}",
+            get(proxy::openai::handle_get_model),
+        )
         .route("/v1/tools", get(proxy::openai::handle_list_tools))
         .route("/v1/messages", post(proxy::anthropic::handle_messages))
         .route("/v1beta/models/{*path}", post(proxy::gemini::handle_gemini))
@@ -569,6 +573,10 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
         .route(
             "/api/provider/{provider}/v1/models",
             get(proxy::openai::handle_list_models),
+        )
+        .route(
+            "/api/provider/{provider}/v1/models/{model_id}",
+            get(proxy::openai::handle_get_model),
         )
         .layer(axum::middleware::from_fn_with_state(
             proxy_auth_state,

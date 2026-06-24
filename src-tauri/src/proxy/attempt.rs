@@ -201,7 +201,88 @@ pub(super) async fn try_channel_attempt(
     }
 
     // Transform request body for provider-specific format (e.g., Gemini)
-    let upstream_body = provider.transform_request(&upstream_body);
+    let mut upstream_body = provider.transform_request(&upstream_body);
+
+    // P0-1: Normalize thinking parameters for the target provider format.
+    // Converts between provider thinking formats (e.g., OpenAI reasoning_effort
+    // → Anthropic thinking.budget_tokens) so the upstream receives params in its
+    // native shape.
+    if upstream_body.is_object() {
+        crate::proxy::thinking::normalize_for_provider(
+            &mut upstream_body,
+            channel.provider.as_str(),
+        );
+    }
+
+    // P0-2: Query the model registry and (a) strip parameters the target model
+    // does not support, then (b) perform a pre-flight context check to avoid
+    // wasting an upstream call on a request that will definitely exceed the
+    // model's context window.
+    //
+    // The registry guard is `!Send` (parking_lot without `send_guard` feature),
+    // so it must be dropped before any `.await` point. We extract
+    // `max_context_tokens` inside the inner block and run the async
+    // pre-flight check after the guard is released.
+    let preflight_max_context = {
+        let registry = state.model_registry.read();
+        let caps = registry.get(current_model);
+
+        // Strip thinking / reasoning params when the model doesn't support them.
+        if !caps.supports_thinking {
+            if let Some(obj) = upstream_body.as_object_mut() {
+                obj.remove("thinking");
+                obj.remove("reasoning_effort");
+                obj.remove("reasoning");
+            }
+            if let Some(gen_config) = upstream_body
+                .get_mut("generationConfig")
+                .and_then(|gc| gc.as_object_mut())
+            {
+                gen_config.remove("thinkingConfig");
+            }
+        }
+
+        // Strip tool params when the model doesn't support function calling.
+        if !caps.supports_tools {
+            if let Some(obj) = upstream_body.as_object_mut() {
+                obj.remove("tools");
+                obj.remove("tool_choice");
+            }
+        }
+
+        caps.max_context_tokens
+    }; // registry guard dropped here
+
+    // Pre-flight context check — rough chars/4 token estimate.
+    // If the serialized body already exceeds the model's context window,
+    // skip the upstream call entirely and signal context overflow so the
+    // dispatch loop can try a larger-context fallback model.
+    if let Some(max_context) = preflight_max_context {
+        let body_len = serde_json::to_string(&upstream_body)
+            .unwrap_or_default()
+            .len();
+        let estimated_tokens = (body_len / 4) as u64;
+        if estimated_tokens > max_context {
+            tracing::warn!(
+                channel = %channel.name,
+                model = %current_model,
+                estimated_tokens,
+                max_context,
+                "Pre-flight context check failed — skipping upstream call"
+            );
+            log_attempt_failure(
+                &state.logger,
+                current_model,
+                channel,
+                attempt,
+                FailureReason::ContextOverflow,
+                start,
+                request_id,
+            )
+            .await;
+            return AttemptOutcome::ContextOverflow;
+        }
+    }
 
     // Build URL via provider (Gemini embeds model in URL; others use base_url + path)
     let url = provider.build_url(&channel.base_url, &upstream_model, is_stream);
