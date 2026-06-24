@@ -1,13 +1,109 @@
-use crate::channel::{manager::ChannelManager, Channel};
-use crate::config::AppConfig;
+use crate::channel::{manager::ChannelManager, Channel, CredentialType};
+use crate::config::{AppConfig, ChannelConfig};
 use crate::mcp::McpManager;
 use crate::proxy::payload_rules::ChannelPayloadRules;
 use crate::proxy::rate_limiter::RateLimiter;
 use notify::Watcher;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Compute which channels were added, removed, or changed.
+#[derive(Debug)]
+struct ChannelDiff {
+    added: Vec<ChannelConfig>,
+    removed: Vec<String>, // channel IDs
+    updated: Vec<ChannelConfig>,
+}
+
+/// Compute the diff between old and new channel configs.
+fn diff_channels(old: &[ChannelConfig], new: &[ChannelConfig]) -> ChannelDiff {
+    let old_map: HashMap<&str, &ChannelConfig> = old.iter().map(|c| (c.id.as_str(), c)).collect();
+    let new_map: HashMap<&str, &ChannelConfig> = new.iter().map(|c| (c.id.as_str(), c)).collect();
+
+    let mut added = Vec::new();
+    let mut removed = Vec::new();
+    let mut updated = Vec::new();
+
+    for c in new {
+        match old_map.get(c.id.as_str()) {
+            None => added.push(c.clone()),
+            Some(old_c) if config_changed(old_c, c) => updated.push(c.clone()),
+            _ => {} // unchanged
+        }
+    }
+
+    for c in old {
+        if !new_map.contains_key(c.id.as_str()) {
+            removed.push(c.id.clone());
+        }
+    }
+
+    ChannelDiff {
+        added,
+        removed,
+        updated,
+    }
+}
+
+/// Check if a channel's config has meaningfully changed.
+/// Compares fields that affect routing behavior.
+fn config_changed(old: &ChannelConfig, new: &ChannelConfig) -> bool {
+    old.name != new.name
+        || old.provider != new.provider
+        || old.priority != new.priority
+        || old.weight != new.weight
+        || old.enabled != new.enabled
+        || old.base_url != new.base_url
+        || old.model_mapping != new.model_mapping
+        || old.api_keys != new.api_keys
+        || old.excluded_models != new.excluded_models
+        || old.rpm_limit != new.rpm_limit
+        || old.tpm_limit != new.tpm_limit
+        || old.proxy_url != new.proxy_url
+        || old.credential_ref != new.credential_ref
+        || old.api_key != new.api_key
+        || old.max_concurrent != new.max_concurrent
+}
+
+/// Convert a runtime `Channel` back into a `ChannelConfig` for diffing.
+/// Only fields used by `config_changed` need to be accurate; runtime-only
+/// fields (payload_rules, quota) are set to `None`.
+fn channel_to_config(ch: &Channel) -> ChannelConfig {
+    ChannelConfig {
+        id: ch.id.to_string(),
+        name: ch.name.clone(),
+        provider: ch.provider.as_str().to_string(),
+        priority: ch.priority,
+        weight: ch.weight,
+        cost_per_token: ch.cost_per_token,
+        input_cost_per_mtok: ch.input_cost_per_mtok,
+        output_cost_per_mtok: ch.output_cost_per_mtok,
+        credential_type: match ch.credential.cred_type {
+            CredentialType::ApiKey => "api_key".to_string(),
+            CredentialType::WebSession => "web_session".to_string(),
+        },
+        credential_ref: ch.credential.key_ref.clone(),
+        api_key: ch.credential.api_key.clone(),
+        base_url: ch.base_url.clone(),
+        enabled: ch.enabled,
+        model_mapping: ch.model_mapping.clone(),
+        cooldown_minutes: ch.cooldown_minutes,
+        rpm_limit: ch.rpm_limit,
+        tpm_limit: ch.tpm_limit,
+        payload_rules: None,
+        quota: None,
+        account_group: ch.account_group.clone(),
+        max_concurrent: ch.max_concurrent,
+        api_keys: ch.api_keys.clone(),
+        excluded_models: ch.excluded_models.clone(),
+        proxy_url: ch.proxy_url.clone(),
+    }
+}
+
 /// Apply a config reload: update channels, MCP servers, rate limits, and payload rules.
+/// Uses diff-based updates so unchanged channels preserve their runtime state
+/// (latency stats, circuit breaker state, etc.).
 /// Extracted from the watcher loop for testability.
 pub(crate) async fn apply_config_reload(
     new_config: &AppConfig,
@@ -16,63 +112,43 @@ pub(crate) async fn apply_config_reload(
     rate_limiter: &RateLimiter,
     payload_rules: &ChannelPayloadRules,
 ) {
-    // Update channels atomically: build the complete new
-    // channel list outside any locks, then swap it in with
-    // a single write-lock acquisition. This prevents dispatch
-    // from seeing a partially-updated channel list.
-    let config_ids: std::collections::HashSet<uuid::Uuid> = new_config
-        .channels
-        .iter()
-        .filter_map(|cc| uuid::Uuid::parse_str(&cc.id).ok())
-        .collect();
-
-    // Snapshot current channels once (single read lock)
+    // Snapshot current channels and convert to configs for diffing
     let current_channels = channel_mgr.list().await;
-    let existing_by_id: std::collections::HashMap<uuid::Uuid, Channel> =
-        current_channels.into_iter().map(|c| (c.id, c)).collect();
+    let old_configs: Vec<ChannelConfig> = current_channels.iter().map(channel_to_config).collect();
 
-    // Build the full new channel list, preserving runtime
-    // state for channels that already exist.
-    let mut new_channels: Vec<Channel> = Vec::new();
-    for cc in &new_config.channels {
-        let id = uuid::Uuid::parse_str(&cc.id).unwrap_or_else(|_| uuid::Uuid::new_v4());
-        if let Some(existing) = existing_by_id.get(&id) {
-            // Update mutable fields only, preserve runtime state
-            let mut updated = existing.clone();
-            updated.weight = cc.weight;
-            updated.priority = cc.priority;
-            updated.enabled = cc.enabled;
-            updated.base_url = cc.base_url.clone();
-            updated.model_mapping = cc.model_mapping.clone();
-            updated.cost_per_token = cc.cost_per_token;
-            updated.input_cost_per_mtok = cc.input_cost_per_mtok;
-            updated.output_cost_per_mtok = cc.output_cost_per_mtok;
-            updated.cooldown_minutes = cc.cooldown_minutes;
-            updated.name = cc.name.clone();
-            updated.provider = crate::channel::Provider::from_str(&cc.provider);
-            updated.excluded_models = cc.excluded_models.clone();
-            updated.proxy_url = cc.proxy_url.clone();
-            new_channels.push(updated);
-        } else {
-            // New channel — create it
-            new_channels.push(Channel::from_config(cc));
-        }
+    // Compute diff — only touched channels will be modified
+    let diff = diff_channels(&old_configs, &new_config.channels);
+
+    // Added channels: create with fresh runtime state
+    for cc in &diff.added {
+        let ch = Channel::from_config(cc);
+        channel_mgr.create(ch).await;
     }
-    // Remove payload rules and log channels being removed (not in new config)
-    for ch in existing_by_id.values() {
-        if !config_ids.contains(&ch.id) {
-            tracing::info!(
-                channel = %ch.name,
-                id = %ch.id,
-                "Removing channel deleted from config"
-            );
-            payload_rules.remove(ch.id);
+
+    // Removed channels: delete and clean up payload rules
+    for id_str in &diff.removed {
+        if let Ok(uuid) = uuid::Uuid::parse_str(id_str) {
+            tracing::info!(channel_id = %id_str, "Removing channel deleted from config");
+            channel_mgr.delete(uuid).await;
+            payload_rules.remove(uuid);
         }
     }
 
-    // Atomically swap the entire channel list
-    channel_mgr.replace_all(new_channels).await;
-    tracing::info!("Config reload complete");
+    // Updated channels: replace config (resets runtime state for that channel)
+    for cc in &diff.updated {
+        let ch = Channel::from_config(cc);
+        let uuid = ch.id;
+        channel_mgr.update(uuid, ch).await;
+    }
+
+    // Unchanged channels: do nothing — runtime state is preserved
+
+    tracing::info!(
+        added = diff.added.len(),
+        removed = diff.removed.len(),
+        updated = diff.updated.len(),
+        "Config reloaded"
+    );
 
     // Reload MCP servers: preserve running servers that still exist,
     // stop removed servers, add new servers (not auto-started).
@@ -345,7 +421,7 @@ tpm_limit = 10000
     }
 
     #[tokio::test]
-    async fn reload_preserves_runtime_state_for_existing_channels() {
+    async fn reload_preserves_runtime_state_for_unchanged_channels() {
         let id = "00000000-0000-0000-0000-000000000001";
         let uuid = uuid::Uuid::parse_str(id).unwrap();
 
@@ -368,7 +444,58 @@ tpm_limit = 10000
         ch.consecutive_failures = 3;
         mgr.update(uuid, ch).await;
 
-        // Reload with updated config fields but same ID
+        // Reload with identical config — channel is unchanged
+        let new_config = make_app_config(vec![make_channel_config(
+            id,
+            "original",
+            "https://old.com",
+            1,
+        )]);
+        apply_config_reload(&new_config, &mgr, &mcp, &limiter, &rules).await;
+
+        let ch = mgr.get(uuid).await.unwrap();
+
+        // Runtime state preserved because config was unchanged
+        assert_eq!(
+            ch.status,
+            ChannelStatus::CircuitOpen,
+            "circuit breaker status should be preserved for unchanged channels"
+        );
+        assert_eq!(
+            ch.consecutive_failures, 3,
+            "failure count should be preserved for unchanged channels"
+        );
+        assert_eq!(
+            ch.avg_latency_ms, 250,
+            "latency should be preserved for unchanged channels"
+        );
+    }
+
+    #[tokio::test]
+    async fn reload_resets_runtime_state_for_updated_channels() {
+        let id = "00000000-0000-0000-0000-000000000001";
+        let uuid = uuid::Uuid::parse_str(id).unwrap();
+
+        // Seed the manager with a channel that has runtime state
+        let config = make_app_config(vec![make_channel_config(
+            id,
+            "original",
+            "https://old.com",
+            1,
+        )]);
+        let mgr = make_manager(&config);
+        let mcp = McpManager::new();
+        let limiter = RateLimiter::new(None);
+        let rules = ChannelPayloadRules::new();
+
+        // Simulate accumulated runtime state
+        mgr.mark_circuit_open(uuid).await;
+        let mut ch = mgr.get(uuid).await.unwrap();
+        ch.avg_latency_ms = 250;
+        ch.consecutive_failures = 3;
+        mgr.update(uuid, ch).await;
+
+        // Reload with changed config — channel is updated, runtime state resets
         let new_config = make_app_config(vec![make_channel_config(
             id,
             "updated-name",
@@ -383,17 +510,20 @@ tpm_limit = 10000
         assert_eq!(ch.base_url, "https://new-url.com");
         assert_eq!(ch.priority, 5);
 
-        // Runtime state preserved
+        // Runtime state reset because config changed
         assert_eq!(
             ch.status,
-            ChannelStatus::CircuitOpen,
-            "circuit breaker status should be preserved across reload"
+            ChannelStatus::Healthy,
+            "circuit breaker status should reset for updated channels"
         );
         assert_eq!(
-            ch.consecutive_failures, 3,
-            "failure count should be preserved"
+            ch.consecutive_failures, 0,
+            "failure count should reset for updated channels"
         );
-        assert_eq!(ch.avg_latency_ms, 250, "latency should be preserved");
+        assert_eq!(
+            ch.avg_latency_ms, 0,
+            "latency should reset for updated channels"
+        );
     }
 
     #[tokio::test]
@@ -578,7 +708,7 @@ tpm_limit = 10000
     }
 
     #[tokio::test]
-    async fn reload_preserves_half_open_status() {
+    async fn reload_preserves_half_open_status_for_unchanged_channels() {
         let id = "00000000-0000-0000-0000-000000000001";
         let uuid = uuid::Uuid::parse_str(id).unwrap();
 
@@ -594,18 +724,287 @@ tpm_limit = 10000
         ch.avg_latency_ms = 180;
         mgr.update(uuid, ch).await;
 
-        // Reload — state should be preserved
-        let new_config = make_app_config(vec![make_channel_config(
-            id,
-            "test-updated",
-            "https://a.com",
-            1,
-        )]);
+        // Reload with identical config — state should be preserved
+        let new_config = make_app_config(vec![make_channel_config(id, "test", "https://a.com", 1)]);
         apply_config_reload(&new_config, &mgr, &mcp, &limiter, &rules).await;
 
         let ch = mgr.get(uuid).await.unwrap();
         assert_eq!(ch.status, ChannelStatus::HalfOpen);
         assert_eq!(ch.avg_latency_ms, 180);
-        assert_eq!(ch.name, "test-updated");
+        assert_eq!(ch.name, "test");
+    }
+
+    // -- Diff function unit tests --------------------------------------------
+
+    #[test]
+    fn diff_channels_detects_added() {
+        let id1 = "chan-1";
+        let id2 = "chan-2";
+        let old = vec![make_channel_config(id1, "alpha", "https://a.com", 1)];
+        let new = vec![
+            make_channel_config(id1, "alpha", "https://a.com", 1),
+            make_channel_config(id2, "beta", "https://b.com", 2),
+        ];
+
+        let diff = diff_channels(&old, &new);
+        assert_eq!(diff.added.len(), 1);
+        assert_eq!(diff.added[0].id, id2);
+        assert!(diff.removed.is_empty());
+        assert!(diff.updated.is_empty());
+    }
+
+    #[test]
+    fn diff_channels_detects_removed() {
+        let id1 = "chan-1";
+        let id2 = "chan-2";
+        let old = vec![
+            make_channel_config(id1, "alpha", "https://a.com", 1),
+            make_channel_config(id2, "beta", "https://b.com", 2),
+        ];
+        let new = vec![make_channel_config(id1, "alpha", "https://a.com", 1)];
+
+        let diff = diff_channels(&old, &new);
+        assert!(diff.added.is_empty());
+        assert_eq!(diff.removed.len(), 1);
+        assert_eq!(diff.removed[0], id2);
+        assert!(diff.updated.is_empty());
+    }
+
+    #[test]
+    fn diff_channels_detects_updated() {
+        let id = "chan-1";
+        let old = vec![make_channel_config(id, "alpha", "https://a.com", 1)];
+        let new = vec![make_channel_config(id, "alpha-renamed", "https://a.com", 1)];
+
+        let diff = diff_channels(&old, &new);
+        assert!(diff.added.is_empty());
+        assert!(diff.removed.is_empty());
+        assert_eq!(diff.updated.len(), 1);
+        assert_eq!(diff.updated[0].name, "alpha-renamed");
+    }
+
+    #[test]
+    fn diff_channels_detects_unchanged() {
+        let id1 = "chan-1";
+        let id2 = "chan-2";
+        let old = vec![
+            make_channel_config(id1, "alpha", "https://a.com", 1),
+            make_channel_config(id2, "beta", "https://b.com", 2),
+        ];
+        // Same configs — no changes
+        let new = vec![
+            make_channel_config(id1, "alpha", "https://a.com", 1),
+            make_channel_config(id2, "beta", "https://b.com", 2),
+        ];
+
+        let diff = diff_channels(&old, &new);
+        assert!(diff.added.is_empty());
+        assert!(diff.removed.is_empty());
+        assert!(diff.updated.is_empty());
+    }
+
+    #[test]
+    fn diff_channels_handles_empty_old() {
+        let new = vec![make_channel_config("chan-1", "alpha", "https://a.com", 1)];
+
+        let diff = diff_channels(&[], &new);
+        assert_eq!(diff.added.len(), 1);
+        assert!(diff.removed.is_empty());
+        assert!(diff.updated.is_empty());
+    }
+
+    #[test]
+    fn diff_channels_handles_empty_new() {
+        let old = vec![make_channel_config("chan-1", "alpha", "https://a.com", 1)];
+
+        let diff = diff_channels(&old, &[]);
+        assert!(diff.added.is_empty());
+        assert_eq!(diff.removed.len(), 1);
+        assert!(diff.updated.is_empty());
+    }
+
+    #[test]
+    fn diff_channels_detects_mixed_changes() {
+        let id1 = "chan-1"; // unchanged
+        let id2 = "chan-2"; // updated
+        let id3 = "chan-3"; // removed
+        let id4 = "chan-4"; // added
+
+        let old = vec![
+            make_channel_config(id1, "alpha", "https://a.com", 1),
+            make_channel_config(id2, "beta", "https://b.com", 2),
+            make_channel_config(id3, "gamma", "https://c.com", 3),
+        ];
+        let new = vec![
+            make_channel_config(id1, "alpha", "https://a.com", 1), // unchanged
+            make_channel_config(id2, "beta-v2", "https://b.com", 2), // name changed
+            make_channel_config(id4, "delta", "https://d.com", 4), // new
+        ];
+
+        let diff = diff_channels(&old, &new);
+        assert_eq!(diff.added.len(), 1, "one channel added");
+        assert_eq!(diff.added[0].id, id4);
+        assert_eq!(diff.removed.len(), 1, "one channel removed");
+        assert_eq!(diff.removed[0], id3);
+        assert_eq!(diff.updated.len(), 1, "one channel updated");
+        assert_eq!(diff.updated[0].id, id2);
+    }
+
+    #[test]
+    fn config_changed_returns_false_for_identical_configs() {
+        let cc = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        assert!(!config_changed(&cc, &cc));
+    }
+
+    #[test]
+    fn config_changed_detects_name_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.name = "beta".to_string();
+        assert!(config_changed(&old, &new));
+    }
+
+    #[test]
+    fn config_changed_detects_priority_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.priority = 5;
+        assert!(config_changed(&old, &new));
+    }
+
+    #[test]
+    fn config_changed_detects_weight_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.weight = 200;
+        assert!(config_changed(&old, &new));
+    }
+
+    #[test]
+    fn config_changed_detects_enabled_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.enabled = false;
+        assert!(config_changed(&old, &new));
+    }
+
+    #[test]
+    fn config_changed_detects_base_url_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.base_url = "https://b.com".to_string();
+        assert!(config_changed(&old, &new));
+    }
+
+    #[test]
+    fn config_changed_detects_api_key_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.api_key = Some("sk-different".to_string());
+        assert!(config_changed(&old, &new));
+    }
+
+    #[test]
+    fn config_changed_detects_rpm_limit_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.rpm_limit = Some(60);
+        assert!(config_changed(&old, &new));
+    }
+
+    #[test]
+    fn config_changed_detects_proxy_url_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.proxy_url = Some("socks5://proxy:1080".to_string());
+        assert!(config_changed(&old, &new));
+    }
+
+    #[test]
+    fn config_changed_detects_model_mapping_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.model_mapping
+            .insert("gpt-4".to_string(), "gpt-4-turbo".to_string());
+        assert!(config_changed(&old, &new));
+    }
+
+    #[test]
+    fn config_changed_detects_api_keys_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.api_keys.push("sk-extra".to_string());
+        assert!(config_changed(&old, &new));
+    }
+
+    #[test]
+    fn config_changed_detects_excluded_models_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.excluded_models.push("*-preview".to_string());
+        assert!(config_changed(&old, &new));
+    }
+
+    #[test]
+    fn config_changed_detects_max_concurrent_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.max_concurrent = Some(10);
+        assert!(config_changed(&old, &new));
+    }
+
+    #[test]
+    fn config_changed_detects_credential_ref_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.credential_ref = "different-key".to_string();
+        assert!(config_changed(&old, &new));
+    }
+
+    #[test]
+    fn config_changed_detects_provider_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.provider = "anthropic".to_string();
+        assert!(config_changed(&old, &new));
+    }
+
+    #[test]
+    fn config_changed_detects_tpm_limit_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.tpm_limit = Some(10000);
+        assert!(config_changed(&old, &new));
+    }
+
+    #[test]
+    fn config_changed_ignores_payload_rules_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.payload_rules = Some(crate::config::PayloadRulesConfig {
+            defaults: HashMap::new(),
+            overrides: HashMap::new(),
+            strip: vec!["temperature".to_string()],
+            model_rules: vec![],
+        });
+        // payload_rules is not compared by config_changed
+        assert!(!config_changed(&old, &new));
+    }
+
+    #[test]
+    fn config_changed_ignores_quota_change() {
+        let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
+        let mut new = old.clone();
+        new.quota = Some(crate::config::QuotaConfig {
+            strategy: Some("http_api".to_string()),
+            balance_url: None,
+            balance_path: None,
+            limit_path: None,
+            usage_path: None,
+            auth_prefix: None,
+            refresh_secs: None,
+        });
+        // quota is not compared by config_changed
+        assert!(!config_changed(&old, &new));
     }
 }

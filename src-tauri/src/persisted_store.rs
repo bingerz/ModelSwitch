@@ -182,3 +182,240 @@ where
         &self.store_path
     }
 }
+
+// ---------------------------------------------------------------------------
+// PersistenceBackend trait + FileBackend
+// ---------------------------------------------------------------------------
+
+/// Backend storage for persisted data.
+/// The default implementation is file-based JSON.
+/// Future implementations can use databases (SQLite, PostgreSQL) instead.
+pub trait PersistenceBackend: Send + Sync {
+    /// Load all key-value pairs from storage.
+    fn load_all(&self) -> anyhow::Result<HashMap<String, serde_json::Value>>;
+
+    /// Save all key-value pairs to storage.
+    fn save_all(&self, data: &HashMap<String, serde_json::Value>) -> anyhow::Result<()>;
+}
+
+/// File-based JSON persistence backend (existing behavior).
+pub struct FileBackend {
+    path: std::path::PathBuf,
+}
+
+impl FileBackend {
+    pub fn new(path: impl Into<std::path::PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+}
+
+impl PersistenceBackend for FileBackend {
+    fn load_all(&self) -> anyhow::Result<HashMap<String, serde_json::Value>> {
+        if !self.path.exists() {
+            return Ok(HashMap::new());
+        }
+        let data = std::fs::read_to_string(&self.path)?;
+        if data.trim().is_empty() {
+            return Ok(HashMap::new());
+        }
+        let map: HashMap<String, serde_json::Value> = serde_json::from_str(&data)?;
+        Ok(map)
+    }
+
+    fn save_all(&self, data: &HashMap<String, serde_json::Value>) -> anyhow::Result<()> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let json = serde_json::to_string_pretty(data)?;
+
+        // Atomic write: write to temp file, then rename
+        let tmp = self.path.with_extension("tmp");
+        std::fs::write(&tmp, &json)?;
+        std::fs::rename(&tmp, &self.path)?;
+
+        // Set file permissions to 0600 (owner read/write only) for security
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600))?;
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod backend_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn file_backend_save_and_load_roundtrip() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "modelswitch_test_backend_roundtrip_{}.json",
+            uuid::Uuid::new_v4()
+        ));
+
+        let backend = FileBackend::new(&path);
+
+        let mut data = HashMap::new();
+        data.insert("key1".to_string(), json!("value1"));
+        data.insert("key2".to_string(), json!({"nested": 42}));
+        data.insert("key3".to_string(), json!([1, 2, 3]));
+
+        backend.save_all(&data).expect("save should succeed");
+
+        let loaded = backend.load_all().expect("load should succeed");
+        assert_eq!(loaded.len(), 3);
+        assert_eq!(loaded["key1"], json!("value1"));
+        assert_eq!(loaded["key2"], json!({"nested": 42}));
+        assert_eq!(loaded["key3"], json!([1, 2, 3]));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn file_backend_load_non_existent_returns_empty() {
+        let path = std::env::temp_dir().join("modelswitch_test_nonexistent_definitely.json");
+
+        // Ensure file does not exist
+        let _ = std::fs::remove_file(&path);
+
+        let backend = FileBackend::new(&path);
+        let loaded = backend
+            .load_all()
+            .expect("should not error on missing file");
+        assert!(
+            loaded.is_empty(),
+            "non-existent file should return empty map"
+        );
+    }
+
+    #[test]
+    fn file_backend_load_empty_file_returns_empty() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "modelswitch_test_backend_empty_{}.json",
+            uuid::Uuid::new_v4()
+        ));
+
+        // Write an empty file
+        std::fs::write(&path, "").expect("should write empty file");
+
+        let backend = FileBackend::new(&path);
+        let loaded = backend.load_all().expect("should not error on empty file");
+        assert!(
+            loaded.is_empty(),
+            "empty file should return empty map, not error"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn file_backend_load_whitespace_file_returns_empty() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "modelswitch_test_backend_whitespace_{}.json",
+            uuid::Uuid::new_v4()
+        ));
+
+        // Write a whitespace-only file
+        std::fs::write(&path, "   \n\n  ").expect("should write whitespace file");
+
+        let backend = FileBackend::new(&path);
+        let loaded = backend
+            .load_all()
+            .expect("should not error on whitespace file");
+        assert!(
+            loaded.is_empty(),
+            "whitespace-only file should return empty map"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn file_backend_atomic_write_cleans_up_temp() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "modelswitch_test_backend_atomic_{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        let tmp_path = path.with_extension("tmp");
+
+        let backend = FileBackend::new(&path);
+        let mut data = HashMap::new();
+        data.insert("key".to_string(), json!("value"));
+
+        backend.save_all(&data).expect("save should succeed");
+
+        // Temp file should not exist after atomic rename
+        assert!(
+            !tmp_path.exists(),
+            "temp file should be cleaned up after rename"
+        );
+        // Main file should exist with correct content
+        assert!(path.exists(), "main file should exist after save");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn file_backend_creates_parent_directories() {
+        let dir = std::env::temp_dir().join(format!(
+            "modelswitch_test_backend_subdir_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let path = dir.join("nested/deep/store.json");
+
+        let backend = FileBackend::new(&path);
+        let mut data = HashMap::new();
+        data.insert("key".to_string(), json!("value"));
+
+        backend
+            .save_all(&data)
+            .expect("save should create parent dirs");
+
+        assert!(path.exists(), "file should exist with created parent dirs");
+
+        let loaded = backend.load_all().expect("load should succeed");
+        assert_eq!(loaded["key"], json!("value"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_backend_overwrites_existing_data() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!(
+            "modelswitch_test_backend_overwrite_{}.json",
+            uuid::Uuid::new_v4()
+        ));
+
+        let backend = FileBackend::new(&path);
+
+        // Save initial data
+        let mut data1 = HashMap::new();
+        data1.insert("key1".to_string(), json!("value1"));
+        backend.save_all(&data1).expect("first save should succeed");
+
+        // Overwrite with different data
+        let mut data2 = HashMap::new();
+        data2.insert("key2".to_string(), json!("value2"));
+        backend
+            .save_all(&data2)
+            .expect("second save should succeed");
+
+        let loaded = backend.load_all().expect("load should succeed");
+        assert_eq!(loaded.len(), 1, "old data should be replaced");
+        assert_eq!(loaded["key2"], json!("value2"));
+        assert!(
+            !loaded.contains_key("key1"),
+            "old key should not exist after overwrite"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+}
