@@ -126,6 +126,7 @@ pub(crate) fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppSt
             model_retry_overrides: HashMap::new(),
             nonstream_keepalive_interval_secs: 0,
             passthrough_headers: vec![],
+            stream_bootstrap_retries: 0,
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),

@@ -153,6 +153,14 @@ fn test_config(channels: Vec<ChannelConfig>) -> AppConfig {
 /// mock server URLs. All sub-structs use real implementations with
 /// permissive defaults so dispatch behaves naturally.
 fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
+    build_test_state_with_opts(channel_configs, 0)
+}
+
+/// Same as `build_test_state` but allows configuring `stream_bootstrap_retries`.
+fn build_test_state_with_opts(
+    channel_configs: Vec<ChannelConfig>,
+    stream_bootstrap_retries: u32,
+) -> Arc<AppState> {
     let config = test_config(channel_configs);
     let credential_store: SharedCredentialStore = create_credential_store();
     let channel_mgr = Arc::new(ChannelManager::new(&config, Arc::clone(&credential_store)));
@@ -197,6 +205,7 @@ fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
             model_retry_overrides: HashMap::new(),
             nonstream_keepalive_interval_secs: 0,
             passthrough_headers: vec![],
+            stream_bootstrap_retries,
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),
@@ -1027,5 +1036,429 @@ async fn dispatch_with_non_matching_group_excludes_all_channels() {
     assert!(
         received.is_empty(),
         "upstream should not be called when no channels match the account group"
+    );
+}
+
+// ── Per-channel custom header injection tests (P1.5) ────────────────────────
+
+/// Build a `ChannelConfig` with custom headers.
+fn channel_config_with_headers(
+    id: &str,
+    name: &str,
+    base_url: &str,
+    priority: u8,
+    headers: HashMap<String, String>,
+) -> ChannelConfig {
+    let mut cfg = channel_config(id, name, base_url, priority);
+    cfg.headers = Some(headers);
+    cfg
+}
+
+/// Per-channel custom headers are forwarded to the upstream. Verify the mock
+/// server receives the custom header.
+#[tokio::test]
+async fn dispatch_injects_custom_headers() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(wiremock::matchers::header(
+            "x-custom-header",
+            "custom-value",
+        ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("Headers OK!")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let mut headers = HashMap::new();
+    headers.insert("x-custom-header".to_string(), "custom-value".to_string());
+
+    let state = build_test_state(vec![channel_config_with_headers(
+        "00000000-0000-0000-0000-000000000001",
+        "custom-header-channel",
+        &mock_server.uri(),
+        1,
+        headers,
+    )]);
+
+    let req_headers = HeaderMap::new();
+    let body = chat_request_body("gpt-4", "Test custom headers");
+    let provider = openai_provider();
+
+    let response = dispatch(
+        &state,
+        &req_headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
+
+    assert_eq!(
+        response_status(&response),
+        200,
+        "dispatch should succeed — custom header should be forwarded"
+    );
+}
+
+/// Denylisted headers (authorization, cookie, x-forwarded-for, etc.) must
+/// NOT be forwarded. Verify that the upstream never sees them.
+#[tokio::test]
+async fn dispatch_skips_denylisted_custom_headers() {
+    let mock_server = MockServer::start().await;
+
+    // Mount a mock that expects requests WITHOUT the denylisted headers.
+    // Use a non-conditional mock and verify the received request manually.
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(chat_completion_response("OK")))
+        .mount(&mock_server)
+        .await;
+
+    let mut headers = HashMap::new();
+    headers.insert("authorization".to_string(), "Bearer malicious".to_string());
+    headers.insert("cookie".to_string(), "session=stolen".to_string());
+    headers.insert("x-forwarded-for".to_string(), "10.0.0.1".to_string());
+    headers.insert("x-safe-header".to_string(), "safe-value".to_string());
+
+    let state = build_test_state(vec![channel_config_with_headers(
+        "00000000-0000-0000-0000-000000000001",
+        "denylist-channel",
+        &mock_server.uri(),
+        1,
+        headers,
+    )]);
+
+    let req_headers = HeaderMap::new();
+    let body = chat_request_body("gpt-4", "Test denylist");
+    let provider = openai_provider();
+
+    let response = dispatch(
+        &state,
+        &req_headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
+
+    assert_eq!(response_status(&response), 200);
+
+    // Check the request that was received
+    let received = mock_server.received_requests().await.unwrap();
+    assert_eq!(received.len(), 1);
+    let req = &received[0];
+
+    // Denylisted headers must NOT be present (beyond what apply_auth sets)
+    // The authorization header set by channel.headers should be overwritten
+    // by apply_auth with the real API key, not "Bearer malicious"
+    let auth = req
+        .headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok());
+    assert_ne!(
+        auth,
+        Some("Bearer malicious"),
+        "Denylisted 'authorization' from channel.headers must not override provider auth"
+    );
+
+    // Cookie must not be forwarded from channel config
+    assert!(
+        !req.headers.contains_key("cookie"),
+        "Denylisted 'cookie' header must not be forwarded"
+    );
+
+    // x-forwarded-for must not be forwarded
+    assert!(
+        !req.headers.contains_key("x-forwarded-for"),
+        "Denylisted 'x-forwarded-for' header must not be forwarded"
+    );
+
+    // Non-denylisted header should be present
+    assert_eq!(
+        req.headers
+            .get("x-safe-header")
+            .and_then(|v| v.to_str().ok()),
+        Some("safe-value"),
+        "Non-denylisted custom header should be forwarded"
+    );
+}
+
+// ── Per-channel retry limit tests (P1.7) ────────────────────────────────────
+
+/// Build a `ChannelConfig` with a custom `max_retries`.
+fn channel_config_with_max_retries(
+    id: &str,
+    name: &str,
+    base_url: &str,
+    priority: u8,
+    max_retries: u32,
+) -> ChannelConfig {
+    let mut cfg = channel_config(id, name, base_url, priority);
+    cfg.max_retries = Some(max_retries);
+    cfg
+}
+
+/// Channel with `max_retries = 1` should be skipped after the first attempt.
+/// When the only available channel has a low retry cap, dispatch should fail
+/// faster (fewer total requests) than with the global default.
+#[tokio::test]
+async fn dispatch_per_channel_retry_limit_caps_attempts() {
+    let mock_fail = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({
+            "error": {"message": "Always fails", "type": "server_error"}
+        })))
+        .mount(&mock_fail)
+        .await;
+
+    // Channel with max_retries = 1 — should only be tried once before being
+    // skipped. The global max_retries defaults to 3.
+    let state = build_test_state(vec![channel_config_with_max_retries(
+        "00000000-0000-0000-0000-000000000001",
+        "low-retry-channel",
+        &mock_fail.uri(),
+        1,
+        1,
+    )]);
+
+    let headers = HeaderMap::new();
+    let body = chat_request_body("gpt-4", "Test per-channel retry limit");
+    let provider = openai_provider();
+
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
+
+    // Should return 429 (all exhausted)
+    assert_eq!(response_status(&response), 429);
+
+    let received = mock_fail.received_requests().await.unwrap();
+    // With max_retries = 1, only the first attempt uses this channel.
+    // Subsequent attempts (attempt 2, 3) exceed the cap and skip it.
+    // So the mock should be hit exactly 1 time, not 3.
+    assert_eq!(
+        received.len(),
+        1,
+        "Channel with max_retries=1 should only receive 1 request, got {}",
+        received.len()
+    );
+}
+
+/// Channel with high `max_retries` should be retried normally.
+#[tokio::test]
+async fn dispatch_per_channel_retry_limit_allows_normal_retries() {
+    let mock_fail = MockServer::start().await;
+    let mock_success = MockServer::start().await;
+
+    // First channel with max_retries = 5, always fails
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({
+            "error": {"message": "fail", "type": "server_error"}
+        })))
+        .mount(&mock_fail)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("Success!")),
+        )
+        .mount(&mock_success)
+        .await;
+
+    let state = build_test_state(vec![
+        channel_config_with_max_retries(
+            "00000000-0000-0000-0000-000000000001",
+            "high-retry-fail",
+            &mock_fail.uri(),
+            1,
+            5,
+        ),
+        channel_config(
+            "00000000-0000-0000-0000-000000000002",
+            "success-channel",
+            &mock_success.uri(),
+            2,
+        ),
+    ]);
+
+    let headers = HeaderMap::new();
+    let body = chat_request_body("gpt-4", "Test normal retries");
+    let provider = openai_provider();
+
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
+
+    // Should succeed on the second channel
+    assert_eq!(response_status(&response), 200);
+}
+
+// ── Bootstrap retry for streaming tests (P0.2) ──────────────────────────────
+
+/// Bootstrap retry: when the first SSE chunk from upstream contains an error,
+/// the gateway should silently retry on the next channel instead of forwarding
+/// the error to the client.
+#[tokio::test]
+async fn dispatch_bootstrap_retry_on_stream_error() {
+    let mock_error = MockServer::start().await;
+    let mock_success = MockServer::start().await;
+
+    // First channel: returns 200 OK but the SSE body is an error event
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(
+                    r#"data: {"error":{"message":"Internal error","type":"server_error"}}
+
+"#,
+                ),
+        )
+        .mount(&mock_error)
+        .await;
+
+    // Second channel: returns 200 OK with a valid SSE stream
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"Recovered!\"}}]}\n\ndata: [DONE]\n\n",
+                ),
+        )
+        .mount(&mock_success)
+        .await;
+
+    let state = build_test_state_with_opts(
+        vec![
+            channel_config(
+                "00000000-0000-0000-0000-000000000001",
+                "error-stream-channel",
+                &mock_error.uri(),
+                1,
+            ),
+            channel_config(
+                "00000000-0000-0000-0000-000000000002",
+                "success-stream-channel",
+                &mock_success.uri(),
+                2,
+            ),
+        ],
+        2, // stream_bootstrap_retries = 2
+    );
+
+    let headers = HeaderMap::new();
+    let body = streaming_request_body("gpt-4", "Test bootstrap retry");
+    let provider = openai_provider();
+
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
+
+    // Should succeed — bootstrap retry detected the error in the first stream
+    // and retried on the second channel
+    assert_eq!(
+        response_status(&response),
+        200,
+        "bootstrap retry should detect error in first stream and retry"
+    );
+
+    // Both servers should have been hit
+    let error_requests = mock_error.received_requests().await.unwrap();
+    assert_eq!(
+        error_requests.len(),
+        1,
+        "error stream channel should have received 1 request"
+    );
+
+    let success_requests = mock_success.received_requests().await.unwrap();
+    assert_eq!(
+        success_requests.len(),
+        1,
+        "success stream channel should have received 1 request"
+    );
+}
+
+/// Bootstrap retry disabled (stream_bootstrap_retries = 0): the error SSE
+/// event from upstream is forwarded directly to the client.
+#[tokio::test]
+async fn dispatch_bootstrap_retry_disabled_forwards_error() {
+    let mock_error = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(
+                    r#"data: {"error":{"message":"Internal error","type":"server_error"}}
+
+"#,
+                ),
+        )
+        .mount(&mock_error)
+        .await;
+
+    // stream_bootstrap_retries = 0 (disabled) — the error is forwarded
+    let state = build_test_state_with_opts(
+        vec![channel_config(
+            "00000000-0000-0000-0000-000000000001",
+            "error-stream-channel",
+            &mock_error.uri(),
+            1,
+        )],
+        0, // stream_bootstrap_retries = 0 (disabled)
+    );
+
+    let headers = HeaderMap::new();
+    let body = streaming_request_body("gpt-4", "Test bootstrap disabled");
+    let provider = openai_provider();
+
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
+
+    // With bootstrap disabled, the 200 response with the error SSE is forwarded
+    assert_eq!(
+        response_status(&response),
+        200,
+        "with bootstrap disabled, the upstream response is forwarded directly"
+    );
+
+    // Only one request to the upstream — no retry
+    let error_requests = mock_error.received_requests().await.unwrap();
+    assert_eq!(
+        error_requests.len(),
+        1,
+        "with bootstrap disabled, only 1 request to upstream"
     );
 }

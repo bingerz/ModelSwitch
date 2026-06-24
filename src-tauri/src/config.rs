@@ -195,6 +195,14 @@ pub struct GatewayConfig {
     /// Maximum number of rotated log files to retain (default 5).
     #[serde(default = "default_log_max_files")]
     pub log_max_files: usize,
+    /// Number of bootstrap retry attempts for streaming requests.
+    /// When > 0, the gateway peeks at the first SSE chunk before forwarding
+    /// to the client. If the first chunk indicates an upstream error (e.g.,
+    /// error event in the stream), the request is silently retried on the
+    /// next channel instead of forwarding the error to the client.
+    /// Default: 0 (disabled).
+    #[serde(default)]
+    pub stream_bootstrap_retries: u32,
 }
 
 /// Per-model retry configuration overrides.
@@ -515,6 +523,7 @@ impl Default for GatewayConfig {
             passthrough_headers: vec![],
             log_max_file_size_mb: default_log_max_file_size_mb(),
             log_max_files: default_log_max_files(),
+            stream_bootstrap_retries: 0,
         }
     }
 }

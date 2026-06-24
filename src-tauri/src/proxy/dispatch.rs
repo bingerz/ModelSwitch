@@ -358,6 +358,21 @@ pub(crate) async fn dispatch(
                 continue;
             }
 
+            // Per-channel retry cap: if the selected channel declares a lower
+            // max_retries than the model-level default, skip it once the
+            // attempt count exceeds the channel's cap.
+            if let Some(ch_max) = channel.max_retries {
+                if attempt > ch_max {
+                    tracing::debug!(
+                        channel = %channel.name,
+                        attempt,
+                        channel_max = ch_max,
+                        "Channel retry cap reached, skipping channel"
+                    );
+                    continue;
+                }
+            }
+
             tracing::info!(
                 attempt,
                 total_attempts,

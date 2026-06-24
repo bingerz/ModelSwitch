@@ -1,5 +1,6 @@
 use axum::http::HeaderMap;
 use axum::response::Response;
+use futures::StreamExt;
 use reqwest::StatusCode;
 use serde_json::Value;
 use std::borrow::Cow;
@@ -244,6 +245,36 @@ pub(super) async fn try_channel_attempt(
     // Set provider-specific auth headers
     req_builder = provider.apply_auth(req_builder, &api_key, is_web_session);
 
+    // Inject per-channel custom headers.
+    // Security-sensitive headers are denied to prevent credential leakage
+    // or proxy metadata injection.
+    for (name, value) in &channel.headers {
+        const DENYLIST: &[&str] = &[
+            "host",
+            "transfer-encoding",
+            "content-length",
+            "connection",
+            "x-forwarded-for",
+            "x-forwarded-host",
+            "x-forwarded-proto",
+            "authorization",
+            "x-api-key",
+            "cookie",
+            "forwarded",
+        ];
+        let name_lower = name.to_lowercase();
+        if DENYLIST.contains(&name_lower.as_str()) {
+            tracing::warn!(header = %name, "Skipping denylisted custom header");
+            continue;
+        }
+        if let (Ok(hn), Ok(hv)) = (
+            axum::http::HeaderName::from_bytes(name.as_bytes()),
+            axum::http::HeaderValue::from_str(value),
+        ) {
+            req_builder = req_builder.header(hn, hv);
+        }
+    }
+
     if is_stream {
         req_builder = req_builder.header("Accept", "text/event-stream");
     }
@@ -458,10 +489,115 @@ pub(super) async fn try_channel_attempt(
             None
         };
 
+        // Bootstrap retry: peek at the first SSE chunk before committing to
+        // this stream. If the first chunk indicates an upstream error (e.g.,
+        // an error event in the SSE stream), silently retry on the next
+        // channel instead of forwarding the error to the client.
+        let bootstrap_retries = state.gateway.stream_bootstrap_retries;
+        let (upstream_stream, first_chunk) =
+            if bootstrap_retries > 0 && attempt <= bootstrap_retries {
+                let mut stream = resp.bytes_stream();
+                let ttft_secs = state.gateway.stream_ttft_timeout_secs.unwrap_or(30).max(1);
+                let first_result =
+                    tokio::time::timeout(std::time::Duration::from_secs(ttft_secs), stream.next())
+                        .await;
+
+                match first_result {
+                    Ok(Some(Ok(bytes))) => {
+                        let preview = String::from_utf8_lossy(&bytes);
+                        if is_stream_error_chunk(&preview) {
+                            tracing::warn!(
+                                channel = %channel.name,
+                                "Bootstrap retry: first SSE chunk indicates upstream error"
+                            );
+                            state.channel_mgr.mark_circuit_open(channel.id).await;
+                            log_attempt_failure(
+                                &state.logger,
+                                current_model,
+                                channel,
+                                attempt,
+                                FailureReason::ServerError,
+                                start,
+                                request_id,
+                            )
+                            .await;
+                            return AttemptOutcome::Retry;
+                        }
+                        tracing::debug!(
+                            channel = %channel.name,
+                            bytes = bytes.len(),
+                            "Bootstrap check passed — first chunk is clean"
+                        );
+                        (stream.boxed(), Some(bytes))
+                    }
+                    Ok(Some(Err(_e))) => {
+                        tracing::warn!(
+                            channel = %channel.name,
+                            error = %_e,
+                            "Bootstrap retry: stream error on first chunk"
+                        );
+                        log_attempt_failure(
+                            &state.logger,
+                            current_model,
+                            channel,
+                            attempt,
+                            FailureReason::ConnectionError,
+                            start,
+                            request_id,
+                        )
+                        .await;
+                        return AttemptOutcome::Retry;
+                    }
+                    Ok(None) => {
+                        tracing::warn!(
+                            channel = %channel.name,
+                            "Bootstrap retry: upstream stream ended before first chunk"
+                        );
+                        log_attempt_failure(
+                            &state.logger,
+                            current_model,
+                            channel,
+                            attempt,
+                            FailureReason::ServerError,
+                            start,
+                            request_id,
+                        )
+                        .await;
+                        return AttemptOutcome::Retry;
+                    }
+                    Err(_elapsed) => {
+                        tracing::warn!(
+                            channel = %channel.name,
+                            ttft_secs,
+                            "Bootstrap retry: TTFT timeout waiting for first chunk"
+                        );
+                        state
+                            .limits
+                            .rate_limiter
+                            .record(channel.id, estimated_tokens);
+                        state.channel_mgr.mark_circuit_open(channel.id).await;
+                        log_attempt_failure(
+                            &state.logger,
+                            current_model,
+                            channel,
+                            attempt,
+                            FailureReason::Timeout,
+                            start,
+                            request_id,
+                        )
+                        .await;
+                        return AttemptOutcome::Retry;
+                    }
+                }
+            } else {
+                (resp.bytes_stream().boxed(), None)
+            };
+
         let response = handle_streaming_success(
             state,
             channel,
-            resp,
+            upstream_stream,
+            first_chunk,
             body,
             provider,
             current_model,
@@ -511,6 +647,35 @@ pub(super) async fn try_channel_attempt(
     }
 }
 
+/// Heuristic check for SSE error events in the first chunk of a streaming
+/// response.
+///
+/// Looks for common error patterns across providers:
+/// - Anthropic: `event: error\ndata: {"type":"error",...}`
+/// - OpenAI / OpenAI-compatible: `data: {"error":{...}}`
+/// - Generic: `"type":"error"` in the JSON payload
+///
+/// Normal first chunks (content deltas) always contain `"choices"` (OpenAI)
+/// or `"content_block"` / `"message_start"` (Anthropic), and never contain
+/// `"error"` at the top level.
+fn is_stream_error_chunk(chunk: &str) -> bool {
+    // Anthropic error events are prefixed with `event: error`
+    if chunk.contains("event: error") {
+        return true;
+    }
+    // Generic `"type":"error"` or `"type": "error"` in the JSON payload
+    if chunk.contains("\"type\":\"error\"") || chunk.contains("\"type\": \"error\"") {
+        return true;
+    }
+    // OpenAI / OpenAI-compatible error: `{"error":{...}}`
+    // Normal chunks always have `"choices"`, so the absence of `"choices"`
+    // combined with the presence of `"error"` is a strong signal.
+    if chunk.contains("\"error\"") && !chunk.contains("\"choices\"") {
+        return true;
+    }
+    false
+}
+
 /// Detect if an upstream error response indicates the prompt exceeded the
 /// model's context window.
 ///
@@ -554,8 +719,58 @@ fn is_context_window_error(status: StatusCode, body: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_context_window_error;
+    use super::{is_context_window_error, is_stream_error_chunk};
     use reqwest::StatusCode;
+
+    // ── is_stream_error_chunk tests ──────────────────────────────────────
+
+    #[test]
+    fn detects_openai_stream_error() {
+        let chunk = r#"data: {"error":{"message":"server error","type":"server_error"}}"#;
+        assert!(is_stream_error_chunk(chunk));
+    }
+
+    #[test]
+    fn detects_anthropic_event_error() {
+        let chunk = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\"}}\n\n";
+        assert!(is_stream_error_chunk(chunk));
+    }
+
+    #[test]
+    fn detects_generic_type_error() {
+        let chunk = r#"data: {"type":"error","error":{"message":"..."}}"#;
+        assert!(is_stream_error_chunk(chunk));
+    }
+
+    #[test]
+    fn does_not_flag_normal_openai_chunk() {
+        let chunk = r#"data: {"id":"chatcmpl-123","choices":[{"delta":{"content":"hello"}}]}"#;
+        assert!(!is_stream_error_chunk(chunk));
+    }
+
+    #[test]
+    fn does_not_flag_normal_anthropic_chunk() {
+        let chunk = "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"hi\"}}\n\n";
+        assert!(!is_stream_error_chunk(chunk));
+    }
+
+    #[test]
+    fn does_not_flag_anthropic_message_start() {
+        let chunk = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{}}\n\n";
+        assert!(!is_stream_error_chunk(chunk));
+    }
+
+    #[test]
+    fn does_not_flag_empty_chunk() {
+        assert!(!is_stream_error_chunk(""));
+    }
+
+    #[test]
+    fn does_not_flag_done_marker() {
+        assert!(!is_stream_error_chunk("data: [DONE]\n\n"));
+    }
+
+    // ── is_context_window_error tests ───────────────────────────────────
 
     #[test]
     fn detects_openai_context_length_exceeded_code() {

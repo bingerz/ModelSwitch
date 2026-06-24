@@ -31,6 +31,8 @@ pub struct ProxyParams {
     /// Upstream response headers to forward to the client.
     /// When empty, the built-in default passthrough list is used.
     pub passthrough_headers: Vec<String>,
+    /// Number of bootstrap retry attempts for streaming requests (default 0).
+    pub stream_bootstrap_retries: u32,
 }
 
 /// Router state (session affinity, active request tracking, latency tracking).

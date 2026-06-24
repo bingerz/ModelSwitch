@@ -104,6 +104,11 @@ pub(super) fn inject_passthrough_headers(
 /// Logs the attempt, spawns a background task to extract real token usage,
 /// caches the SSE response for streaming cache hits, and applies keepalive if configured.
 ///
+/// `upstream_stream` is the reqwest bytes stream from the upstream response.
+/// `first_chunk` is an optional pre-read first chunk (from bootstrap retry
+/// logic) that will be prepended to the stream so the client receives the
+/// complete output.
+///
 /// The `pool_guard` is moved into the background telemetry task so the pool's
 /// active count stays accurate for the entire lifetime of the stream — the
 /// guard is dropped only after `stream_done` fires (stream fully consumed).
@@ -111,7 +116,8 @@ pub(super) fn inject_passthrough_headers(
 pub(super) async fn handle_streaming_success(
     state: &Arc<crate::proxy::AppState>,
     channel: &Channel,
-    resp: reqwest::Response,
+    upstream_stream: futures::stream::BoxStream<'static, Result<Bytes, reqwest::Error>>,
+    first_chunk: Option<Bytes>,
     body: &Value,
     provider: &dyn ProviderAdaptor,
     current_model: &str,
@@ -142,8 +148,20 @@ pub(super) async fn handle_streaming_success(
         .filter(|&s| s > 0)
         .map(std::time::Duration::from_secs);
 
+    // If a first chunk was pre-read (bootstrap retry), prepend it to the
+    // upstream stream so the client receives the complete output.
+    let combined_stream: futures::stream::BoxStream<'static, Result<Bytes, reqwest::Error>> =
+        if let Some(chunk) = first_chunk {
+            use futures::stream::{self, StreamExt};
+            stream::once(async move { Ok::<_, reqwest::Error>(chunk) })
+                .chain(upstream_stream)
+                .boxed()
+        } else {
+            upstream_stream
+        };
+
     let (stream_resp, output_buffer, stream_done) = sse_stream_response_with_telemetry(
-        resp.bytes_stream(),
+        combined_stream,
         is_gemini,
         upstream_model.to_string(),
         first_byte_timeout,

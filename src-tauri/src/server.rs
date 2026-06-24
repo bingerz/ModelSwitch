@@ -157,6 +157,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             model_retry_overrides: config.gateway.model_retry_overrides.clone(),
             nonstream_keepalive_interval_secs: config.gateway.nonstream_keepalive_interval_secs,
             passthrough_headers: config.gateway.effective_passthrough_headers(),
+            stream_bootstrap_retries: config.gateway.stream_bootstrap_retries,
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),
