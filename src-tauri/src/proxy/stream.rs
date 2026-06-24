@@ -8,6 +8,8 @@ use std::sync::Arc;
 use tokio::sync::Notify;
 use tokio_stream::StreamExt;
 
+use crate::proxy::RequestFormat;
+
 /// Per-read timeout for upstream SSE streams to prevent stalled connections
 /// from being held open indefinitely. Generous enough for slow LLM providers.
 const STREAM_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
@@ -52,6 +54,57 @@ fn translate_gemini_sse_chunk(bytes: &[u8], model: &str) -> Bytes {
     Bytes::from(output)
 }
 
+/// Translate an SSE chunk from one protocol format to another (e.g., Anthropic
+/// SSE events → OpenAI SSE data lines).
+///
+/// Each `data:` line is parsed as JSON and translated via the protocol chunk
+/// translator. Non-JSON lines, comments, and `[DONE]` markers are passed
+/// through unchanged.
+fn translate_protocol_sse_chunk(
+    bytes: &[u8],
+    model: &str,
+    from: RequestFormat,
+    to: RequestFormat,
+) -> Bytes {
+    use crate::proxy::translate::translate_stream_chunk;
+    let text = String::from_utf8_lossy(bytes);
+    let mut output = String::new();
+    for line in text.split('\n') {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with(':') {
+            output.push_str(line);
+            output.push('\n');
+            continue;
+        }
+        let json_str = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
+        if json_str == "[DONE]" {
+            output.push_str("data: [DONE]\n\n");
+            continue;
+        }
+        // Try to parse event data lines. Anthropic may interleave event: and
+        // data: lines — we only translate the data portion.
+        let json_str = if json_str.starts_with("event: ") {
+            // Skip event type lines for content_block_* events — the data line
+            // that follows carries the JSON payload we need.
+            continue;
+        } else {
+            json_str
+        };
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
+            if let Some(translated) = translate_stream_chunk(&v, from, to, model) {
+                output.push_str(&translated);
+            } else {
+                // Translator returned None meaning this chunk should be dropped
+                // (e.g., content_block_stop, ping). Skip entirely.
+            }
+        } else {
+            output.push_str(line);
+            output.push('\n');
+        }
+    }
+    Bytes::from(output)
+}
+
 /// Create an SSE streaming response that accumulates output bytes for
 /// post-stream telemetry and cache insertion.
 ///
@@ -78,6 +131,7 @@ pub fn sse_stream_response_with_telemetry(
     translate_gemini: bool,
     model: String,
     first_byte_timeout: Option<std::time::Duration>,
+    protocol_translation: Option<(RequestFormat, RequestFormat)>,
 ) -> (Response, Arc<Mutex<BytesMut>>, Arc<Notify>) {
     use tokio::sync::mpsc;
 
@@ -168,7 +222,9 @@ pub fn sse_stream_response_with_telemetry(
                 };
 
                 // Translate if needed (must happen per-chunk for real-time delivery)
-                let output_bytes = if translate_gemini {
+                let output_bytes = if let Some((from, to)) = protocol_translation {
+                    translate_protocol_sse_chunk(&bytes, &model, from, to)
+                } else if translate_gemini {
                     translate_gemini_sse_chunk(&bytes, &model)
                 } else {
                     bytes
@@ -214,7 +270,9 @@ pub fn sse_stream_response_with_telemetry(
                             // received. Fixes a pre-existing bug where the drain
                             // path accumulated raw upstream bytes instead of
                             // translated output for Gemini streams.
-                            let drain_output = if translate_gemini {
+                            let drain_output = if let Some((from, to)) = protocol_translation {
+                                translate_protocol_sse_chunk(&bytes, &model, from, to)
+                            } else if translate_gemini {
                                 translate_gemini_sse_chunk(&bytes, &model)
                             } else {
                                 bytes
@@ -373,7 +431,7 @@ mod tests {
         let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
 
         let (_response, output_buffer, stream_done) =
-            sse_stream_response_with_telemetry(upstream, false, "gpt-4".to_string(), None);
+            sse_stream_response_with_telemetry(upstream, false, "gpt-4".to_string(), None, None);
 
         // Consume the response body so the background task completes
         let body = _response.into_body();

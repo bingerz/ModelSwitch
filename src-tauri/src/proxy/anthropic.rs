@@ -1,6 +1,6 @@
-use crate::proxy::dispatch;
 use crate::proxy::provider::AnthropicAdaptor;
 use crate::proxy::AppState;
+use crate::proxy::{dispatch, RequestFormat};
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
@@ -17,5 +17,12 @@ pub async fn handle_messages(
         return resp;
     }
     let provider = AnthropicAdaptor;
-    dispatch(&state, &headers, &body, &provider).await
+    dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::AnthropicMessages,
+    )
+    .await
 }

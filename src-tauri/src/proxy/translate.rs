@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use crate::proxy::RequestFormat;
 
-/// Translate a Gemini streaming response chunk to OpenAI SSE format.
+/// Translate an OpenAI-format request body to Gemini format.
 /// OpenAI: { model, messages: [{role, content}], stream }
 /// Gemini: { contents: [{role: "user"|"model", parts: [{text}]}], generationConfig }
 pub fn openai_to_gemini(body: &Value) -> Value {
@@ -589,6 +589,590 @@ pub fn openai_to_anthropic_stream_chunk(chunk: &Value) -> Option<String> {
     }
 
     None
+}
+
+// ── OpenAI → Anthropic request body ─────────────────────────────────────────
+
+/// Convert an OpenAI Chat Completions request body to Anthropic Messages API
+/// format, enabling routing of OpenAI clients to Anthropic upstreams.
+///
+/// Key transformations:
+/// - System message (role:"system") → top-level `system` field
+/// - Tool messages (role:"tool") → content blocks with type "tool_result"
+/// - Assistant messages with tool_calls → content blocks with type "tool_use"
+/// - stop → stop_sequences (renamed)
+/// - Function-calling tools → Anthropic tools with input_schema
+/// - tool_choice → Anthropic tool_choice format
+pub fn openai_to_anthropic_request(body: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+
+    // Pass-through scalar fields
+    for key in &["model", "max_tokens", "stream", "temperature", "top_p"] {
+        if let Some(v) = body.get(*key) {
+            out.insert((*key).to_string(), v.clone());
+        }
+    }
+
+    // stop → stop_sequences
+    if let Some(stop) = body.get("stop") {
+        out.insert("stop_sequences".to_string(), stop.clone());
+    }
+
+    let messages = body
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut anthropic_messages: Vec<Value> = Vec::new();
+    let mut system_text = String::new();
+
+    for msg in &messages {
+        let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
+
+        match role {
+            "system" => {
+                // Collect system text from all system messages
+                if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
+                    if !system_text.is_empty() {
+                        system_text.push('\n');
+                    }
+                    system_text.push_str(content);
+                }
+            }
+            "tool" => {
+                // Tool result → Anthropic tool_result content block
+                let tool_use_id = msg
+                    .get("tool_call_id")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("");
+                let content = msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                anthropic_messages.push(serde_json::json!({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": content
+                    }]
+                }));
+            }
+            _ => {
+                // user / assistant: process content and tool_calls
+                let content = msg.get("content");
+                let tool_calls = msg.get("tool_calls").and_then(|t| t.as_array());
+
+                let mut blocks: Vec<Value> = Vec::new();
+
+                if let Some(Value::String(s)) = content {
+                    if !s.is_empty() {
+                        blocks.push(serde_json::json!({ "type": "text", "text": s }));
+                    }
+                } else if let Some(Value::Array(arr)) = content {
+                    // Already an array of content blocks (multimodal)
+                    for block in arr {
+                        let btype = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        match btype {
+                            "text" => {
+                                blocks.push(block.clone());
+                            }
+                            "image_url" => {
+                                // Convert OpenAI image_url to Anthropic image source
+                                let url = block
+                                    .get("image_url")
+                                    .and_then(|u| u.get("url"))
+                                    .and_then(|u| u.as_str())
+                                    .unwrap_or("");
+                                if let Some(stripped) = url.strip_prefix("data:") {
+                                    let parts: Vec<&str> = stripped.splitn(2, ',').collect();
+                                    if parts.len() == 2 {
+                                        let media_type = parts[0].trim_end_matches(";base64");
+                                        let data = parts[1];
+                                        blocks.push(serde_json::json!({
+                                            "type": "image",
+                                            "source": {
+                                                "type": "base64",
+                                                "media_type": media_type,
+                                                "data": data
+                                            }
+                                        }));
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                // Convert tool_calls to tool_use content blocks
+                if let Some(tcs) = tool_calls {
+                    for tc in tcs {
+                        let id = tc.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                        let function = tc
+                            .get("function")
+                            .cloned()
+                            .unwrap_or_else(|| serde_json::json!({}));
+                        let name = function.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                        let arguments_str = function
+                            .get("arguments")
+                            .and_then(|a| a.as_str())
+                            .unwrap_or("{}");
+                        let input: Value = serde_json::from_str(arguments_str)
+                            .unwrap_or_else(|_| serde_json::json!({}));
+                        blocks.push(serde_json::json!({
+                            "type": "tool_use",
+                            "id": id,
+                            "name": name,
+                            "input": input
+                        }));
+                    }
+                }
+
+                let anthropic_content = if blocks.len() == 1
+                    && blocks[0].get("type").and_then(|t| t.as_str()) == Some("text")
+                {
+                    // Single text block → use string content for simplicity
+                    Value::String(
+                        blocks[0]
+                            .get("text")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    )
+                } else if blocks.is_empty() {
+                    Value::String(String::new())
+                } else {
+                    Value::Array(blocks)
+                };
+
+                anthropic_messages.push(serde_json::json!({
+                    "role": role,
+                    "content": anthropic_content
+                }));
+            }
+        }
+    }
+
+    // Set top-level system if we collected any system text
+    if !system_text.is_empty() {
+        out.insert("system".to_string(), Value::String(system_text));
+    }
+
+    out.insert("messages".to_string(), Value::Array(anthropic_messages));
+
+    // Convert tools: OpenAI function tool → Anthropic tool
+    if let Some(tools) = body.get("tools").and_then(|t| t.as_array()) {
+        let anthropic_tools: Vec<Value> = tools
+            .iter()
+            .filter_map(|tool| {
+                let ttype = tool.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                if ttype != "function" {
+                    return None;
+                }
+                let function = tool
+                    .get("function")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({}));
+                let name = function.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                let description = function
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("");
+                let input_schema = function
+                    .get("parameters")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({ "type": "object" }));
+                Some(serde_json::json!({
+                    "name": name,
+                    "description": description,
+                    "input_schema": input_schema
+                }))
+            })
+            .collect();
+
+        if !anthropic_tools.is_empty() {
+            out.insert("tools".to_string(), Value::Array(anthropic_tools));
+        }
+    }
+
+    // Convert tool_choice
+    if let Some(tc) = body.get("tool_choice") {
+        let converted = match tc {
+            Value::String(s) => match s.as_str() {
+                "auto" => serde_json::json!({ "type": "auto" }),
+                "required" => serde_json::json!({ "type": "any" }),
+                "none" => serde_json::json!({ "type": "none" }),
+                _ => serde_json::json!({ "type": "auto" }),
+            },
+            Value::Object(_) => {
+                let tc_type = tc.get("type").and_then(|t| t.as_str()).unwrap_or("auto");
+                match tc_type {
+                    "function" => {
+                        let name = tc
+                            .get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("");
+                        serde_json::json!({ "type": "tool", "name": name })
+                    }
+                    _ => serde_json::json!({ "type": "auto" }),
+                }
+            }
+            _ => serde_json::json!({ "type": "auto" }),
+        };
+        out.insert("tool_choice".to_string(), converted);
+    }
+
+    Value::Object(out)
+}
+
+// ── Anthropic → OpenAI response body ────────────────────────────────────────
+
+/// Convert an Anthropic Messages API response to OpenAI Chat Completions
+/// format, enabling routing of Anthropic upstream responses to OpenAI clients.
+///
+/// Maps stop_reason, usage tokens, and tool_use content blocks to their OpenAI
+/// equivalents (choices array, finish_reason, tool_calls).
+pub fn anthropic_to_openai_response(body: &Value, model: &str) -> Value {
+    let content_blocks = body
+        .get("content")
+        .and_then(|c| c.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut text_content = String::new();
+    let mut tool_calls: Vec<Value> = Vec::new();
+
+    for block in &content_blocks {
+        let btype = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        match btype {
+            "text" => {
+                if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                    text_content.push_str(text);
+                }
+            }
+            "tool_use" => {
+                let id = block.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                let input = block
+                    .get("input")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({}));
+                let arguments = serde_json::to_string(&input).unwrap_or_else(|_| "{}".to_string());
+                tool_calls.push(serde_json::json!({
+                    "id": id,
+                    "type": "function",
+                    "function": { "name": name, "arguments": arguments }
+                }));
+            }
+            _ => {}
+        }
+    }
+
+    let stop_reason = body
+        .get("stop_reason")
+        .and_then(|s| s.as_str())
+        .unwrap_or("end_turn");
+
+    let finish_reason = match stop_reason {
+        "end_turn" => "stop",
+        "max_tokens" => "length",
+        "tool_use" => "tool_calls",
+        _ => "stop",
+    };
+
+    let mut message = serde_json::Map::new();
+    message.insert("role".to_string(), Value::String("assistant".to_string()));
+
+    if tool_calls.is_empty() {
+        message.insert("content".to_string(), Value::String(text_content));
+    } else {
+        // When tool_calls are present, content may be null or the accumulated text
+        if text_content.is_empty() {
+            message.insert("content".to_string(), Value::Null);
+        } else {
+            message.insert("content".to_string(), Value::String(text_content));
+        }
+        message.insert("tool_calls".to_string(), Value::Array(tool_calls));
+    }
+
+    let usage = body
+        .get("usage")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let input_tokens = usage
+        .get("input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let output_tokens = usage
+        .get("output_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    let id = body
+        .get("id")
+        .and_then(|i| i.as_str())
+        .unwrap_or("anthropic-resp")
+        .to_string();
+
+    serde_json::json!({
+        "id": id,
+        "object": "chat.completion",
+        "created": chrono::Utc::now().timestamp(),
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "message": Value::Object(message),
+            "finish_reason": finish_reason
+        }],
+        "usage": {
+            "prompt_tokens": input_tokens,
+            "completion_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens
+        }
+    })
+}
+
+// ── Anthropic → OpenAI stream chunk ─────────────────────────────────────────
+
+/// Convert a single Anthropic SSE event to OpenAI SSE chunk format.
+///
+/// Handles the following Anthropic event types (parsed from the `data:` JSON):
+/// - `content_block_start` → initial OpenAI delta (with role for text, or
+///   tool_call scaffold for tool_use)
+/// - `content_block_delta` (text_delta) → content delta
+/// - `content_block_delta` (input_json_delta) → tool_call argument delta
+/// - `message_delta` → finish_reason + usage
+/// - `message_stop` → [DONE] marker
+///
+/// Events that don't map to an OpenAI chunk (`content_block_stop`, `ping`,
+/// `message_start`) return `None`.
+pub fn anthropic_to_openai_stream_chunk(chunk: &Value, model: &str) -> Option<String> {
+    let event_type = chunk.get("type").and_then(|t| t.as_str())?;
+
+    match event_type {
+        "content_block_start" => {
+            let block = chunk.get("content_block")?;
+            let block_type = block.get("type").and_then(|t| t.as_str())?;
+            match block_type {
+                "text" => {
+                    let text = block.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                    Some(format!(
+                        "data: {}\n\n",
+                        serde_json::to_string(&serde_json::json!({
+                            "id": format!("anthropic-stream-{}", uuid::Uuid::new_v4().simple()),
+                            "object": "chat.completion.chunk",
+                            "created": chrono::Utc::now().timestamp(),
+                            "model": model,
+                            "choices": [{
+                                "index": 0,
+                                "delta": { "role": "assistant", "content": text },
+                                "finish_reason": null
+                            }]
+                        }))
+                        .ok()?
+                    ))
+                }
+                "tool_use" => {
+                    let id = block.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                    let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    Some(format!(
+                        "data: {}\n\n",
+                        serde_json::to_string(&serde_json::json!({
+                            "id": format!("anthropic-stream-{}", uuid::Uuid::new_v4().simple()),
+                            "object": "chat.completion.chunk",
+                            "created": chrono::Utc::now().timestamp(),
+                            "model": model,
+                            "choices": [{
+                                "index": 0,
+                                "delta": {
+                                    "tool_calls": [{
+                                        "index": 0,
+                                        "id": id,
+                                        "type": "function",
+                                        "function": { "name": name, "arguments": "" }
+                                    }]
+                                },
+                                "finish_reason": null
+                            }]
+                        }))
+                        .ok()?
+                    ))
+                }
+                _ => None,
+            }
+        }
+        "content_block_delta" => {
+            let delta = chunk.get("delta")?;
+            let delta_type = delta.get("type").and_then(|t| t.as_str())?;
+            match delta_type {
+                "text_delta" => {
+                    let text = delta.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                    if text.is_empty() {
+                        return None;
+                    }
+                    Some(format!(
+                        "data: {}\n\n",
+                        serde_json::to_string(&serde_json::json!({
+                            "id": format!("anthropic-stream-{}", uuid::Uuid::new_v4().simple()),
+                            "object": "chat.completion.chunk",
+                            "created": chrono::Utc::now().timestamp(),
+                            "model": model,
+                            "choices": [{
+                                "index": 0,
+                                "delta": { "content": text },
+                                "finish_reason": null
+                            }]
+                        }))
+                        .ok()?
+                    ))
+                }
+                "input_json_delta" => {
+                    let partial = delta
+                        .get("partial_json")
+                        .and_then(|p| p.as_str())
+                        .unwrap_or("");
+                    Some(format!(
+                        "data: {}\n\n",
+                        serde_json::to_string(&serde_json::json!({
+                            "id": format!("anthropic-stream-{}", uuid::Uuid::new_v4().simple()),
+                            "object": "chat.completion.chunk",
+                            "created": chrono::Utc::now().timestamp(),
+                            "model": model,
+                            "choices": [{
+                                "index": 0,
+                                "delta": {
+                                    "tool_calls": [{
+                                        "index": 0,
+                                        "function": { "arguments": partial }
+                                    }]
+                                },
+                                "finish_reason": null
+                            }]
+                        }))
+                        .ok()?
+                    ))
+                }
+                _ => None,
+            }
+        }
+        "message_delta" => {
+            let delta = chunk.get("delta")?;
+            let stop_reason = delta.get("stop_reason").and_then(|s| s.as_str());
+            let finish_reason = stop_reason.map(|s| match s {
+                "end_turn" => "stop",
+                "max_tokens" => "length",
+                "tool_use" => "tool_calls",
+                _ => "stop",
+            });
+
+            if let Some(fr) = finish_reason {
+                let mut response_obj = serde_json::json!({
+                    "id": format!("anthropic-stream-{}", uuid::Uuid::new_v4().simple()),
+                    "object": "chat.completion.chunk",
+                    "created": chrono::Utc::now().timestamp(),
+                    "model": model,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": fr
+                    }]
+                });
+                if let Some(usage) = chunk.get("usage") {
+                    if let Some(obj) = response_obj.as_object_mut() {
+                        obj.insert(
+                            "usage".to_string(),
+                            serde_json::json!({
+                                "prompt_tokens": usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                                "completion_tokens": usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                            }),
+                        );
+                    }
+                }
+                Some(format!(
+                    "data: {}\n\n",
+                    serde_json::to_string(&response_obj).ok()?
+                ))
+            } else {
+                None
+            }
+        }
+        "message_stop" => Some("data: [DONE]\n\n".to_string()),
+        "message_start" | "content_block_stop" | "ping" => None,
+        _ => None,
+    }
+}
+
+// ── Translation registry / dispatch ─────────────────────────────────────────
+
+/// Translate a request body from one wire format to another.
+///
+/// When `from == to` or no translation is available, returns a clone of the
+/// input. Logs the translation event at info level.
+pub fn translate_request(body: &Value, from: RequestFormat, to: RequestFormat) -> Value {
+    if from == to {
+        return body.clone();
+    }
+    let result = match (from, to) {
+        (RequestFormat::OpenAIChat, RequestFormat::AnthropicMessages) => {
+            openai_to_anthropic_request(body)
+        }
+        (RequestFormat::AnthropicMessages, RequestFormat::OpenAIChat) => {
+            crate::proxy::translate::anthropic_to_openai_request(body)
+        }
+        _ => body.clone(),
+    };
+    tracing::info!(from = ?from, to = ?to, "Translated request format");
+    result
+}
+
+/// Translate a non-streaming response body from one wire format to another.
+///
+/// When `from == to` or no translation is available, returns a clone of the
+/// input. Logs the translation event at info level.
+pub fn translate_response(
+    body: &Value,
+    from: RequestFormat,
+    to: RequestFormat,
+    model: &str,
+) -> Value {
+    if from == to {
+        return body.clone();
+    }
+    let result = match (from, to) {
+        (RequestFormat::AnthropicMessages, RequestFormat::OpenAIChat) => {
+            anthropic_to_openai_response(body, model)
+        }
+        (RequestFormat::OpenAIChat, RequestFormat::AnthropicMessages) => {
+            openai_to_anthropic_response(body)
+        }
+        _ => body.clone(),
+    };
+    tracing::info!(from = ?from, to = ?to, "Translated response format");
+    result
+}
+
+/// Translate a single SSE stream chunk from one wire format to another.
+///
+/// When `from == to` or no translation is available, returns `None` (the
+/// chunk passes through unchanged).
+pub fn translate_stream_chunk(
+    chunk: &Value,
+    from: RequestFormat,
+    to: RequestFormat,
+    model: &str,
+) -> Option<String> {
+    if from == to {
+        return None;
+    }
+    match (from, to) {
+        (RequestFormat::AnthropicMessages, RequestFormat::OpenAIChat) => {
+            anthropic_to_openai_stream_chunk(chunk, model)
+        }
+        (RequestFormat::OpenAIChat, RequestFormat::AnthropicMessages) => {
+            openai_to_anthropic_stream_chunk(chunk)
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]

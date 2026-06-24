@@ -6,7 +6,7 @@
 use crate::proxy::provider::OpenAIAdaptor;
 use crate::proxy::state::AppState;
 use crate::proxy::stream::json_response;
-use crate::proxy::{dispatch, validate_chat_request};
+use crate::proxy::{dispatch, validate_chat_request, RequestFormat};
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -57,7 +57,14 @@ pub async fn handle_responses(
         b
     };
 
-    let upstream = dispatch(&state, &headers, &chat_body_non_stream, &provider).await;
+    let upstream = dispatch(
+        &state,
+        &headers,
+        &chat_body_non_stream,
+        &provider,
+        RequestFormat::OpenAIResponses,
+    )
+    .await;
 
     let (status, chat_response) = match extract_response_json(upstream).await {
         Ok(parts) => parts,

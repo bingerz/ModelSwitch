@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use url::Url;
 
 /// Supported thinking parameter formats for a model family.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -22,6 +23,9 @@ pub struct ModelCapabilities {
     pub supports_tools: bool,
     pub max_context_tokens: Option<u64>,
     pub thinking_format: ThinkingFormat,
+    /// Source identifier for dynamically discovered models.
+    /// `None` for built-in entries, `Some(endpoint_url)` for discovered ones.
+    pub source: Option<String>,
 }
 
 /// Registry of known model capabilities.
@@ -58,6 +62,7 @@ impl ModelRegistry {
                     supports_tools: true,
                     max_context_tokens: Some(max_context),
                     thinking_format: ThinkingFormat::Level,
+                    source: None,
                 },
             );
         }
@@ -73,6 +78,7 @@ impl ModelRegistry {
                     supports_tools: !limited,
                     max_context_tokens: Some(200_000),
                     thinking_format: ThinkingFormat::Level,
+                    source: None,
                 },
             );
         }
@@ -93,6 +99,7 @@ impl ModelRegistry {
                     supports_tools: true,
                     max_context_tokens: Some(200_000),
                     thinking_format: ThinkingFormat::None,
+                    source: None,
                 },
             );
         }
@@ -107,6 +114,7 @@ impl ModelRegistry {
                     supports_tools: true,
                     max_context_tokens: Some(200_000),
                     thinking_format: ThinkingFormat::Budget,
+                    source: None,
                 },
             );
         }
@@ -121,6 +129,7 @@ impl ModelRegistry {
                     supports_tools: true,
                     max_context_tokens: Some(1_000_000),
                     thinking_format: ThinkingFormat::None,
+                    source: None,
                 },
             );
         }
@@ -140,11 +149,29 @@ impl ModelRegistry {
                     supports_tools: true,
                     max_context_tokens: Some(1_000_000),
                     thinking_format: format,
+                    source: None,
                 },
             );
         }
 
         Self { models }
+    }
+
+    /// Update the internal model list with fetched models.
+    ///
+    /// Removes models that were previously added from the same `source`, then
+    /// inserts newly discovered models.  Capabilities are inferred from the
+    /// built-in registry (prefix-matching); unknown models receive safe defaults.
+    pub fn update_models(&mut self, models: Vec<String>, source: &str) {
+        // Remove existing entries from this source
+        self.models
+            .retain(|_, caps| caps.source.as_deref() != Some(source));
+        // Add new models
+        for model_id in models {
+            let mut capabilities = self.get(&model_id);
+            capabilities.source = Some(source.to_string());
+            self.models.insert(model_id, capabilities);
+        }
     }
 
     /// Look up capabilities for a model.
@@ -176,6 +203,59 @@ impl Default for ModelRegistry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Fetch model list from an upstream endpoint (e.g., OpenAI /v1/models) and
+/// return the list of model IDs.
+///
+/// Supports the OpenAI format:
+/// ```json
+/// {"data": [{"id": "gpt-4", ...}, ...]}
+/// ```
+/// Returns an empty vec on unrecognised responses (never fails on parse).
+pub async fn refresh_from_endpoint(endpoint: &str, api_key: &str) -> anyhow::Result<Vec<String>> {
+    // URL validation -- only HTTPS, no private IPs
+    let parsed = Url::parse(endpoint)?;
+    if parsed.scheme() != "https" {
+        anyhow::bail!("models_endpoint must use HTTPS");
+    }
+    let host = parsed.host_str().unwrap_or("");
+    if host == "localhost"
+        || host == "127.0.0.1"
+        || host == "0.0.0.0"
+        || host.starts_with("10.")
+        || host.starts_with("192.168.")
+        || host.starts_with("172.16.")
+    {
+        anyhow::bail!("models_endpoint must not point to a private IP");
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+
+    let resp = client
+        .get(endpoint)
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("Failed to fetch models: HTTP {}", resp.status());
+    }
+
+    let body: serde_json::Value = resp.json().await?;
+    let models = body["data"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m["id"].as_str().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Ok(models)
 }
 
 #[cfg(test)]

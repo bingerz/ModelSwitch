@@ -1,7 +1,7 @@
 use crate::proxy::mcp_tools;
 use crate::proxy::state::AppState;
 use crate::proxy::stream::json_response;
-use crate::proxy::{dispatch, provider::OpenAIAdaptor};
+use crate::proxy::{dispatch, provider::OpenAIAdaptor, RequestFormat};
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
@@ -40,14 +40,28 @@ pub async fn handle_chat_completions(
 
     // If MCP auto-inject is disabled (or no servers running), short-circuit.
     if !state.mcp.mcp_auto_inject {
-        return dispatch(&state, &headers, &body, &provider).await;
+        return dispatch(
+            &state,
+            &headers,
+            &body,
+            &provider,
+            RequestFormat::OpenAIChat,
+        )
+        .await;
     }
 
     let (mut current_body, injected) =
         mcp_tools::inject_mcp_tools(&body, &state.mcp.mcp_manager).await;
     if injected.is_empty() {
         // Nothing to intercept — normal dispatch path.
-        return dispatch(&state, &headers, &body, &provider).await;
+        return dispatch(
+            &state,
+            &headers,
+            &body,
+            &provider,
+            RequestFormat::OpenAIChat,
+        )
+        .await;
     }
 
     // Force non-streaming for internal loop iterations.
@@ -62,7 +76,14 @@ pub async fn handle_chat_completions(
     let max_iter = state.mcp.mcp_max_iterations.max(1);
 
     for iteration in 0..max_iter {
-        let response = dispatch(&state, &headers, &current_body, &provider).await;
+        let response = dispatch(
+            &state,
+            &headers,
+            &current_body,
+            &provider,
+            RequestFormat::OpenAIChat,
+        )
+        .await;
 
         let (status, response_body) = match extract_response_json(response).await {
             Ok(parts) => parts,
@@ -121,7 +142,14 @@ pub async fn handle_chat_completions(
             obj.insert("stream".to_string(), json!(true));
         }
     }
-    dispatch(&state, &headers, &current_body, &provider).await
+    dispatch(
+        &state,
+        &headers,
+        &current_body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await
 }
 
 /// Buffer an axum `Response` body and parse it as JSON.

@@ -1,6 +1,6 @@
-use crate::proxy::dispatch;
 use crate::proxy::provider::GeminiAdaptor;
 use crate::proxy::AppState;
+use crate::proxy::{dispatch, RequestFormat};
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::Json;
@@ -22,5 +22,12 @@ pub async fn handle_gemini(
         return resp;
     }
     let provider = GeminiAdaptor;
-    dispatch(&state, &headers, &body, &provider).await
+    dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await
 }

@@ -18,7 +18,7 @@ use crate::virtual_key::ReserveResult;
 use super::attempt::{try_channel_attempt, AttemptOutcome};
 use super::provider::ProviderAdaptor;
 use super::request_meta::{extract_request_meta, extract_virtual_key_id, RequestMeta};
-use super::{estimate_tokens, make_log, FailureReason};
+use super::{estimate_tokens, make_log, FailureReason, RequestFormat};
 
 /// RAII guard that increments `active_requests` on creation and decrements on drop.
 /// Ensures the gauge is always balanced regardless of which return path dispatch takes.
@@ -169,6 +169,7 @@ pub(crate) async fn dispatch(
     original_headers: &HeaderMap,
     body: &Value,
     provider: &dyn ProviderAdaptor,
+    request_format: RequestFormat,
 ) -> Response {
     let _guard = ActiveRequestGuard::new();
 
@@ -385,6 +386,7 @@ pub(crate) async fn dispatch(
                 reserved_cents,
                 cache_key,
                 &cache_key_material,
+                request_format,
             )
             .await
             {
