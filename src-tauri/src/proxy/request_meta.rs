@@ -45,7 +45,7 @@ pub(super) async fn extract_request_meta<'a>(
     let request_id = original_headers
         .get("x-request-id")
         .and_then(|v| v.to_str().ok());
-    let session_id = SessionAffinity::extract_session_id(body);
+    let session_id = SessionAffinity::extract_session_id(original_headers, body);
     let affinity_channel = if let Some(ref sid) = &session_id {
         state.router.session_affinity.get_channel(sid).await
     } else {
