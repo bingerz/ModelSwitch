@@ -33,6 +33,8 @@ pub struct ProxyParams {
     pub passthrough_headers: Vec<String>,
     /// Number of bootstrap retry attempts for streaming requests (default 0).
     pub stream_bootstrap_retries: u32,
+    /// When true, image generation endpoints return 404.
+    pub disable_image_generation: bool,
 }
 
 /// Router state (session affinity, active request tracking, latency tracking).

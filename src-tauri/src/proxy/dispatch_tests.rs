@@ -206,6 +206,7 @@ fn build_test_state_with_opts(
             nonstream_keepalive_interval_secs: 0,
             passthrough_headers: vec![],
             stream_bootstrap_retries,
+            disable_image_generation: false,
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),

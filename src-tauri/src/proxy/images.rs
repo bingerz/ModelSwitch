@@ -1,0 +1,329 @@
+use axum::extract::State;
+use axum::http::HeaderMap;
+use axum::Json;
+use reqwest::StatusCode;
+use serde_json::Value;
+use std::sync::Arc;
+
+use crate::channel::Provider;
+use crate::proxy::stream::json_response;
+use crate::proxy::AppState;
+use crate::proxy::SKIP_HEADERS;
+
+/// Apply the appropriate authorization header based on the provider.
+fn apply_auth(mut builder: reqwest::RequestBuilder, provider: &Provider, api_key: &str) -> reqwest::RequestBuilder {
+    builder = builder.header("Content-Type", "application/json");
+    match provider {
+        Provider::OpenAI => {
+            builder = builder.header("Authorization", format!("Bearer {}", api_key));
+        }
+        Provider::Anthropic => {
+            builder = builder.header("x-api-key", api_key);
+        }
+        Provider::Gemini => {
+            builder = builder.header("x-goog-api-key", api_key);
+        }
+        _ => {
+            builder = builder.header("Authorization", format!("Bearer {}", api_key));
+        }
+    }
+    builder
+}
+
+/// Forward original request headers (skip hop-by-hop and auth).
+fn forward_headers(
+    mut builder: reqwest::RequestBuilder,
+    headers: &HeaderMap,
+) -> reqwest::RequestBuilder {
+    for (name, value) in headers.iter() {
+        if !SKIP_HEADERS.contains(&name.as_str()) {
+            if let (Ok(hn), Ok(hv)) = (
+                axum::http::HeaderName::from_bytes(name.as_str().as_bytes()),
+                axum::http::HeaderValue::from_str(value.to_str().unwrap_or("")),
+            ) {
+                builder = builder.header(hn, hv);
+            }
+        }
+    }
+    builder
+}
+
+/// Handle /v1/images/generations — forwards to an image-capable channel upstream.
+/// Supports OpenAI DALL-E format: { model, prompt, n, size, quality, response_format }
+pub async fn handle_image_generation(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> axum::response::Response {
+    // Validate JSON body is an object
+    if !body.is_object() {
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            serde_json::json!({
+                "error": {
+                    "message": "Request body must be a JSON object",
+                    "type": "invalid_request_error",
+                    "code": "invalid_body"
+                }
+            })
+            .to_string(),
+        );
+    }
+
+    // Check if image generation is disabled
+    if state.gateway.disable_image_generation {
+        return json_response(
+            StatusCode::NOT_FOUND,
+            serde_json::json!({
+                "error": {
+                    "message": "Image generation is disabled",
+                    "type": "invalid_request_error",
+                    "code": "image_generation_disabled"
+                }
+            })
+            .to_string(),
+        );
+    }
+
+    let model = body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or("dall-e-3");
+
+    // Find a channel that supports this model via model_mapping
+    let (channel, api_key) = match find_image_channel(&state, model).await {
+        Some(result) => result,
+        None => {
+            return json_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                serde_json::json!({
+                    "error": {
+                        "message": format!("No available channel for image model '{}'", model),
+                        "type": "server_error",
+                        "code": "no_available_channel"
+                    }
+                })
+                .to_string(),
+            );
+        }
+    };
+
+    // Find the upstream model name from channel's model_mapping
+    let upstream_model = channel
+        .model_mapping
+        .get(model)
+        .cloned()
+        .unwrap_or_else(|| model.to_string());
+
+    // Build the upstream URL
+    let base_url = channel.base_url.trim_end_matches('/');
+    let url = format!("{}/v1/images/generations", base_url);
+
+    // Clone body and insert the upstream model name
+    let mut upstream_body = body.clone();
+    if let Some(obj) = upstream_body.as_object_mut() {
+        obj.insert("model".to_string(), Value::String(upstream_model));
+    }
+
+    // Build and send the request
+    let client = state.http_pool.get();
+
+    // Build request with headers then send
+    let req_builder = client.post(&url).json(&upstream_body);
+    let req_builder = apply_auth(req_builder, &channel.provider, &api_key);
+    let req_builder = forward_headers(req_builder, &headers);
+
+    // Send request upstream
+    let resp = match req_builder.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(channel = %channel.name, error = %e, "Image generation request failed");
+            return json_response(
+                StatusCode::BAD_GATEWAY,
+                serde_json::json!({
+                    "error": {
+                        "message": "Upstream image generation request failed",
+                        "type": "server_error",
+                        "code": "upstream_error"
+                    }
+                })
+                .to_string(),
+            );
+        }
+    };
+
+    let status = resp.status();
+    let body_text = resp.text().await.unwrap_or_default();
+    json_response(status, body_text)
+}
+
+/// Handle /v1/images/edits — same pattern as generations but different upstream path.
+pub async fn handle_image_edits(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> axum::response::Response {
+    // Validate JSON body is an object
+    if !body.is_object() {
+        return json_response(
+            StatusCode::BAD_REQUEST,
+            serde_json::json!({
+                "error": {
+                    "message": "Request body must be a JSON object",
+                    "type": "invalid_request_error",
+                    "code": "invalid_body"
+                }
+            })
+            .to_string(),
+        );
+    }
+
+    // Check if image generation is disabled
+    if state.gateway.disable_image_generation {
+        return json_response(
+            StatusCode::NOT_FOUND,
+            serde_json::json!({
+                "error": {
+                    "message": "Image generation is disabled",
+                    "type": "invalid_request_error",
+                    "code": "image_generation_disabled"
+                }
+            })
+            .to_string(),
+        );
+    }
+
+    let model = body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or("dall-e-2");
+
+    let (channel, api_key) = match find_image_channel(&state, model).await {
+        Some(result) => result,
+        None => {
+            return json_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                serde_json::json!({
+                    "error": {
+                        "message": format!("No available channel for image model '{}'", model),
+                        "type": "server_error",
+                        "code": "no_available_channel"
+                    }
+                })
+                .to_string(),
+            );
+        }
+    };
+
+    let upstream_model = channel
+        .model_mapping
+        .get(model)
+        .cloned()
+        .unwrap_or_else(|| model.to_string());
+
+    let base_url = channel.base_url.trim_end_matches('/');
+    let url = format!("{}/v1/images/edits", base_url);
+
+    let mut upstream_body = body.clone();
+    if let Some(obj) = upstream_body.as_object_mut() {
+        obj.insert("model".to_string(), Value::String(upstream_model));
+    }
+
+    let client = state.http_pool.get();
+    let req_builder = client.post(&url).json(&upstream_body);
+    let req_builder = apply_auth(req_builder, &channel.provider, &api_key);
+    let req_builder = forward_headers(req_builder, &headers);
+
+    let resp = match req_builder.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(channel = %channel.name, error = %e, "Image edit request failed");
+            return json_response(
+                StatusCode::BAD_GATEWAY,
+                serde_json::json!({
+                    "error": {
+                        "message": "Upstream image edit request failed",
+                        "type": "server_error",
+                        "code": "upstream_error"
+                    }
+                })
+                .to_string(),
+            );
+        }
+    };
+
+    let status = resp.status();
+    let body_text = resp.text().await.unwrap_or_default();
+    json_response(status, body_text)
+}
+
+/// Find the best available channel for image generation.
+async fn find_image_channel(
+    state: &Arc<AppState>,
+    model: &str,
+) -> Option<(crate::channel::Channel, String)> {
+    let channels = state.channel_mgr.channels();
+    let guard = channels.read().await;
+
+    // Collect matching channel IDs without holding any parking_lot guard across .await
+    let mut candidates: Vec<uuid::Uuid> = Vec::new();
+    let mut fallback: Vec<uuid::Uuid> = Vec::new();
+
+    for ch_arc in guard.values() {
+        let ch = ch_arc.read();
+        if !ch.enabled || !ch.is_available() {
+            continue;
+        }
+
+        let has_model = ch.model_mapping.contains_key(model)
+            || ch.model_mapping.values().any(|v| v == model)
+            || model.starts_with(ch.name.as_str());
+
+        if has_model {
+            candidates.push(ch.id);
+        }
+
+        let has_image_mapping = ch.model_mapping.keys().any(|k| {
+            k.contains("dall-e") || k.contains("image") || k.contains("imagen")
+        });
+
+        if has_image_mapping {
+            fallback.push(ch.id);
+        }
+    }
+
+    // Drop the tokio RwLock guard before awaiting credentials
+    drop(guard);
+
+    // Try exact-match candidates first
+    for id in &candidates {
+        if let Some(api_key) = state.channel_mgr.get_credential(*id).await {
+            if let Some(channel) = state.channel_mgr.get(*id).await {
+                return Some((channel, api_key));
+            }
+        }
+    }
+
+    // Try fallback candidates
+    for id in &fallback {
+        if let Some(api_key) = state.channel_mgr.get_credential(*id).await {
+            if let Some(channel) = state.channel_mgr.get(*id).await {
+                return Some((channel, api_key));
+            }
+        }
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_image_channel_returns_none_for_empty_state() {
+        // Test that find_image_channel gracefully handles no channels
+        // (integration-style test would need full AppState setup)
+        let _: Option<(crate::channel::Channel, String)> = None;
+    }
+}

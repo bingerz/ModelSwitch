@@ -207,6 +207,12 @@ pub struct GatewayConfig {
     /// Useful for testing or deployments where cooling is not desired.
     #[serde(default)]
     pub disable_cooling: bool,
+    /// When true, image generation endpoints return 404.
+    /// When `"chat"`, image generation is only disabled for chat completions
+    /// (not applicable yet since image endpoints are separate).
+    /// Currently supports: false, true.
+    #[serde(default)]
+    pub disable_image_generation: bool,
     /// TLS configuration for native HTTPS binding.
     #[serde(default)]
     pub tls: TlsConfig,
@@ -556,6 +562,7 @@ impl Default for GatewayConfig {
             log_max_files: default_log_max_files(),
             stream_bootstrap_retries: 0,
             disable_cooling: false,
+            disable_image_generation: false,
             tls: TlsConfig::default(),
         }
     }

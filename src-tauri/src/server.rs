@@ -160,6 +160,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             nonstream_keepalive_interval_secs: config.gateway.nonstream_keepalive_interval_secs,
             passthrough_headers: config.gateway.effective_passthrough_headers(),
             stream_bootstrap_retries: config.gateway.stream_bootstrap_retries,
+            disable_image_generation: config.gateway.disable_image_generation,
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),
@@ -539,6 +540,14 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
         )
         .route("/v1/responses", post(proxy::responses::handle_responses))
         .route("/v1/embeddings", post(proxy::embeddings::handle_embeddings))
+        .route(
+            "/v1/images/generations",
+            post(proxy::images::handle_image_generation),
+        )
+        .route(
+            "/v1/images/edits",
+            post(proxy::images::handle_image_edits),
+        )
         .route("/v1/models", get(proxy::openai::handle_list_models))
         .route("/v1/tools", get(proxy::openai::handle_list_tools))
         .route("/v1/messages", post(proxy::anthropic::handle_messages))

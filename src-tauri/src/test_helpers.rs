@@ -127,6 +127,7 @@ pub(crate) fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppSt
             nonstream_keepalive_interval_secs: 0,
             passthrough_headers: vec![],
             stream_bootstrap_retries: 0,
+            disable_image_generation: false,
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),

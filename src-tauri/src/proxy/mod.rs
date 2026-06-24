@@ -2,6 +2,7 @@ pub mod anthropic;
 pub mod cache;
 pub mod embeddings;
 pub mod gemini;
+pub mod images;
 pub mod mcp_tools;
 pub mod openai;
 pub mod payload_rules;
