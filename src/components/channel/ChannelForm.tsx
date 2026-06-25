@@ -36,6 +36,8 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
   const [accountGroup, setAccountGroup] = useState("");
   const [excludedModels, setExcludedModels] = useState("");
   const [tags, setTags] = useState("");
+  const [modelsEndpoint, setModelsEndpoint] = useState("");
+  const [modelsRefreshInterval, setModelsRefreshInterval] = useState("");
   const [apiFormat, setApiFormat] = useState<ApiFormat>("anthropic");
 
   // Listen for WebView login cookies (safe lazy import)
@@ -162,6 +164,10 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean),
+        models_endpoint: modelsEndpoint.trim() || null,
+        models_refresh_interval_secs: modelsRefreshInterval
+          ? parseInt(modelsRefreshInterval, 10)
+          : 300,
       });
       toast.success(t("channels.created"));
       onSave();
@@ -199,6 +205,8 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
         accountGroup={accountGroup} setAccountGroup={setAccountGroup}
         excludedModels={excludedModels} setExcludedModels={setExcludedModels}
         tags={tags} setTags={setTags}
+        modelsEndpoint={modelsEndpoint} setModelsEndpoint={setModelsEndpoint}
+        modelsRefreshInterval={modelsRefreshInterval} setModelsRefreshInterval={setModelsRefreshInterval}
         presetModels={activePreset?.models ?? []}
         modelMapping={modelMapping} setModelMapping={setModelMapping}
         apiKeyUrl={activePreset?.apiKeyUrl}

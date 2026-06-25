@@ -36,6 +36,10 @@ export interface FormFieldsProps {
   setExcludedModels: (v: string) => void;
   tags: string;
   setTags: (v: string) => void;
+  modelsEndpoint: string;
+  setModelsEndpoint: (v: string) => void;
+  modelsRefreshInterval: string;
+  setModelsRefreshInterval: (v: string) => void;
   presetModels: string[];
   modelMapping: Record<string, string>;
   setModelMapping: (v: Record<string, string>) => void;
@@ -84,6 +88,10 @@ export function FormFields({
   setExcludedModels,
   tags,
   setTags,
+  modelsEndpoint,
+  setModelsEndpoint,
+  modelsRefreshInterval,
+  setModelsRefreshInterval,
   presetModels,
   modelMapping,
   setModelMapping,
@@ -362,6 +370,27 @@ export function FormFields({
               placeholder="e.g., priority, backup"
             />
             <small className="form-hint">{t("channels.tagsHint")}</small>
+          </label>
+          <label className="form-field">
+            <span>{t("channels.modelsEndpoint")}</span>
+            <input
+              type="text"
+              value={modelsEndpoint}
+              onChange={(e) => setModelsEndpoint(e.target.value)}
+              placeholder="/v1/models"
+            />
+            <small className="form-hint">{t("channels.modelsEndpointHint")}</small>
+          </label>
+          <label className="form-field">
+            <span>{t("channels.modelsRefreshInterval")}</span>
+            <input
+              type="number"
+              value={modelsRefreshInterval}
+              onChange={(e) => setModelsRefreshInterval(e.target.value)}
+              placeholder="300"
+              min={0}
+            />
+            <small className="form-hint">{t("channels.modelsRefreshIntervalHint")}</small>
           </label>
         </div>
       )}
