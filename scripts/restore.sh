@@ -108,6 +108,18 @@ fi
 mkdir -p "$DATA_DIR"
 
 # ── 执行恢复 ────────────────────────────────────────────────────────────
+# ── 安全检查: 防止路径穿越 ────────────────────────────────────────────
+# 验证归档中所有文件路径均在目标目录范围内, 拒绝包含 ../ 或绝对路径的条目
+info "检查归档文件路径安全性..."
+TEMP_LIST=$(mktemp)
+tar -tzf "$BACKUP_FILE" > "$TEMP_LIST" 2>/dev/null || die "无法列出备份文件内容"
+if grep -qE '^(/|.*\.\./)' "$TEMP_LIST" 2>/dev/null; then
+    rm -f "$TEMP_LIST"
+    die "备份文件包含不安全的路径 (绝对路径或 ../ 引用), 拒绝恢复"
+fi
+rm -f "$TEMP_LIST"
+success "路径安全检查通过"
+
 info "开始恢复数据到 $DATA_DIR ..."
 cd "$DATA_DIR"
 tar -xzf "$BACKUP_FILE"

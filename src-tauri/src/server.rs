@@ -36,6 +36,7 @@ use axum::routing::{delete, get, post, put};
 use axum::Router;
 use std::fs::File;
 use std::io::BufReader;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{oneshot, Notify};
 use tower_http::compression::CompressionLayer;
@@ -1352,7 +1353,10 @@ pub async fn start_gateway(
                 }),
                 None => Box::pin(shutdown_signal()),
             };
-        let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_fut);
+        let server = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        ).with_graceful_shutdown(shutdown_fut);
 
         match tokio::time::timeout(std::time::Duration::from_secs(drain_timeout_secs), server).await
         {

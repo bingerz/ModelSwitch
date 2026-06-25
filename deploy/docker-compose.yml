@@ -41,13 +41,13 @@ services:
     # ── 端口映射 ────────────────────────────────────────────────────────
     # 主机 8080 -> 容器 8080 (HTTP API + 管理后台)
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
 
     # ── 环境变量 ────────────────────────────────────────────────────────
     # MODELSWITCH_ADMIN_TOKEN: 管理 API 的 Bearer Token (必须修改!)
     # MODELSWITCH_CONFIG_DIR:  容器内配置目录路径
     environment:
-      - MODELSWITCH_ADMIN_TOKEN=${MODELSWITCH_ADMIN_TOKEN:-changeme}
+      - MODELSWITCH_ADMIN_TOKEN=${MODELSWITCH_ADMIN_TOKEN:?Must set MODELSWITCH_ADMIN_TOKEN in .env file}
       - MODELSWITCH_CONFIG_DIR=/home/modelswitch/.config/modelswitch
       - RUST_LOG=${RUST_LOG:-info}
       - MODELSWITCH_CREDENTIAL_STORE=file

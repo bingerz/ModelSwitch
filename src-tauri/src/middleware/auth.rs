@@ -1,4 +1,5 @@
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use axum::extract::State;
 use axum::http::{Request, StatusCode};
 use axum::middleware::Next;
@@ -37,12 +38,36 @@ fn attempts() -> &'static Mutex<HashMap<String, AuthAttemptInfo>> {
     ATTEMPTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Extract the client IP from `x-forwarded-for` (first IP) or `x-real-ip`,
-/// falling back to `"unknown"` when neither header is present.
+/// Extract the client IP address, checking non-spoofable sources first.
+///
+/// Resolution order:
+/// 1. TCP peer IP from `ConnectInfo<SocketAddr>` (injected by
+///    `into_make_service_with_connect_info` on the non-TLS path). This is the
+///    real socket address and **cannot be spoofed** by client headers.
+/// 2. `X-Real-IP` header — trusted when the gateway sits behind a reverse proxy
+///    (nginx, Cloudflare, etc.) that overwrites this header.
+/// 3. `X-Forwarded-For` header — least reliable; only the first IP in the chain
+///    is used. Trust only when the gateway is behind a known proxy.
+/// 4. `"unknown"` — fallback when no source is available.
 pub(crate) fn extract_client_ip(req: &Request<Body>) -> String {
-    let headers = req.headers();
+    // 1. TCP peer IP from ConnectInfo extension (cannot be spoofed).
+    //    Injected by into_make_service_with_connect_info on the non-TLS path.
+    if let Some(ConnectInfo(peer)) = req.extensions().get::<ConnectInfo<std::net::SocketAddr>>() {
+        return peer.ip().to_string();
+    }
 
-    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+    // 2. X-Real-IP (set by trusted reverse proxies like nginx)
+    if let Some(xri) = req.headers().get("x-real-ip").and_then(|v| v.to_str().ok()) {
+        let ip = xri.trim();
+        if !ip.is_empty() {
+            return ip.to_string();
+        }
+    }
+
+    // 3. X-Forwarded-For header chain (least reliable, trust only behind proxy)
+    if let Some(xff) = req.headers()
+                          .get("x-forwarded-for")
+                          .and_then(|v| v.to_str().ok()) {
         if let Some(first) = xff.split(',').next() {
             let ip = first.trim();
             if !ip.is_empty() {
@@ -51,13 +76,7 @@ pub(crate) fn extract_client_ip(req: &Request<Body>) -> String {
         }
     }
 
-    if let Some(xri) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
-        let ip = xri.trim();
-        if !ip.is_empty() {
-            return ip.to_string();
-        }
-    }
-
+    // 4. Fallback
     "unknown".to_string()
 }
 
