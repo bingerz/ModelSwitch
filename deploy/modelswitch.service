@@ -1,27 +1,54 @@
+# ══════════════════════════════════════════════════════════════════════
+# ModelSwitch LLM Gateway — systemd 服务单元文件
+#
+# 安装位置: /etc/systemd/system/modelswitch.service
+# 启用命令: sudo systemctl daemon-reload && sudo systemctl enable --now modelswitch
+# ══════════════════════════════════════════════════════════════════════
+
 [Unit]
 Description=ModelSwitch LLM Gateway
-After=network-online.target
-Wants=network-online.target
+Documentation=https://github.com/modelswitch/modelswitch
+After=network.target
+Wants=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/modelswitch serve --log-format json
-Restart=on-failure
+User=modelswitch
+Group=modelswitch
+WorkingDirectory=/opt/modelswitch
+ExecStart=/opt/modelswitch/modelswitch-cli serve --config /etc/modelswitch/config.toml
+Restart=always
 RestartSec=5
+LimitNOFILE=65536
 
+# ── 环境变量 ────────────────────────────────────────────────────────────
 Environment=MODELSWITCH_CREDENTIAL_STORE=file
 Environment=RUST_LOG=info
+# 通过环境变量或 config.toml 设置管理 Token
 Environment=MODELSWITCH_ADMIN_TOKEN=changeme
 
-WorkingDirectory=/etc/modelswitch
-StateDirectory=modelswitch
-LogsDirectory=modelswitch
-
-# Security hardening
+# ── 安全加固 ────────────────────────────────────────────────────────────
+# 禁止获取新权限 (防止提权攻击)
 NoNewPrivileges=true
+
+# 严格保护文件系统: 仅允许写入数据与配置目录
 ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/etc/modelswitch /var/lib/modelswitch
+ProtectHome=true
+ReadWritePaths=/var/lib/modelswitch /etc/modelswitch
+
+# 隔离临时文件系统
+PrivateTmp=true
+
+# 禁止内核日志访问
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# 限制设备访问
+PrivateDevices=true
+
+# 网络命名空间保持共享 (需要访问上游 API)
+# RestrictAddressFamilies=AF_INET AF_INET6
 
 [Install]
 WantedBy=multi-user.target

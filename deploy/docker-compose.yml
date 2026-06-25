@@ -1,0 +1,84 @@
+# ══════════════════════════════════════════════════════════════════════
+# ModelSwitch LLM Gateway — Docker Compose 部署文件
+#
+# 用途: 单机企业级部署 (适用于 DeepSeek 企业评估场景)
+# 使用方式:
+#   1. 复制 .env.example 为 .env 并填写真实的 ADMIN_TOKEN
+#   2. 将 config.toml 放到 ~/.config/modelswitch/config.toml
+#   3. docker compose up -d
+#   4. 健康检查: curl http://localhost:8080/healthz
+# ══════════════════════════════════════════════════════════════════════
+
+# ── 网络定义 ────────────────────────────────────────────────────────────
+# 专用桥接网络, 隔离 ModelSwitch 与其他容器
+networks:
+  modelswitch-net:
+    name: modelswitch-net
+    driver: bridge
+
+# ── 服务定义 ────────────────────────────────────────────────────────────
+services:
+  modelswitch:
+    # 使用项目根目录的 Dockerfile 构建
+    build:
+      context: ..
+      dockerfile: Dockerfile
+
+    # 容器名称, 便于日志与监控识别
+    container_name: modelswitch
+
+    # ── 端口映射 ────────────────────────────────────────────────────────
+    # 主机 8080 -> 容器 8080 (HTTP API + 管理后台)
+    ports:
+      - "8080:8080"
+
+    # ── 环境变量 ────────────────────────────────────────────────────────
+    # MODELSWITCH_ADMIN_TOKEN: 管理 API 的 Bearer Token (必须修改!)
+    # MODELSWITCH_CONFIG_DIR:  容器内配置目录路径
+    environment:
+      - MODELSWITCH_ADMIN_TOKEN=${MODELSWITCH_ADMIN_TOKEN:-changeme}
+      - MODELSWITCH_CONFIG_DIR=/home/modelswitch/.config/modelswitch
+      - RUST_LOG=${RUST_LOG:-info}
+      - MODELSWITCH_CREDENTIAL_STORE=file
+
+    # ── 卷映射 ──────────────────────────────────────────────────────────
+    # 宿主机配置目录挂载到容器内, 实现配置持久化
+    # 包含: config.toml, virtual_keys.json, quota.json, provider_budgets.json 等
+    volumes:
+      - "${HOME}/.config/modelswitch:/home/modelswitch/.config/modelswitch"
+
+    # ── 重启策略 ────────────────────────────────────────────────────────
+    # unless-stopped: 除非手动停止, 否则总是重启 (含宿主机重启后)
+    restart: unless-stopped
+
+    # ── 健康检查 ────────────────────────────────────────────────────────
+    # 每 30 秒探测 /healthz 端点, 连续 3 次失败标记为 unhealthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+    # ── 资源限制 ────────────────────────────────────────────────────────
+    # 单机企业部署推荐: 1 CPU + 512MB 内存
+    # 可根据实际流量调整 (高并发场景建议 2 CPU / 1GB)
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+    # ── 网络配置 ────────────────────────────────────────────────────────
+    networks:
+      - modelswitch-net
+
+    # ── 日志标签 ────────────────────────────────────────────────────────
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
