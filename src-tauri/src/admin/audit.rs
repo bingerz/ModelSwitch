@@ -4,10 +4,16 @@
 //! changes) are recorded as `AuditEntry` records in a bounded ring buffer.
 //! The buffer evicts the oldest entries when capacity is reached, similar
 //! to how `DispatchLogger` operates.
+//!
+//! When a `log_file` path is configured, every recorded entry is also
+//! appended as NDJSON to disk so that audit history survives process
+//! restarts. On startup, [`AuditLog::load_from_file`] reads the NDJSON
+//! file back into the in-memory ring buffer.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -15,7 +21,7 @@ use tokio::sync::RwLock;
 const DEFAULT_MAX_ENTRIES: usize = 1000;
 
 /// A single audit log entry recording an administrative action.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEntry {
     /// When the action occurred.
     pub timestamp: DateTime<Utc>,
@@ -33,27 +39,104 @@ pub struct AuditEntry {
 ///
 /// Stores up to `max_entries` entries; oldest entries are evicted when
 /// capacity is reached. Thread-safe via `Arc<RwLock<...>>`.
+///
+/// When `log_file` is `Some`, each recorded entry is appended to the NDJSON
+/// file so that audit history survives restarts.
 pub struct AuditLog {
     entries: Arc<RwLock<VecDeque<AuditEntry>>>,
     max_entries: usize,
+    log_file: Option<PathBuf>,
 }
 
 impl AuditLog {
-    /// Create a new `AuditLog` with the given capacity.
+    /// Create a new `AuditLog` with the given capacity and no disk persistence.
     pub fn new(max_entries: usize) -> Self {
         Self {
             entries: Arc::new(RwLock::new(VecDeque::with_capacity(max_entries))),
             max_entries,
+            log_file: None,
         }
     }
 
-    /// Create a new `AuditLog` with the default capacity (1000 entries).
+    /// Create a new `AuditLog` with the default capacity (1000 entries) and
+    /// no disk persistence.
     pub fn with_default_capacity() -> Self {
         Self::new(DEFAULT_MAX_ENTRIES)
     }
 
+    /// Create a new `AuditLog` that appends every entry as NDJSON to the
+    /// given file path. The file is NOT read automatically; call
+    /// [`load_from_file`] after construction to restore prior history.
+    pub fn with_persistence(max_entries: usize, log_file: PathBuf) -> Self {
+        Self {
+            entries: Arc::new(RwLock::new(VecDeque::with_capacity(max_entries))),
+            max_entries,
+            log_file: Some(log_file),
+        }
+    }
+
+    /// Create a new `AuditLog` with the default capacity and disk persistence.
+    pub fn with_default_capacity_and_persistence(log_file: PathBuf) -> Self {
+        Self::with_persistence(DEFAULT_MAX_ENTRIES, log_file)
+    }
+
+    /// Read the NDJSON file (if configured) and populate the in-memory ring
+    /// buffer with the most recent entries up to `max_entries`. Missing files
+    /// are treated as an empty history. Malformed lines are skipped.
+    pub async fn load_from_file(&self) {
+        let path = match &self.log_file {
+            Some(p) => p.clone(),
+            None => return,
+        };
+
+        if let Err(e) = Self::ensure_parent_dir(&path).await {
+            tracing::warn!(error = %e, "failed to create audit log directory");
+            return;
+        }
+
+        let content = match tokio::fs::read_to_string(&path).await {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::info!("audit log file does not exist yet; starting empty");
+                return;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to read audit log file");
+                return;
+            }
+        };
+
+        let mut loaded: Vec<AuditEntry> = Vec::new();
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<AuditEntry>(trimmed) {
+                Ok(entry) => loaded.push(entry),
+                Err(e) => {
+                    tracing::debug!(error = %e, "skipping malformed audit log line");
+                }
+            }
+        }
+
+        let mut entries = self.entries.write().await;
+        entries.clear();
+        // Keep only the most recent `max_entries` entries from the file.
+        let start = loaded.len().saturating_sub(self.max_entries);
+        for entry in loaded.into_iter().skip(start) {
+            if entries.len() >= self.max_entries {
+                break;
+            }
+            entries.push_back(entry);
+        }
+
+        tracing::info!(loaded = entries.len(), "audit log entries loaded from file");
+    }
+
     /// Record a new audit entry. If the buffer is at capacity, the oldest
-    /// entry is evicted (FIFO ring-buffer semantics).
+    /// entry is evicted (FIFO ring-buffer semantics). When a log file is
+    /// configured, the entry is also appended as NDJSON to disk.
     pub async fn record(
         &self,
         action: &str,
@@ -68,6 +151,25 @@ impl AuditLog {
             target: target.to_string(),
             details,
         };
+
+        if let Some(ref path) = self.log_file {
+            let line = match serde_json::to_string(&entry) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to serialize audit entry");
+                    String::new()
+                }
+            };
+            if !line.is_empty() {
+                let file_path = path.clone();
+                crate::spawn_bg(async move {
+                    if let Err(e) = Self::append_line(&file_path, &line).await {
+                        tracing::warn!(error = %e, "failed to append audit entry to file");
+                    }
+                });
+            }
+        }
+
         let mut entries = self.entries.write().await;
         if entries.len() >= self.max_entries {
             entries.pop_front();
@@ -95,6 +197,28 @@ impl AuditLog {
     /// Clear all audit entries.
     pub async fn clear(&self) {
         self.entries.write().await.clear();
+    }
+}
+
+// ─── Private helpers for file persistence ──────────────
+impl AuditLog {
+    async fn ensure_parent_dir(path: &Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        Ok(())
+    }
+
+    async fn append_line(path: &PathBuf, line: &str) -> std::io::Result<()> {
+        use tokio::io::AsyncWriteExt;
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .await?;
+        file.write_all(line.as_bytes()).await?;
+        file.write_all(b"\n").await?;
+        Ok(())
     }
 }
 
@@ -291,5 +415,153 @@ mod tests {
         let entries = log.list(None).await;
         assert!(entries[0].timestamp >= before);
         assert!(entries[0].timestamp <= after);
+    }
+
+    #[tokio::test]
+    async fn persistence_appends_to_file() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-audit-test-{}.ndjson",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let log = AuditLog::with_persistence(100, path.clone());
+        log.record("test.action", "actor", "target", json!({"k": "v"}))
+            .await;
+        // Background append — give it a moment to flush.
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert!(content.contains("test.action"));
+        assert!(content.contains("\"k\":\"v\""));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn load_from_file_restores_history() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-audit-load-{}.ndjson",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        // Write entries directly to the NDJSON file (bypassing spawn_bg timing).
+        let mut content = String::new();
+        for action in &["a", "b", "c"] {
+            let entry = serde_json::json!({
+                "timestamp": "2025-01-01T00:00:00Z",
+                "action": action,
+                "actor": "x",
+                "target": format!("t-{}", action),
+                "details": {}
+            });
+            content.push_str(&entry.to_string());
+            content.push('\n');
+        }
+        tokio::fs::write(&path, &content).await.unwrap();
+
+        // Fresh instance loads from disk.
+        let log = AuditLog::with_persistence(100, path.clone());
+        log.load_from_file().await;
+        let entries = log.list(None).await;
+        assert_eq!(entries.len(), 3, "all 3 entries should be restored");
+        // Newest first (last line is newest).
+        assert_eq!(entries[0].action, "c");
+        assert_eq!(entries[1].action, "b");
+        assert_eq!(entries[2].action, "a");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn load_from_file_respects_capacity() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-audit-cap-{}.ndjson",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        // Write 10 entries directly to the NDJSON file.
+        let mut content = String::new();
+        for i in 0..10 {
+            let entry = serde_json::json!({
+                "timestamp": "2025-01-01T00:00:00Z",
+                "action": "action",
+                "actor": "actor",
+                "target": format!("t{i}"),
+                "details": {}
+            });
+            content.push_str(&entry.to_string());
+            content.push('\n');
+        }
+        tokio::fs::write(&path, &content).await.unwrap();
+
+        // Fresh instance with smaller capacity — only the 3 newest survive.
+        let log = AuditLog::with_persistence(3, path.clone());
+        log.load_from_file().await;
+        let entries = log.list(None).await;
+        assert_eq!(entries.len(), 3, "capacity should cap restored entries");
+        assert_eq!(entries[0].target, "t9");
+        assert_eq!(entries[1].target, "t8");
+        assert_eq!(entries[2].target, "t7");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn load_from_file_missing_file_is_empty() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-audit-missing-{}.ndjson",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let log = AuditLog::with_persistence(100, path.clone());
+        log.load_from_file().await;
+        let entries = log.list(None).await;
+        assert!(entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn load_from_file_skips_malformed_lines() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-audit-malformed-{}.ndjson",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        // Write one valid then one malformed line then a valid line.
+        let valid = serde_json::json!({
+            "timestamp": "2025-01-01T00:00:00Z",
+            "action": "valid",
+            "actor": "a",
+            "target": "t",
+            "details": {}
+        })
+        .to_string();
+        let mut content = String::new();
+        content.push_str(&valid);
+        content.push('\n');
+        content.push_str("this is not json\n");
+        content.push_str(&valid);
+        content.push('\n');
+        tokio::fs::write(&path, &content).await.unwrap();
+
+        let log = AuditLog::with_persistence(100, path.clone());
+        log.load_from_file().await;
+        let entries = log.list(None).await;
+        assert_eq!(entries.len(), 2, "malformed line should be skipped");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn without_persistence_does_not_panic() {
+        // Default in-memory log should never touch disk.
+        let log = AuditLog::with_default_capacity();
+        log.record("action", "actor", "t", json!({})).await;
+        let entries = log.list(None).await;
+        assert_eq!(entries.len(), 1);
     }
 }

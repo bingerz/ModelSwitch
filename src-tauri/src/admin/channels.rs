@@ -367,7 +367,12 @@ pub async fn batch_enable_channels(
                     channel.status = ChannelStatus::Healthy;
                 }
                 channel.updated_at = chrono::Utc::now();
-                if state.channel_mgr.update(id, channel.clone()).await.is_some() {
+                if state
+                    .channel_mgr
+                    .update(id, channel.clone())
+                    .await
+                    .is_some()
+                {
                     result.success += 1;
                     state
                         .audit_log
@@ -419,7 +424,12 @@ pub async fn batch_disable_channels(
                 channel.enabled = false;
                 channel.status = ChannelStatus::Disabled;
                 channel.updated_at = chrono::Utc::now();
-                if state.channel_mgr.update(id, channel.clone()).await.is_some() {
+                if state
+                    .channel_mgr
+                    .update(id, channel.clone())
+                    .await
+                    .is_some()
+                {
                     result.success += 1;
                     state
                         .audit_log
@@ -817,9 +827,7 @@ mod tests {
 
         let result = batch_enable_channels(
             State(state),
-            Json(BatchChannelRequest {
-                ids: vec![fake_id],
-            }),
+            Json(BatchChannelRequest { ids: vec![fake_id] }),
         )
         .await
         .0;
@@ -1010,10 +1018,9 @@ mod tests {
     async fn batch_enable_empty_ids_is_noop() {
         let state = build_test_state(vec![]);
 
-        let result =
-            batch_enable_channels(State(state), Json(BatchChannelRequest { ids: vec![] }))
-                .await
-                .0;
+        let result = batch_enable_channels(State(state), Json(BatchChannelRequest { ids: vec![] }))
+            .await
+            .0;
 
         assert!(result.ok);
         assert_eq!(result.data.total, 0);

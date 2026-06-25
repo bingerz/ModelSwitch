@@ -16,19 +16,15 @@ const WINDOW_MS: u64 = 60_000; // 1 minute
 /// periods refill the bucket up to its capacity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum RateLimitAlgorithm {
     /// Rolling 60-second window with per-channel TPM/RPM counters (default).
+    #[default]
     SlidingWindow,
     /// Burst-capable token bucket. Tokens refill continuously at `refill_rate`
     /// per second up to `capacity`, allowing short bursts above the average
     /// rate.
     TokenBucket,
-}
-
-impl Default for RateLimitAlgorithm {
-    fn default() -> Self {
-        Self::SlidingWindow
-    }
 }
 
 /// A leaky-bucket-style token bucket rate limiter.

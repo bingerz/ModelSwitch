@@ -16,6 +16,8 @@
     "success": "成功",
     "failed": "失败",
     "search": "搜索",
+    "previous": "上一页",
+    "next": "下一页",
     "enable": "启用",
     "disable": "禁用",
     "enabled": "已启用",
@@ -303,7 +305,8 @@
     "allowedIpsHint": "192.168.1.0/24, 10.0.0.5 (留空 = 允许所有)",
     "allowedModelsHint": "gpt-4*, claude-* (留空 = 允许所有)",
     "deniedModels": "禁止的模型",
-    "deniedModelsHint": "gpt-3.5* (始终禁止)"
+    "deniedModelsHint": "gpt-3.5* (始终禁止)",
+    "searchPlaceholder": "按名称或前缀搜索..."
   },
   "mcp": {
     "title": "MCP 服务器",

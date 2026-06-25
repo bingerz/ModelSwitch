@@ -168,11 +168,17 @@ pub async fn validate_notification_url(url: &str) -> Result<(), String> {
                 );
             }
         }
-        scheme => return Err(format!("Unsupported URL scheme: {scheme}. Only http/https allowed.")),
+        scheme => {
+            return Err(format!(
+                "Unsupported URL scheme: {scheme}. Only http/https allowed."
+            ))
+        }
     }
 
     let host = parsed.host_str().unwrap_or("");
-    let port = parsed.port().unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
+    let port = parsed
+        .port()
+        .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
 
     // Check hostname string for literal IP matches first
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
@@ -386,8 +392,12 @@ mod tests {
 
     #[tokio::test]
     async fn validate_localhost_http_passes() {
-        assert!(validate_notification_url("http://localhost:8080/webhook").await.is_ok());
-        assert!(validate_notification_url("http://127.0.0.1:9090/webhook").await.is_ok());
+        assert!(validate_notification_url("http://localhost:8080/webhook")
+            .await
+            .is_ok());
+        assert!(validate_notification_url("http://127.0.0.1:9090/webhook")
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
@@ -399,9 +409,15 @@ mod tests {
 
     #[tokio::test]
     async fn validate_private_ip_rejected() {
-        assert!(validate_notification_url("https://10.0.0.1/webhook").await.is_err());
-        assert!(validate_notification_url("https://192.168.1.1/webhook").await.is_err());
-        assert!(validate_notification_url("https://172.16.0.1/webhook").await.is_err());
+        assert!(validate_notification_url("https://10.0.0.1/webhook")
+            .await
+            .is_err());
+        assert!(validate_notification_url("https://192.168.1.1/webhook")
+            .await
+            .is_err());
+        assert!(validate_notification_url("https://172.16.0.1/webhook")
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -419,7 +435,11 @@ mod tests {
 
     #[tokio::test]
     async fn validate_non_http_scheme_rejected() {
-        assert!(validate_notification_url("file:///etc/passwd").await.is_err());
-        assert!(validate_notification_url("ftp://example.com/").await.is_err());
+        assert!(validate_notification_url("file:///etc/passwd")
+            .await
+            .is_err());
+        assert!(validate_notification_url("ftp://example.com/")
+            .await
+            .is_err());
     }
 }

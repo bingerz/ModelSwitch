@@ -10,7 +10,7 @@ use bytes::Bytes;
 use tokio::sync::mpsc;
 
 use crate::channel::Channel;
-use crate::proxy::stream::{json_response, keepalive_stream, sse_stream_response_with_telemetry};
+use crate::proxy::stream::{keepalive_stream, sse_stream_response_with_telemetry};
 use crate::router::active_requests::ActiveRequestGuard;
 
 use super::provider::ProviderAdaptor;
@@ -20,6 +20,7 @@ use super::{estimate_tokens, make_log, RequestFormat};
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proxy::stream::json_response;
 
     #[test]
     fn inject_passthrough_headers_adds_headers() {

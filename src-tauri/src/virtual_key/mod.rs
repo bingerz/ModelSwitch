@@ -542,7 +542,14 @@ mod tests {
     async fn create_generates_key_with_ms_vk_prefix() {
         let store = VirtualKeyStore::new();
         let (vk, plaintext) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
+            .create(
+                "test".to_string(),
+                Some(100),
+                Some(1000),
+                None,
+                vec![],
+                vec![],
+            )
             .await;
         assert!(plaintext.starts_with("ms-vk-"), "prefix was: {plaintext}");
         assert!(plaintext.len() > "ms-vk-".len() + 8);
@@ -746,7 +753,14 @@ mod tests {
     async fn reserve_spend_charges_budgeted_key() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
+            .create(
+                "test".to_string(),
+                Some(100),
+                Some(1000),
+                None,
+                vec![],
+                vec![],
+            )
             .await;
         let result = store.reserve_spend(vk.id, 10).await;
         assert!(matches!(result, ReserveResult::Reserved(n) if n == 10));
@@ -772,7 +786,14 @@ mod tests {
     async fn reserve_spend_skips_disabled_key() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
+            .create(
+                "test".to_string(),
+                Some(100),
+                Some(1000),
+                None,
+                vec![],
+                vec![],
+            )
             .await;
         store
             .update(vk.id, None, None, None, Some(false), None, None, None)
@@ -792,7 +813,14 @@ mod tests {
     async fn reserve_spend_resets_stale_periods() {
         let store = VirtualKeyStore::new();
         let (mut vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
+            .create(
+                "test".to_string(),
+                Some(100),
+                Some(1000),
+                None,
+                vec![],
+                vec![],
+            )
             .await;
         vk.spend.today = DailySpend {
             date: "1999-01-01".to_string(),
@@ -823,7 +851,14 @@ mod tests {
     async fn reserve_spend_rejects_when_daily_budget_exceeded() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
+            .create(
+                "test".to_string(),
+                Some(100),
+                Some(1000),
+                None,
+                vec![],
+                vec![],
+            )
             .await;
         // Accumulate 90 cents of spend
         store.accumulate_spend(vk.id, 90).await;
@@ -845,7 +880,14 @@ mod tests {
         let store = VirtualKeyStore::new();
         // Daily budget is large so only monthly triggers
         let (vk, _) = store
-            .create("test".to_string(), Some(10_000), Some(500), None, vec![], vec![])
+            .create(
+                "test".to_string(),
+                Some(10_000),
+                Some(500),
+                None,
+                vec![],
+                vec![],
+            )
             .await;
         // Accumulate 490 cents of spend
         store.accumulate_spend(vk.id, 490).await;
@@ -866,7 +908,14 @@ mod tests {
     async fn reserve_spend_allows_exact_limit_boundary() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
+            .create(
+                "test".to_string(),
+                Some(100),
+                Some(1000),
+                None,
+                vec![],
+                vec![],
+            )
             .await;
         // Accumulate 90 cents, then reserve exactly 10 → 90 + 10 = 100, not exceeding
         store.accumulate_spend(vk.id, 90).await;
@@ -880,7 +929,14 @@ mod tests {
     async fn reconcile_spend_refunds_when_actual_less() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
+            .create(
+                "test".to_string(),
+                Some(100),
+                Some(1000),
+                None,
+                vec![],
+                vec![],
+            )
             .await;
         store.reserve_spend(vk.id, 50).await;
         store.reconcile_spend(vk.id, 50, 20).await;
@@ -894,7 +950,14 @@ mod tests {
     async fn reconcile_spend_charges_more_when_actual_greater() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
+            .create(
+                "test".to_string(),
+                Some(100),
+                Some(1000),
+                None,
+                vec![],
+                vec![],
+            )
             .await;
         store.reserve_spend(vk.id, 20).await;
         store.reconcile_spend(vk.id, 20, 50).await;
@@ -908,7 +971,14 @@ mod tests {
     async fn reconcile_spend_noop_when_equal() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
+            .create(
+                "test".to_string(),
+                Some(100),
+                Some(1000),
+                None,
+                vec![],
+                vec![],
+            )
             .await;
         store.reserve_spend(vk.id, 30).await;
         store.reconcile_spend(vk.id, 30, 30).await;
@@ -920,7 +990,14 @@ mod tests {
     async fn reconcile_spend_refunds_full_on_failure() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
+            .create(
+                "test".to_string(),
+                Some(100),
+                Some(1000),
+                None,
+                vec![],
+                vec![],
+            )
             .await;
         store.reserve_spend(vk.id, 40).await;
         store.reconcile_spend(vk.id, 40, 0).await;
@@ -935,7 +1012,14 @@ mod tests {
         // Simulate two concurrent requests reserving against the same budget
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
+            .create(
+                "test".to_string(),
+                Some(100),
+                Some(1000),
+                None,
+                vec![],
+                vec![],
+            )
             .await;
         // First request reserves 30
         store.reserve_spend(vk.id, 30).await;
@@ -985,7 +1069,14 @@ mod tests {
 
         let store = VirtualKeyStore::with_store_path(path.clone());
         let (vk, plaintext) = store
-            .create("persisted".to_string(), Some(10), Some(100), None, vec![], vec![])
+            .create(
+                "persisted".to_string(),
+                Some(10),
+                Some(100),
+                None,
+                vec![],
+                vec![],
+            )
             .await;
         store.accumulate_spend(vk.id, 5).await;
         store.persist().await.unwrap();

@@ -44,6 +44,17 @@ pub async fn virtual_key_middleware(
     // Validate against virtual key store.
     match state.billing.virtual_key_store.validate(token).await {
         Some(vk) => {
+            // Enforce IP allowlist if configured for this key.
+            if !vk.allowed_ips.is_empty() {
+                let client_ip = super::auth::extract_client_ip(&req);
+                if !vk.check_ip_allowed(&client_ip) {
+                    return Err((
+                        StatusCode::FORBIDDEN,
+                        "Client IP not allowed for this virtual key",
+                    ));
+                }
+            }
+
             // Inject virtual key ID for downstream spend tracking.
             // Handler extractors only see HeaderMap, not request extensions,
             // so we use a synthetic header to thread the id through.
@@ -64,6 +75,14 @@ pub async fn virtual_key_middleware(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::test_helpers::build_test_state;
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode};
+    use axum::middleware::from_fn_with_state;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
     #[test]
     fn extract_bearer_token_from_valid_header() {
         let header = "Bearer ms-vk-abc";
@@ -82,5 +101,124 @@ mod tests {
             _ => "",
         };
         assert_eq!(token, "");
+    }
+
+    /// A request from an IP that is not in the key's `allowed_ips` list
+    /// must be rejected with 403 Forbidden.
+    #[tokio::test]
+    async fn rejects_request_from_non_allowed_ip() {
+        let state = build_test_state(vec![]);
+
+        // Create a virtual key restricted to a specific IP.
+        let (_, plaintext) = state
+            .billing
+            .virtual_key_store
+            .create(
+                "ip-restricted".to_string(),
+                None,
+                None,
+                None,
+                vec![],
+                vec!["10.0.0.5".to_string()],
+            )
+            .await;
+
+        let app = axum::Router::new()
+            .route("/v1/test", axum::routing::any(|| async { "ok" }))
+            .layer(from_fn_with_state(
+                Arc::clone(&state),
+                virtual_key_middleware,
+            ));
+
+        // Send a request from a different IP via x-forwarded-for.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/test")
+                    .header("Authorization", format!("Bearer {plaintext}"))
+                    .header("x-forwarded-for", "192.168.1.99")
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// A request from an allowed IP must succeed (positive control).
+    #[tokio::test]
+    async fn allows_request_from_allowed_ip() {
+        let state = build_test_state(vec![]);
+
+        let (_, plaintext) = state
+            .billing
+            .virtual_key_store
+            .create(
+                "ip-restricted".to_string(),
+                None,
+                None,
+                None,
+                vec![],
+                vec!["10.0.0.5".to_string()],
+            )
+            .await;
+
+        let app = axum::Router::new()
+            .route("/v1/test", axum::routing::any(|| async { "ok" }))
+            .layer(from_fn_with_state(
+                Arc::clone(&state),
+                virtual_key_middleware,
+            ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/test")
+                    .header("Authorization", format!("Bearer {plaintext}"))
+                    .header("x-forwarded-for", "10.0.0.5")
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// A key with no IP restrictions must allow any IP (backward compat).
+    #[tokio::test]
+    async fn allows_any_ip_when_no_restriction() {
+        let state = build_test_state(vec![]);
+
+        let (_, plaintext) = state
+            .billing
+            .virtual_key_store
+            .create("open".to_string(), None, None, None, vec![], vec![])
+            .await;
+
+        let app = axum::Router::new()
+            .route("/v1/test", axum::routing::any(|| async { "ok" }))
+            .layer(from_fn_with_state(
+                Arc::clone(&state),
+                virtual_key_middleware,
+            ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/test")
+                    .header("Authorization", format!("Bearer {plaintext}"))
+                    .header("x-forwarded-for", "99.99.99.99")
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

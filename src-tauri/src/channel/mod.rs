@@ -239,7 +239,7 @@ impl Channel {
     /// otherwise a fixed 2-minute default. Capped at 30 minutes.
     pub fn mark_model_rate_limited(&mut self, model: &str, retry_after_secs: Option<u64>) {
         let duration_mins = retry_after_secs
-            .map(|s| ((s + 59) / 60).max(1).min(30))
+            .map(|s| s.div_ceil(60).max(1).min(30))
             .unwrap_or(2);
         let expiry = Utc::now() + chrono::Duration::minutes(duration_mins as i64);
         self.model_cooldowns.insert(model.to_string(), expiry);
@@ -692,11 +692,7 @@ mod tests {
         manager.create(channel).await;
 
         let result = manager.run_channel_test(id).await;
-        assert!(
-            result.success,
-            "test should succeed: {:?}",
-            result.error
-        );
+        assert!(result.success, "test should succeed: {:?}", result.error);
         assert!(result.latency_ms.is_some());
 
         let updated = manager.get(id).await.expect("channel exists");

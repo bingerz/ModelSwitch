@@ -454,8 +454,14 @@ mod tests {
         ];
         let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
 
-        let (_response, output_buffer, stream_done, _ttft) =
-            sse_stream_response_with_telemetry(upstream, false, "gpt-4".to_string(), None, None, std::time::Instant::now());
+        let (_response, output_buffer, stream_done, _ttft) = sse_stream_response_with_telemetry(
+            upstream,
+            false,
+            "gpt-4".to_string(),
+            None,
+            None,
+            std::time::Instant::now(),
+        );
 
         // Consume the response body so the background task completes
         let body = _response.into_body();

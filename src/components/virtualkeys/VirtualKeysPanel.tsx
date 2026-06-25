@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { KeyRound, CheckCircle, DollarSign } from "lucide-react";
+import { KeyRound, CheckCircle, DollarSign, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import {
   api,
   type VirtualKey,
@@ -16,6 +16,8 @@ import { PlaintextBanner } from "./PlaintextBanner";
 import { VirtualKeyCard } from "./VirtualKeyCard";
 import { VirtualKeyForm } from "./VirtualKeyForm";
 
+const PAGE_SIZE = 20;
+
 export function VirtualKeysPanel() {
   const { t } = useTranslation();
   const toast = useToast();
@@ -28,10 +30,20 @@ export function VirtualKeysPanel() {
   const [createdResponse, setCreatedResponse] =
     useState<CreateVirtualKeyResponse | null>(null);
 
+  // Pagination + search state
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [searchInput, setSearchInput] = useState("");
+  const [activeSearch, setActiveSearch] = useState("");
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const limit = PAGE_SIZE;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+
   const refresh = useCallback(async () => {
     try {
-      const list = await api.virtualKeys.list();
-      setKeys(list);
+      const res = await api.virtualKeys.list({ page, limit, search: activeSearch || undefined });
+      setKeys(res.data);
+      setTotal(res.total);
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : t("virtualKeys.loadFailed"),
@@ -39,7 +51,28 @@ export function VirtualKeysPanel() {
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, t, page, limit, activeSearch]);
+
+  // Debounced search: when searchInput changes, debounce then commit to activeSearch + reset page
+  useEffect(() => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      setActiveSearch((prev) => {
+        if (prev !== searchInput) {
+          setPage(1);
+          return searchInput;
+        }
+        return prev;
+      });
+    }, 300);
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
+    };
+  }, [searchInput]);
 
   useEffect(() => {
     refresh();
@@ -132,12 +165,58 @@ export function VirtualKeysPanel() {
         />
       )}
 
+      {/* Search + pagination toolbar */}
+      <div className="vk-toolbar">
+        <div className="vk-search">
+          <Search size={14} className="vk-search-icon" />
+          <input
+            type="text"
+            className="vk-search-input"
+            placeholder={t("virtualKeys.searchPlaceholder")}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+          />
+          {searchInput && (
+            <button
+              className="vk-search-clear"
+              onClick={() => setSearchInput("")}
+              title={t("common.clear")}
+            >
+              {"\u00D7"}
+            </button>
+          )}
+        </div>
+        {totalPages > 1 && (
+          <div className="vk-pagination">
+            <button
+              className="btn btn-sm"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              title={t("common.previous")}
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <span className="vk-page-info">
+              {page} / {totalPages}
+            </span>
+            <button
+              className="btn btn-sm"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              title={t("common.next")}
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Summary stat cards */}
       {keys.length > 0 && (
         <div className="vk-summary-grid">
           <StatTile
             icon={KeyRound}
-            value={keys.length}
+            value={total}
             label={t("virtualKeys.totalKeys")}
             accent="blue"
           />

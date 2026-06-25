@@ -22,9 +22,9 @@ mod webview_login;
 
 mod server;
 mod shutdown;
-pub mod telemetry;
 #[cfg(feature = "tauri")]
 mod tauri_cmds;
+pub mod telemetry;
 #[cfg(test)]
 pub(crate) mod test_helpers;
 

@@ -14,6 +14,9 @@ import type {
   RedemptionCode,
   NotificationConfig,
   ProviderBudgetEntry,
+  ListVirtualKeysParams,
+  BatchCreateVirtualKeyData,
+  BatchCreateVirtualKeyItem,
 } from "./api";
 import * as mockData from "./mock-data";
 
@@ -261,9 +264,27 @@ export const mockApi: typeof api = {
   },
 
   virtualKeys: {
-    list: async () => {
+    list: async (params?: ListVirtualKeysParams) => {
       await simDelay();
-      return mockData.buildVirtualKeys(new Date());
+      const page = params?.page ?? 1;
+      const limit = params?.limit ?? 50;
+      const search = params?.search?.trim().toLowerCase() ?? "";
+      const all = mockData.buildVirtualKeys(new Date());
+      const filtered = search
+        ? all.filter(
+            (k) =>
+              k.name.toLowerCase().includes(search) ||
+              k.key_prefix.toLowerCase().includes(search),
+          )
+        : all;
+      const start = (page - 1) * limit;
+      const data = filtered.slice(start, start + limit);
+      return {
+        data,
+        total: filtered.length,
+        page,
+        limit,
+      };
     },
 
     create: async (input: CreateVirtualKeyData) => {
@@ -293,6 +314,36 @@ export const mockApi: typeof api = {
         plaintext: `${prefix}${uuid().replace(/-/g, "").slice(0, 12)}`,
       };
       return key;
+    },
+
+    batchCreate: async (input: BatchCreateVirtualKeyData): Promise<BatchCreateVirtualKeyItem[]> => {
+      await simDelay();
+      const now = new Date();
+      const today = now.toISOString().slice(0, 10);
+      const thisMonth = now.toISOString().slice(0, 7);
+      const prefix = "msw_mock_";
+      const items: BatchCreateVirtualKeyItem[] = [];
+      for (let i = 0; i < input.count; i++) {
+        items.push({
+          id: `vk-mock-${uuid()}`,
+          name: `${input.name_prefix}${i + 1}`,
+          key: `${prefix}${uuid().replace(/-/g, "").slice(0, 12)}`,
+          key_prefix: prefix,
+          daily_budget_cents: input.daily_budget_cents ?? null,
+          monthly_budget_cents: input.monthly_budget_cents ?? null,
+          enabled: true,
+          created_at: now.toISOString(),
+          spend: {
+            today: { date: today, cents: 0 },
+            this_month: { month: thisMonth, cents: 0 },
+            total_cents: 0,
+          },
+          allowed_models: input.allowed_models ?? null,
+          denied_models: [],
+          allowed_ips: input.allowed_ips ?? [],
+        });
+      }
+      return items;
     },
 
     update: async (id, input: UpdateVirtualKeyData) => {

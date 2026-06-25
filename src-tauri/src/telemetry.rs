@@ -38,9 +38,7 @@ pub fn init_tracing() {
              once the opentelemetry-otlp crate is added to Cargo.toml"
         );
     } else {
-        tracing::info!(
-            "OpenTelemetry not configured — set OTEL_EXPORTER_OTLP_ENDPOINT to enable"
-        );
+        tracing::info!("OpenTelemetry not configured — set OTEL_EXPORTER_OTLP_ENDPOINT to enable");
     }
 }
 
@@ -50,10 +48,7 @@ pub fn init_tracing() {
 /// context propagation requires an `opentelemetry::propagation::TextMapPropagator`
 /// wired into middleware.
 pub fn extract_otel_context(headers: &axum::http::HeaderMap) -> tracing::Span {
-    if let Some(traceparent) = headers
-        .get("traceparent")
-        .and_then(|v| v.to_str().ok())
-    {
+    if let Some(traceparent) = headers.get("traceparent").and_then(|v| v.to_str().ok()) {
         tracing::debug!(traceparent = %traceparent, "Incoming W3C traceparent header");
     }
     tracing::Span::current()

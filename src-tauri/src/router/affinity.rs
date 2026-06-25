@@ -53,7 +53,7 @@ impl AffinityState {
         // Probabilistic cleanup of expired entries — runs roughly every
         // CLEANUP_INTERVAL calls so the cost is amortised across many inserts.
         self.set_counter = self.set_counter.wrapping_add(1);
-        if self.set_counter % CLEANUP_INTERVAL == 0 {
+        if self.set_counter.is_multiple_of(CLEANUP_INTERVAL) {
             self.cleanup_expired();
         }
 

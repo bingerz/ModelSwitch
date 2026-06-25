@@ -245,12 +245,18 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         }
     });
 
+    // Audit log: ring buffer + NDJSON persistence (survives restarts).
+    let audit_log_file = config::app_config_dir().join("audit.ndjson");
+    let audit_log = Arc::new(AuditLog::with_default_capacity_and_persistence(
+        audit_log_file,
+    ));
+
     // Build shared state (used by all proxy handlers including Gemini)
     let state = Arc::new(AppState {
         channel_mgr: Arc::clone(&channel_mgr),
         credential_store,
         logger: Arc::clone(&logger),
-        audit_log: Arc::new(AuditLog::with_default_capacity()),
+        audit_log: Arc::clone(&audit_log),
         http_pool: http_pool.clone(),
         model_registry: Arc::new(parking_lot::RwLock::new(ModelRegistry::new())),
         gateway: ProxyParams {
@@ -307,7 +313,9 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             crate::guardrails::GuardrailsConfig::default(),
         )),
         redemption_codes: Arc::new(RedemptionCodeStore::new()),
-        notifications: Arc::new(NotificationService::new(config.gateway.notification.clone())),
+        notifications: Arc::new(NotificationService::new(
+            config.gateway.notification.clone(),
+        )),
         completion_ratios: Arc::new(parking_lot::RwLock::new(
             config.gateway.completion_ratios.clone(),
         )),
@@ -392,6 +400,12 @@ fn spawn_persistence_tasks(state: &Arc<AppState>) {
     let boot_logger = Arc::clone(&state.logger);
     spawn_bg(async move {
         boot_logger.load_from_file().await;
+    });
+
+    // Load persisted audit log at startup (administrative history survives restarts)
+    let boot_audit = Arc::clone(&state.audit_log);
+    spawn_bg(async move {
+        boot_audit.load_from_file().await;
     });
 
     // Load persisted quota data (token usage survives restarts)
@@ -735,7 +749,10 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
             &format!("{prefix}/mcp/servers/{{id}}/tools"),
             get(admin::list_mcp_server_tools),
         )
-        .route(&format!("{prefix}/mcp/tools"), get(admin::list_all_mcp_tools))
+        .route(
+            &format!("{prefix}/mcp/tools"),
+            get(admin::list_all_mcp_tools),
+        )
         .route(
             &format!("{prefix}/virtual-keys"),
             get(admin::list_virtual_keys),
@@ -743,6 +760,10 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
         .route(
             &format!("{prefix}/virtual-keys"),
             post(admin::create_virtual_key),
+        )
+        .route(
+            &format!("{prefix}/virtual-keys/batch"),
+            post(admin::batch_create_virtual_keys),
         )
         .route(
             &format!("{prefix}/virtual-keys/{{id}}"),
@@ -817,10 +838,7 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
             get(admin::get_channel_cooldown),
         )
         // MCP health
-        .route(
-            &format!("{prefix}/mcp/health"),
-            get(admin::get_mcp_health),
-        )
+        .route(&format!("{prefix}/mcp/health"), get(admin::get_mcp_health))
         // Completion ratios
         .route(
             &format!("{prefix}/completion-ratios"),
@@ -1481,14 +1499,12 @@ mod tests {
         assert_eq!(resp_unversioned.status(), resp_versioned.status());
 
         // Verify response bodies match (same shared state)
-        let body_unversioned =
-            axum::body::to_bytes(resp_unversioned.into_body(), 1024 * 1024)
-                .await
-                .unwrap();
-        let body_versioned =
-            axum::body::to_bytes(resp_versioned.into_body(), 1024 * 1024)
-                .await
-                .unwrap();
+        let body_unversioned = axum::body::to_bytes(resp_unversioned.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_versioned = axum::body::to_bytes(resp_versioned.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
         assert_eq!(
             body_unversioned, body_versioned,
             "versioned and unversioned /api/channels bodies must match"
@@ -1524,14 +1540,12 @@ mod tests {
             .unwrap();
         assert_eq!(resp_unversioned.status(), resp_versioned.status());
 
-        let body_unversioned =
-            axum::body::to_bytes(resp_unversioned.into_body(), 1024 * 1024)
-                .await
-                .unwrap();
-        let body_versioned =
-            axum::body::to_bytes(resp_versioned.into_body(), 1024 * 1024)
-                .await
-                .unwrap();
+        let body_unversioned = axum::body::to_bytes(resp_unversioned.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let body_versioned = axum::body::to_bytes(resp_versioned.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
         assert_eq!(
             body_unversioned, body_versioned,
             "versioned and unversioned /metrics bodies must match"
@@ -1580,7 +1594,10 @@ mod tests {
         let state = TlsReloadState::new(cert.clone(), key.clone());
         assert_eq!(state.cert_path, cert);
         assert_eq!(state.key_path, key);
-        assert!(state.last_modified.is_none(), "last_modified should start None");
+        assert!(
+            state.last_modified.is_none(),
+            "last_modified should start None"
+        );
     }
 
     #[test]
@@ -1595,7 +1612,10 @@ mod tests {
 
         // Second call with no modification must also be false.
         let second = check_cert_freshness(&mut state);
-        assert!(!second, "no modification between checks should return false");
+        assert!(
+            !second,
+            "no modification between checks should return false"
+        );
 
         let _ = std::fs::remove_file(&cert);
         let _ = std::fs::remove_file(&key);
@@ -1623,7 +1643,10 @@ mod tests {
 
         // Modifying the key file should also be detected.
         tls_bump_mtime(&key);
-        assert!(check_cert_freshness(&mut state), "key modification detected");
+        assert!(
+            check_cert_freshness(&mut state),
+            "key modification detected"
+        );
 
         let _ = std::fs::remove_file(&cert);
         let _ = std::fs::remove_file(&key);

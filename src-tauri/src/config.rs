@@ -274,7 +274,7 @@ pub struct ModelRetryConfig {
 }
 
 /// TLS configuration for native HTTPS binding.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TlsConfig {
     /// Enable TLS/HTTPS binding.
     #[serde(default)]
@@ -285,16 +285,6 @@ pub struct TlsConfig {
     /// Path to PEM-encoded private key file.
     #[serde(default)]
     pub key: String,
-}
-
-impl Default for TlsConfig {
-    fn default() -> Self {
-        Self {
-            enable: false,
-            cert: String::new(),
-            key: String::new(),
-        }
-    }
 }
 
 /// Privacy guardrail configuration for the sanitizer middleware.

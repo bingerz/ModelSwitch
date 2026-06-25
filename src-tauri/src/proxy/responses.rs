@@ -294,10 +294,10 @@ fn sse_responses_stream(payload: &Value) -> Response {
          event: response.output_text.delta\ndata: {delta}\n\n\
          event: response.output_text.done\ndata: {done}\n\n\
          event: response.completed\ndata: {completed}\n\n",
-        created = created.to_string(),
-        delta = json!({"delta": text}).to_string(),
-        done = json!({"text": text}).to_string(),
-        completed = completed.to_string(),
+        created = created,
+        delta = json!({"delta": text}),
+        done = json!({"text": text}),
+        completed = completed,
     );
 
     Response::builder()

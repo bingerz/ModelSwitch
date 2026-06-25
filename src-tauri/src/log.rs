@@ -128,7 +128,7 @@ impl DispatchLogger {
                 let count = self
                     .write_counter
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let check_rotation = count % ROTATION_CHECK_INTERVAL == 0;
+                let check_rotation = count.is_multiple_of(ROTATION_CHECK_INTERVAL);
                 crate::spawn_bg(async move {
                     if check_rotation {
                         if let Err(e) =
@@ -185,9 +185,30 @@ impl DispatchLogger {
             .collect()
     }
 
+    /// Return logs filtered by `virtual_key_id`, with pagination.
+    /// Only entries whose `virtual_key_id` matches `key_id` are returned.
+    pub async fn list_by_key(&self, key_id: &str, offset: usize, limit: usize) -> Vec<DispatchLog> {
+        let logs = self.logs.read().await;
+        logs.iter()
+            .rev()
+            .filter(|l| l.virtual_key_id.as_deref() == Some(key_id))
+            .skip(offset)
+            .take(limit)
+            .cloned()
+            .collect()
+    }
+
     /// Total number of log entries stored.
     pub async fn total(&self) -> usize {
         self.logs.read().await.len()
+    }
+
+    /// Total number of log entries matching the given `virtual_key_id`.
+    pub async fn total_by_key(&self, key_id: &str) -> usize {
+        let logs = self.logs.read().await;
+        logs.iter()
+            .filter(|l| l.virtual_key_id.as_deref() == Some(key_id))
+            .count()
     }
 
     pub async fn stats(&self) -> DispatchStats {
@@ -516,6 +537,7 @@ mod tests {
                 cache_hit_tokens: None,
                 cache_miss_tokens: None,
                 request_id: None,
+                virtual_key_id: None,
             })
             .await;
         logger
@@ -536,6 +558,7 @@ mod tests {
                 cache_hit_tokens: None,
                 cache_miss_tokens: None,
                 request_id: None,
+                virtual_key_id: None,
             })
             .await;
 
@@ -558,6 +581,7 @@ mod tests {
                 cache_hit_tokens: None,
                 cache_miss_tokens: None,
                 request_id: None,
+                virtual_key_id: None,
             })
             .await;
 
@@ -580,6 +604,7 @@ mod tests {
                 cache_hit_tokens: None,
                 cache_miss_tokens: None,
                 request_id: None,
+                virtual_key_id: None,
             })
             .await;
 
@@ -626,6 +651,7 @@ mod tests {
                 cache_hit_tokens: None,
                 cache_miss_tokens: None,
                 request_id: None,
+                virtual_key_id: None,
             })
             .await;
 

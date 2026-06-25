@@ -68,10 +68,7 @@ impl GuardrailsChecker {
     ///    pattern also matches the content, the request is allowed.
     /// 4. Otherwise the matched blocked pattern is reported.
     pub fn check(&self, content: &str) -> GuardrailAction {
-        let config = self
-            .config
-            .read()
-            .expect("guardrails config lock poisoned");
+        let config = self.config.read().expect("guardrails config lock poisoned");
 
         if !config.enabled {
             return GuardrailAction::Allow;
@@ -156,7 +153,10 @@ mod tests {
             ..Default::default()
         };
         let checker = GuardrailsChecker::new(config);
-        assert_eq!(checker.check("this contains forbidden text"), GuardrailAction::Allow);
+        assert_eq!(
+            checker.check("this contains forbidden text"),
+            GuardrailAction::Allow
+        );
     }
 
     #[test]

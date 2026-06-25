@@ -39,7 +39,7 @@ fn attempts() -> &'static Mutex<HashMap<String, AuthAttemptInfo>> {
 
 /// Extract the client IP from `x-forwarded-for` (first IP) or `x-real-ip`,
 /// falling back to `"unknown"` when neither header is present.
-fn extract_client_ip(req: &Request<Body>) -> String {
+pub(crate) fn extract_client_ip(req: &Request<Body>) -> String {
     let headers = req.headers();
 
     if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {

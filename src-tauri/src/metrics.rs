@@ -276,9 +276,7 @@ pub fn record_tokens(prompt: u64, completion: u64, model: &str) {
 pub fn record_cost(cost: f64, model: &str) {
     // Guard against negative / NaN costs that would corrupt histogram sums.
     if cost.is_finite() && cost >= 0.0 {
-        request_cost_usd()
-            .with_label_values(&[model])
-            .observe(cost);
+        request_cost_usd().with_label_values(&[model]).observe(cost);
     }
 }
 
@@ -432,7 +430,10 @@ mod tests {
             r#"le="0.05""#,
             r#"le="60""#,
         ] {
-            assert!(output.contains(needle), "expected {needle} in render output");
+            assert!(
+                output.contains(needle),
+                "expected {needle} in render output"
+            );
         }
     }
 }

@@ -16,6 +16,8 @@
     "success": "Success",
     "failed": "Failed",
     "search": "Search",
+    "previous": "Previous",
+    "next": "Next",
     "enable": "Enable",
     "disable": "Disable",
     "enabled": "Enabled",
@@ -303,7 +305,8 @@
     "allowedIpsHint": "192.168.1.0/24, 10.0.0.5 (empty = allow all)",
     "allowedModelsHint": "gpt-4*, claude-* (empty = allow all)",
     "deniedModels": "Denied Models",
-    "deniedModelsHint": "gpt-3.5* (always blocked)"
+    "deniedModelsHint": "gpt-3.5* (always blocked)",
+    "searchPlaceholder": "Search by name or prefix..."
   },
   "mcp": {
     "title": "MCP Servers",

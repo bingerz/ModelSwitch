@@ -265,10 +265,10 @@ impl ModelRegistry {
         // prefix of the requested model name (must match at a hyphen boundary).
         let mut best: Option<(&String, &ModelCapabilities)> = None;
         for (key, caps) in &self.models {
-            if model.starts_with(key) || model.starts_with(&format!("{}-", key)) {
-                if best.is_none() || key.len() > best.unwrap().0.len() {
-                    best = Some((key, caps));
-                }
+            if (model.starts_with(key) || model.starts_with(&format!("{}-", key)))
+                && (best.is_none() || key.len() > best.unwrap().0.len())
+            {
+                best = Some((key, caps));
             }
         }
         best.map(|(_, c)| c.clone()).unwrap_or_default()

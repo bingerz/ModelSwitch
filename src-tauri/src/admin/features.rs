@@ -112,7 +112,7 @@ pub async fn redeem_code(
                 "redeemed_by": redeemed_by,
             }))))
         }
-        Err(e) => Err(ApiError::new(StatusCode::BAD_REQUEST, &e.to_string())),
+        Err(e) => Err(ApiError::new(StatusCode::BAD_REQUEST, e.to_string())),
     }
 }
 
@@ -448,8 +448,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
         // Deleting again should 404
-        let response =
-            delete_redemption_code(State(state), Path(created.data.code.clone())).await;
+        let response = delete_redemption_code(State(state), Path(created.data.code.clone())).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
@@ -470,10 +469,9 @@ mod tests {
             budget_threshold_pct: 90,
             ..Default::default()
         };
-        let result =
-            update_notification_config(State(state.clone()), Json(new_config))
-                .await
-                .expect("update should succeed");
+        let result = update_notification_config(State(state.clone()), Json(new_config))
+            .await
+            .expect("update should succeed");
         assert!(result.ok);
         assert_eq!(result.data.budget_threshold_pct, 90);
 
@@ -521,8 +519,7 @@ mod tests {
     #[tokio::test]
     async fn get_channel_cooldown_returns_not_found_for_missing() {
         let state = build_test_state(vec![]);
-        let response =
-            get_channel_cooldown(State(state), Path(Uuid::new_v4())).await;
+        let response = get_channel_cooldown(State(state), Path(Uuid::new_v4())).await;
         assert!(response.is_err());
     }
 

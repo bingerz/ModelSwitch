@@ -226,13 +226,15 @@ pub(crate) fn apply_runtime_config(
 
     let rate_limit_algorithm_changed =
         config_changed(&prev.rate_limit_algorithm, &new.rate_limit_algorithm);
-    let routing_strategy_changed =
-        config_changed(&prev.routing_strategy, &new.routing_strategy);
+    let routing_strategy_changed = config_changed(&prev.routing_strategy, &new.routing_strategy);
 
     let timeout_changed = config_changed(&prev.request_timeout_secs, &new.request_timeout_secs)
         || config_changed(&prev.http_timeout_secs, &new.http_timeout_secs)
         || config_changed(&prev.stream_keepalive_secs, &new.stream_keepalive_secs)
-        || config_changed(&prev.stream_ttft_timeout_secs, &new.stream_ttft_timeout_secs);
+        || config_changed(
+            &prev.stream_ttft_timeout_secs,
+            &new.stream_ttft_timeout_secs,
+        );
 
     let retry_changed = config_changed(&prev.max_retries, &new.max_retries)
         || config_changed(&prev.retry_base_ms, &new.retry_base_ms)
@@ -244,19 +246,18 @@ pub(crate) fn apply_runtime_config(
 
     // --- NotificationConfig does not impl PartialEq — compare field-by-field ---
 
-    let notification_changed = config_changed(
-        &prev.notification.webhook_url,
-        &new.notification.webhook_url,
-    ) || config_changed(
-        &prev.notification.webhook_secret,
-        &new.notification.webhook_secret,
-    ) || config_changed(
-        &prev.notification.bark_url,
-        &new.notification.bark_url,
-    ) || config_changed(
-        &prev.notification.budget_threshold_pct,
-        &new.notification.budget_threshold_pct,
-    );
+    let notification_changed =
+        config_changed(
+            &prev.notification.webhook_url,
+            &new.notification.webhook_url,
+        ) || config_changed(
+            &prev.notification.webhook_secret,
+            &new.notification.webhook_secret,
+        ) || config_changed(&prev.notification.bark_url, &new.notification.bark_url)
+            || config_changed(
+                &prev.notification.budget_threshold_pct,
+                &new.notification.budget_threshold_pct,
+            );
 
     // --- Log each detected change ---
 
@@ -267,10 +268,7 @@ pub(crate) fn apply_runtime_config(
         );
     }
     if routing_strategy_changed {
-        tracing::info!(
-            "Hot-reloaded routing strategy: {:?}",
-            new.routing_strategy
-        );
+        tracing::info!("Hot-reloaded routing strategy: {:?}", new.routing_strategy);
     }
     if notification_changed {
         tracing::info!(
@@ -383,7 +381,8 @@ pub fn start_config_watcher(
 
                                 // Detect and log gateway-level config changes
                                 if let Some(ref last) = last_config {
-                                    let summary = apply_runtime_config(&last.gateway, &new_config.gateway);
+                                    let summary =
+                                        apply_runtime_config(&last.gateway, &new_config.gateway);
                                     if summary.any_changed {
                                         tracing::info!(
                                             "Gateway runtime config changes detected — some require restart"

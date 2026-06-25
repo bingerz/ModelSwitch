@@ -77,8 +77,8 @@ impl ChannelManager {
 
     pub async fn update(&self, id: Uuid, updated: Channel) -> Option<Channel> {
         let mut channels = self.channels.write().await;
-        if channels.contains_key(&id) {
-            channels.insert(id, Arc::new(StdRwLock::new(updated.clone())));
+        if let std::collections::hash_map::Entry::Occupied(mut e) = channels.entry(id) {
+            e.insert(Arc::new(StdRwLock::new(updated.clone())));
             Some(updated)
         } else {
             None

@@ -618,8 +618,7 @@ mod tests {
     #[tokio::test]
     async fn health_check_marks_unhealthy_server() {
         let mgr = McpManager::new();
-        mgr.load_configs(&[make_config("srv1", "Server 1")])
-            .await;
+        mgr.load_configs(&[make_config("srv1", "Server 1")]).await;
 
         // Server is loaded but never started — list_tools probe must fail.
         let health = mgr.check_server_health("srv1").await;
@@ -639,8 +638,7 @@ mod tests {
     #[tokio::test]
     async fn health_check_marks_healthy_server() {
         let mgr = McpManager::new();
-        mgr.load_configs(&[make_config("srv1", "Server 1")])
-            .await;
+        mgr.load_configs(&[make_config("srv1", "Server 1")]).await;
 
         // End-to-end verification of the healthy path requires a real MCP
         // subprocess that speaks JSON-RPC. In a unit-test context we instead

@@ -25,17 +25,41 @@ pub struct UsageParams {
 
 // ─── Logs & Stats ─────────────────────────────────────
 
+/// Query parameters for the logs endpoint. Extends [`PaginationParams`] with
+/// an optional `key_id` filter that narrows results to a specific virtual key.
+#[derive(Debug, Deserialize)]
+pub struct LogQueryParams {
+    #[serde(flatten)]
+    pub pagination: PaginationParams,
+    /// When provided, only return logs whose `virtual_key_id` matches.
+    #[serde(default)]
+    pub key_id: Option<String>,
+}
+
 pub async fn get_logs(
     State(state): State<Arc<AppState>>,
-    Query(params): Query<PaginationParams>,
+    Query(params): Query<LogQueryParams>,
 ) -> Json<super::PaginatedResponse<Vec<DispatchLog>>> {
-    let logs = state.logger.list(params.offset, params.limit).await;
-    let total = state.logger.total().await;
+    let pagination = params.pagination;
+    let (logs, total) = if let Some(ref key_id) = params.key_id {
+        (
+            state
+                .logger
+                .list_by_key(key_id, pagination.offset, pagination.limit)
+                .await,
+            state.logger.total_by_key(key_id).await,
+        )
+    } else {
+        (
+            state.logger.list(pagination.offset, pagination.limit).await,
+            state.logger.total().await,
+        )
+    };
     Json(super::PaginatedResponse {
         data: logs,
         total,
-        offset: params.offset,
-        limit: params.limit,
+        offset: pagination.offset,
+        limit: pagination.limit,
     })
 }
 
