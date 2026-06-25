@@ -164,7 +164,7 @@ impl NotificationService {
                 let subject = format!("[ModelSwitch] {}", event_title(&event));
                 let body = serde_json::to_string_pretty(&event).unwrap_or_default();
                 let recipient = recipient.clone();
-                let smtp = build_email_notifier(&config);
+                let smtp = build_email_notifier(&config).await;
                 tokio::spawn(async move {
                     match smtp {
                         Ok(notifier) => {
@@ -209,16 +209,86 @@ impl NotificationService {
     }
 }
 
+/// SMTP-specific IP check. Like `check_ip` but allows private IPs since
+/// internal SMTP relays are a legitimate use case.
+fn check_smtp_ip(ip: &std::net::IpAddr) -> Result<(), String> {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            if v4.is_link_local() {
+                return Err(format!("Link-local address not allowed: {v4}"));
+            }
+            if v4.is_unspecified() {
+                return Err(format!("Unspecified address not allowed: {v4}"));
+            }
+            if v4.is_broadcast() {
+                return Err(format!("Broadcast address not allowed: {v4}"));
+            }
+            // Allow 127.0.0.1 for local SMTP, block other loopback
+            if v4.is_loopback() && *v4 != std::net::Ipv4Addr::new(127, 0, 0, 1) {
+                return Err(format!("Non-standard loopback address not allowed: {v4}"));
+            }
+        }
+        std::net::IpAddr::V6(v6) => {
+            // Allow ::1 for local SMTP
+            if v6.is_loopback() && *v6 != std::net::Ipv6Addr::LOCALHOST {
+                return Err(format!("Non-standard IPv6 loopback not allowed: {v6}"));
+            }
+            if v6.is_unspecified() {
+                return Err(format!("Unspecified IPv6 address not allowed: {v6}"));
+            }
+            if v6.is_multicast() {
+                return Err(format!("Multicast address not allowed: {v6}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate an SMTP host to prevent SSRF attacks.
+///
+/// For literal IP addresses, checks the IP directly. For hostnames, resolves
+/// via DNS and checks each resolved IP. Unlike webhook validation, allows
+/// private IPs (internal SMTP relays are a legitimate use case).
+async fn validate_smtp_host(host: &str) -> Result<(), String> {
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return check_smtp_ip(&ip);
+    }
+
+    // Hostname — resolve via DNS and check each resolved IP.
+    // This catches DNS-based bypasses like 169.254.169.254.nip.io.
+    let socket_addrs = match tokio::net::lookup_host((host, 0)).await {
+        Ok(addrs) => addrs.collect::<Vec<_>>(),
+        Err(e) => {
+            // DNS failure is not a hard block for SMTP — the connection
+            // will fail naturally if the host is unreachable.
+            tracing::warn!(%host, error = %e, "Could not resolve SMTP host for SSRF validation");
+            return Ok(());
+        }
+    };
+
+    for addr in &socket_addrs {
+        check_smtp_ip(&addr.ip())?;
+    }
+
+    Ok(())
+}
+
 /// Construct an `EmailNotifier` from the live notification configuration.
 ///
 /// Returns `None`-like errors when mandatory SMTP fields are missing so
 /// the dispatcher can log a clear reason without panicking.
-fn build_email_notifier(config: &NotificationConfig) -> Result<EmailNotifier, NotificationError> {
+async fn build_email_notifier(config: &NotificationConfig) -> Result<EmailNotifier, NotificationError> {
     let host = config
         .smtp_host
         .as_deref()
         .filter(|s| !s.is_empty())
         .ok_or_else(|| NotificationError::Smtp("smtp_host not configured".into()))?;
+
+    // Validate SMTP host to prevent SSRF attacks
+    validate_smtp_host(host)
+        .await
+        .map_err(NotificationError::Smtp)?;
+
     let port = config.smtp_port.unwrap_or(587);
     let username = config.smtp_username.as_deref().unwrap_or("");
     let password = config.smtp_password.as_deref().unwrap_or("");
@@ -469,15 +539,15 @@ mod tests {
         assert!(cfg.smtp_use_tls);
     }
 
-    #[test]
-    fn build_email_notifier_returns_err_when_host_missing() {
+    #[tokio::test]
+    async fn build_email_notifier_returns_err_when_host_missing() {
         let cfg = NotificationConfig::default();
-        let result = build_email_notifier(&cfg);
+        let result = build_email_notifier(&cfg).await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn build_email_notifier_returns_err_when_from_missing() {
+    #[tokio::test]
+    async fn build_email_notifier_returns_err_when_from_missing() {
         let cfg = NotificationConfig {
             smtp_enabled: true,
             smtp_host: Some("smtp.example.com".into()),
@@ -485,22 +555,22 @@ mod tests {
             smtp_from: None,
             ..NotificationConfig::default()
         };
-        let result = build_email_notifier(&cfg);
+        let result = build_email_notifier(&cfg).await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn build_email_notifier_succeeds_with_complete_config() {
+    #[tokio::test]
+    async fn build_email_notifier_succeeds_with_complete_config() {
         let cfg = NotificationConfig {
             smtp_enabled: true,
-            smtp_host: Some("smtp.example.com".into()),
+            smtp_host: Some("127.0.0.1".into()),
             smtp_port: Some(587),
             smtp_username: Some("alerts".into()),
             smtp_password: Some("pass".into()),
             smtp_from: Some("alerts@example.com".into()),
             ..NotificationConfig::default()
         };
-        let result = build_email_notifier(&cfg);
+        let result = build_email_notifier(&cfg).await;
         assert!(result.is_ok());
     }
 

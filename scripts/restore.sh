@@ -122,7 +122,7 @@ success "路径安全检查通过"
 
 info "开始恢复数据到 $DATA_DIR ..."
 cd "$DATA_DIR"
-tar -xzf "$BACKUP_FILE"
+tar -xzf "$BACKUP_FILE" --no-overwrite-dir
 success "数据恢复完成"
 
 # 列出恢复的文件
