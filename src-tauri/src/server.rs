@@ -165,6 +165,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             disable_image_generation: config.gateway.disable_image_generation,
             model_groups: config.gateway.model_groups.clone(),
             model_pricing: config.gateway.model_pricing.clone(),
+            completion_ratios: config.gateway.completion_ratios.clone(),
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),

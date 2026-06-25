@@ -64,6 +64,55 @@ mod tests {
         assert!(resp.headers().get("x-modelswitch-fallback-model").is_none());
         assert!(resp.headers().get("x-modelswitch-original-model").is_none());
     }
+
+    /// Verify the completion ratio math used by the cost calculations in
+    /// `handle_streaming_success` and `handle_json_success`.
+    ///
+    /// The formula (for the per-Mtok pricing branch) is:
+    ///   total = input_tokens / 1_000_000 * input_rate
+    ///         + output_tokens / 1_000_000 * output_rate * completion_ratio
+    ///
+    /// With a ratio of 2.0 the output cost component is doubled while the
+    /// input cost component stays unchanged.
+    #[test]
+    fn cost_calculation_applies_completion_ratio() {
+        let input_tokens: f64 = 1_000_000.0;
+        let output_tokens: f64 = 1_000_000.0;
+        let input_rate = 10.0; // $10 / Mtok
+        let output_rate = 30.0; // $30 / Mtok
+
+        // Baseline: ratio 1.0 (no adjustment)
+        let baseline_ratio = 1.0_f64;
+        let baseline_cost = input_tokens / 1_000_000.0 * input_rate
+            + output_tokens / 1_000_000.0 * output_rate * baseline_ratio;
+        assert!(
+            (baseline_cost - 40.0).abs() < f64::EPSILON,
+            "baseline cost should be 10 + 30 = 40, got {baseline_cost}"
+        );
+
+        // With ratio 2.0, output cost doubles: 10 + (30 * 2) = 70
+        let ratio = 2.0_f64;
+        let adjusted_cost = input_tokens / 1_000_000.0 * input_rate
+            + output_tokens / 1_000_000.0 * output_rate * ratio;
+        assert!(
+            (adjusted_cost - 70.0).abs() < f64::EPSILON,
+            "adjusted cost should be 10 + 60 = 70, got {adjusted_cost}"
+        );
+
+        // Input component unchanged
+        let input_component = input_tokens / 1_000_000.0 * input_rate;
+        assert!(
+            (input_component - 10.0).abs() < f64::EPSILON,
+            "input component should be 10, got {input_component}"
+        );
+
+        // Output component doubled
+        let output_component = output_tokens / 1_000_000.0 * output_rate * ratio;
+        assert!(
+            (output_component - 60.0).abs() < f64::EPSILON,
+            "output component should be 60 with ratio 2.0, got {output_component}"
+        );
+    }
 }
 
 /// Extract passthrough headers from an upstream response using a configurable
@@ -180,9 +229,15 @@ pub(super) async fn handle_streaming_success(
         .or(channel.output_cost_per_mtok);
     let estimated_cost = if eff_in.is_some() || eff_out.is_some() {
         let half = (est_tokens / 2) as f64;
+        let completion_ratio = state
+            .gateway
+            .completion_ratios
+            .get(current_model)
+            .copied()
+            .unwrap_or(1.0);
         Some(
             half / 1_000_000.0 * eff_in.unwrap_or(0.0)
-                + half / 1_000_000.0 * eff_out.unwrap_or(0.0),
+                + half / 1_000_000.0 * eff_out.unwrap_or(0.0) * completion_ratio,
         )
     } else {
         channel
@@ -239,6 +294,12 @@ pub(super) async fn handle_streaming_success(
         let bg_output_cost = channel.output_cost_per_mtok;
         let bg_cost_per_token = channel.cost_per_token;
         let bg_model_pricing = state.gateway.model_pricing.get(current_model).cloned();
+        let bg_completion_ratio = state
+            .gateway
+            .completion_ratios
+            .get(current_model)
+            .copied()
+            .unwrap_or(1.0);
         let bg_vk_id = vk_id;
         let bg_reserved_cents = reserved_cents;
         let bg_request_cache = Arc::clone(&state.cache.request_cache);
@@ -332,7 +393,7 @@ pub(super) async fn handle_streaming_success(
                     let out_tok = output_tokens.unwrap_or(0) as f64;
                     Some(
                         in_tok / 1_000_000.0 * eff_in.unwrap_or(0.0)
-                            + out_tok / 1_000_000.0 * eff_out.unwrap_or(0.0),
+                            + out_tok / 1_000_000.0 * eff_out.unwrap_or(0.0) * bg_completion_ratio,
                     )
                 } else {
                     bg_cost_per_token.map(|rate_per_1k| {
@@ -579,9 +640,15 @@ pub(super) async fn handle_json_success(
     let estimated_cost = if eff_in.is_some() || eff_out.is_some() {
         let in_tok = input_tokens.unwrap_or(0) as f64;
         let out_tok = output_tokens.unwrap_or(0) as f64;
+        let completion_ratio = state
+            .gateway
+            .completion_ratios
+            .get(current_model)
+            .copied()
+            .unwrap_or(1.0);
         Some(
             in_tok / 1_000_000.0 * eff_in.unwrap_or(0.0)
-                + out_tok / 1_000_000.0 * eff_out.unwrap_or(0.0),
+                + out_tok / 1_000_000.0 * eff_out.unwrap_or(0.0) * completion_ratio,
         )
     } else {
         channel

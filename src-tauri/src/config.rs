@@ -226,6 +226,14 @@ pub struct GatewayConfig {
     /// channel-level rates for cost calculation.
     #[serde(default)]
     pub model_pricing: HashMap<String, ModelPricing>,
+    /// Per-model completion ratio multiplier. Default 1.0 (no adjustment).
+    /// Example: {"gpt-4": 2.0} means output tokens cost 2x their base price.
+    #[serde(default)]
+    pub completion_ratios: HashMap<String, f64>,
+    /// Group ratio for budgeting. Maps group name to ratio multiplier.
+    /// Example: {"premium": 1.5, "economy": 0.5}
+    #[serde(default)]
+    pub group_ratios: HashMap<String, f64>,
     /// TLS configuration for native HTTPS binding.
     #[serde(default)]
     pub tls: TlsConfig,
@@ -609,6 +617,8 @@ impl Default for GatewayConfig {
             disable_image_generation: false,
             model_groups: HashMap::new(),
             model_pricing: HashMap::new(),
+            completion_ratios: HashMap::new(),
+            group_ratios: HashMap::new(),
             tls: TlsConfig::default(),
             notification: crate::notification::NotificationConfig::default(),
             rate_limit_algorithm: crate::proxy::rate_limiter::RateLimitAlgorithm::default(),
@@ -661,5 +671,50 @@ impl AppConfig {
             .unwrap_or_else(|| PathBuf::from("."))
             .join("modelswitch");
         Ok(dir.join("config.toml"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completion_ratios_default_empty() {
+        let config = GatewayConfig::default();
+        assert!(
+            config.completion_ratios.is_empty(),
+            "default completion_ratios should be empty"
+        );
+    }
+
+    #[test]
+    fn group_ratios_default_empty() {
+        let config = GatewayConfig::default();
+        assert!(
+            config.group_ratios.is_empty(),
+            "default group_ratios should be empty"
+        );
+    }
+
+    #[test]
+    fn completion_ratios_deserialized_from_toml() {
+        let toml = r#"
+            [gateway]
+            [gateway.completion_ratios]
+            gpt-4 = 2.0
+            claude-3-opus = 1.5
+        "#;
+        #[derive(Deserialize)]
+        struct Wrapper {
+            gateway: GatewayConfig,
+        }
+        let parsed: Wrapper = toml::from_str(toml).expect("valid TOML");
+        assert_eq!(parsed.gateway.completion_ratios.get("gpt-4"), Some(&2.0));
+        assert_eq!(
+            parsed.gateway.completion_ratios.get("claude-3-opus"),
+            Some(&1.5)
+        );
+        // Unrelated model absent
+        assert!(parsed.gateway.completion_ratios.get("unknown").is_none());
     }
 }

@@ -41,6 +41,9 @@ pub struct ProxyParams {
     pub model_groups: HashMap<String, Vec<String>>,
     /// Per-model pricing overrides. Key = model name.
     pub model_pricing: HashMap<String, crate::config::ModelPricing>,
+    /// Per-model completion ratio multiplier (default 1.0). Adjusts output
+    /// token cost relative to input. Example: {"gpt-4": 2.0}.
+    pub completion_ratios: HashMap<String, f64>,
 }
 
 /// Router state (session affinity, active request tracking, latency tracking).

@@ -211,6 +211,7 @@ fn build_test_state_with_opts(
             disable_image_generation: false,
             model_groups: HashMap::new(),
             model_pricing: HashMap::new(),
+            completion_ratios: HashMap::new(),
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),
