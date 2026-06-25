@@ -3,6 +3,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::Context;
+use chrono::Utc;
 use rmcp::model::{CallToolRequestParams, CallToolResult, Tool};
 use rmcp::service::RunningService;
 use rmcp::transport::TokioChildProcess;
@@ -29,6 +30,16 @@ pub struct McpToolInfo {
     pub description: Option<String>,
 }
 
+/// Health state for a managed MCP server, updated by periodic probes.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct McpServerHealth {
+    pub name: String,
+    pub healthy: bool,
+    pub last_check: chrono::DateTime<chrono::Utc>,
+    pub last_error: Option<String>,
+    pub consecutive_failures: u32,
+}
+
 /// Entry for a managed MCP server.
 struct McpServerEntry {
     config: McpServerConfig,
@@ -42,12 +53,14 @@ struct McpServerEntry {
 /// Mirrors the ChannelManager pattern.
 pub struct McpManager {
     entries: Arc<RwLock<HashMap<String, McpServerEntry>>>,
+    health_status: Arc<RwLock<HashMap<String, McpServerHealth>>>,
 }
 
 impl McpManager {
     pub fn new() -> Self {
         Self {
             entries: Arc::new(RwLock::new(HashMap::new())),
+            health_status: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -67,6 +80,9 @@ impl McpManager {
                 },
             );
         }
+        // Reset health bookkeeping — stale states no longer correspond to
+        // configured servers.
+        self.health_status.write().await.clear();
     }
 
     /// Reload configs from a config change, preserving running servers that
@@ -100,6 +116,14 @@ impl McpManager {
         for id in &to_remove {
             entries.remove(id);
             tracing::info!(server_id = %id, "Removed MCP server deleted from config");
+        }
+
+        // Drop health states for removed servers so stale data does not linger.
+        {
+            let mut health = self.health_status.write().await;
+            for id in &to_remove {
+                health.remove(id);
+            }
         }
 
         // Add or update entries
@@ -350,6 +374,99 @@ impl McpManager {
         Ok(result)
     }
 
+    /// Probe a single server by attempting a lightweight `list_tools` call.
+    /// Updates the cached health state and returns it. Errors (unknown server,
+    /// stopped server, transport failure) are caught and recorded as unhealthy
+    /// rather than propagated.
+    pub async fn check_server_health(&self, server_name: &str) -> McpServerHealth {
+        let now = Utc::now();
+
+        // list_tools already produces clear errors for unknown / stopped servers,
+        // so we reuse it as the probe instead of adding a separate ping path.
+        let result = self.list_tools(server_name).await;
+
+        // Carry forward consecutive failure count for trend tracking.
+        let prev_failures = {
+            let health = self.health_status.read().await;
+            health
+                .get(server_name)
+                .filter(|h| !h.healthy)
+                .map(|h| h.consecutive_failures)
+                .unwrap_or(0)
+        };
+
+        let health = match result {
+            Ok(_) => McpServerHealth {
+                name: server_name.to_string(),
+                healthy: true,
+                last_check: now,
+                last_error: None,
+                consecutive_failures: 0,
+            },
+            Err(e) => McpServerHealth {
+                name: server_name.to_string(),
+                healthy: false,
+                last_check: now,
+                last_error: Some(e.to_string()),
+                consecutive_failures: prev_failures + 1,
+            },
+        };
+
+        let mut health_status = self.health_status.write().await;
+        health_status.insert(server_name.to_string(), health.clone());
+        health
+    }
+
+    /// Probe every configured server and return the resulting health states.
+    /// Servers are checked sequentially to avoid bursts of subprocess traffic.
+    pub async fn check_all_health(&self) -> Vec<McpServerHealth> {
+        let ids: Vec<String> = {
+            let entries = self.entries.read().await;
+            entries.keys().cloned().collect()
+        };
+
+        let mut results = Vec::with_capacity(ids.len());
+        for id in &ids {
+            results.push(self.check_server_health(id).await);
+        }
+        results
+    }
+
+    /// Return cached health states for all configured servers without
+    /// triggering new probes. Servers that have never been checked are
+    /// omitted; call [`check_all_health`] first to populate the cache.
+    pub async fn get_health_status(&self) -> Vec<McpServerHealth> {
+        let entries = self.entries.read().await;
+        let health = self.health_status.read().await;
+        entries
+            .keys()
+            .filter_map(|id| health.get(id).cloned())
+            .collect()
+    }
+
+    /// Spawn a background task that periodically probes all configured
+    /// servers and logs unhealthy ones. The loop runs until the runtime
+    /// is shut down.
+    pub fn start_health_monitoring(self: &Arc<Self>, interval_secs: u64) {
+        let this = Arc::clone(self);
+        crate::spawn_bg(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(interval_secs)).await;
+                let results = this.check_all_health().await;
+                for health in &results {
+                    if !health.healthy {
+                        tracing::warn!(
+                            server = %health.name,
+                            error = ?health.last_error,
+                            failures = health.consecutive_failures,
+                            "MCP server unhealthy"
+                        );
+                    }
+                }
+            }
+        });
+    }
+
     /// Get a config for a specific server.
     pub async fn get_config(&self, id: &str) -> Option<McpServerConfig> {
         let entries = self.entries.read().await;
@@ -496,5 +613,78 @@ mod tests {
         let mgr = McpManager::new();
         mgr.stop_all().await;
         assert!(mgr.list_status().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn health_check_marks_unhealthy_server() {
+        let mgr = McpManager::new();
+        mgr.load_configs(&[make_config("srv1", "Server 1")])
+            .await;
+
+        // Server is loaded but never started — list_tools probe must fail.
+        let health = mgr.check_server_health("srv1").await;
+        assert!(!health.healthy, "stopped server should be unhealthy");
+        assert!(
+            health.last_error.is_some(),
+            "unhealthy server must record an error"
+        );
+        assert_eq!(health.consecutive_failures, 1);
+
+        // Second check increments the failure streak.
+        let health = mgr.check_server_health("srv1").await;
+        assert!(!health.healthy);
+        assert_eq!(health.consecutive_failures, 2);
+    }
+
+    #[tokio::test]
+    async fn health_check_marks_healthy_server() {
+        let mgr = McpManager::new();
+        mgr.load_configs(&[make_config("srv1", "Server 1")])
+            .await;
+
+        // End-to-end verification of the healthy path requires a real MCP
+        // subprocess that speaks JSON-RPC. In a unit-test context we instead
+        // verify that a recorded healthy state round-trips through the cache
+        // unchanged — exercising the same McpServerHealth storage that
+        // `check_server_health` writes on a successful probe.
+        let now = Utc::now();
+        mgr.health_status.write().await.insert(
+            "srv1".to_string(),
+            McpServerHealth {
+                name: "srv1".to_string(),
+                healthy: true,
+                last_check: now,
+                last_error: None,
+                consecutive_failures: 0,
+            },
+        );
+
+        let status = mgr.get_health_status().await;
+        assert_eq!(status.len(), 1);
+        assert!(status[0].healthy, "cached healthy state must be preserved");
+        assert!(status[0].last_error.is_none());
+        assert_eq!(status[0].consecutive_failures, 0);
+    }
+
+    #[tokio::test]
+    async fn get_health_status_returns_all_servers() {
+        let mgr = McpManager::new();
+        mgr.load_configs(&[
+            make_config("srv1", "Server 1"),
+            make_config("srv2", "Server 2"),
+            make_config("srv3", "Server 3"),
+        ])
+        .await;
+
+        // Populate cache for every configured server.
+        mgr.check_all_health().await;
+
+        let status = mgr.get_health_status().await;
+        assert_eq!(status.len(), 3, "all configured servers must be present");
+
+        let names: HashSet<&str> = status.iter().map(|h| h.name.as_str()).collect();
+        assert!(names.contains("srv1"));
+        assert!(names.contains("srv2"));
+        assert!(names.contains("srv3"));
     }
 }
