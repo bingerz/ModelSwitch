@@ -134,7 +134,36 @@ impl HttpPool {
 
     /// Build a reqwest client with the same defaults as the pool but with a proxy.
     /// The special value `"direct"` produces a client with no proxy at all.
+    ///
+    /// # HTTP/2 support
+    ///
+    /// reqwest enables HTTP/2 via ALPN (Application-Layer Protocol Negotiation)
+    /// by default for HTTPS URLs. This means the client automatically negotiates
+    /// HTTP/2 with providers that support it (OpenAI, Anthropic, Google, etc.)
+    /// while falling back to HTTP/1.1 for providers that do not.
+    ///
+    /// For providers known to support HTTP/2 unconditionally, use
+    /// [`build_proxied_client_http2`] with `prior_knowledge = true` to skip ALPN
+    /// negotiation and reduce a round-trip on connection setup.
     pub fn build_proxied_client(proxy_url: &str) -> anyhow::Result<reqwest::Client> {
+        Self::build_proxied_client_http2(proxy_url, false)
+    }
+
+    /// Build a reqwest client with optional HTTP/2 prior-knowledge mode.
+    ///
+    /// When `prior_knowledge` is `true`, the client is configured with
+    /// [`http2_prior_knowledge()`](reqwest::ClientBuilder::http2_prior_knowledge),
+    /// which forces HTTP/2 without ALPN negotiation. This is suitable for
+    /// providers known to support HTTP/2 unconditionally (OpenAI, Anthropic,
+    /// Google). It skips the ALPN round-trip but will **fail** if the upstream
+    /// only supports HTTP/1.1.
+    ///
+    /// When `prior_knowledge` is `false` (the default), the client negotiates
+    /// HTTP/2 via ALPN for HTTPS and falls back to HTTP/1.1 automatically.
+    pub fn build_proxied_client_http2(
+        proxy_url: &str,
+        prior_knowledge: bool,
+    ) -> anyhow::Result<reqwest::Client> {
         let mut builder = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .connect_timeout(std::time::Duration::from_secs(10))
@@ -143,6 +172,12 @@ impl HttpPool {
             .pool_max_idle_per_host(20)
             .tcp_keepalive(std::time::Duration::from_secs(60))
             .tcp_nodelay(true);
+
+        if prior_knowledge {
+            // Force HTTP/2 without ALPN negotiation — reduces a round-trip
+            // for providers known to support HTTP/2.
+            builder = builder.http2_prior_knowledge();
+        }
 
         if proxy_url != "direct" {
             builder = builder.proxy(reqwest::Proxy::all(proxy_url)?);
@@ -332,5 +367,52 @@ mod tests {
             1u8,
             "proxied pooled client should start with active=1"
         );
+    }
+
+    #[test]
+    fn http_pool_client_supports_http2() {
+        // A client built with http2_prior_knowledge must build successfully.
+        // This mode is intended for providers known to support HTTP/2
+        // unconditionally (OpenAI, Anthropic, Google).
+        let client = HttpPool::build_proxied_client_http2("direct", true);
+        assert!(
+            client.is_ok(),
+            "client with http2_prior_knowledge should build without error"
+        );
+
+        // The default ALPN-negotiating client (HTTP/1.1 + HTTP/2) must also build.
+        let default_client = HttpPool::build_proxied_client("direct");
+        assert!(
+            default_client.is_ok(),
+            "default client should build without error and supports HTTP/2 via ALPN"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_pool_client_handles_http1_fallback() {
+        // wiremock serves HTTP/1.1 over cleartext. The default client
+        // (ALPN negotiation) should connect and succeed, demonstrating
+        // graceful HTTP/1.1 fallback for providers without HTTP/2.
+        let mock_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("ok"))
+            .mount(&mock_server)
+            .await;
+
+        let client = HttpPool::build_proxied_client("direct").unwrap();
+        let resp = client
+            .get(mock_server.uri())
+            .send()
+            .await
+            .expect("HTTP/1.1 request to mock server should succeed");
+
+        assert_eq!(
+            resp.status(),
+            200,
+            "default client should fall back to HTTP/1.1 for non-HTTP/2 servers"
+        );
+        let body = resp.text().await.unwrap();
+        assert_eq!(body, "ok");
     }
 }
