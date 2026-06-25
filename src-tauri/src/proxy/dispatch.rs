@@ -76,6 +76,7 @@ async fn log_all_exhausted(
     total_attempts: u32,
     start: std::time::Instant,
     request_id: Option<&str>,
+    virtual_key_id: Option<String>,
 ) -> Response {
     // Complete in-flight entry (no-op if not registered) so coalesced waiters
     // can proceed and re-check the cache.
@@ -97,6 +98,7 @@ async fn log_all_exhausted(
             None,
             None,
             request_id,
+            virtual_key_id,
         ))
         .await;
     crate::metrics::requests_total()
@@ -573,6 +575,7 @@ pub(crate) async fn dispatch(
         total_attempts,
         start,
         request_id,
+        vk_id.map(|id| id.to_string()),
     )
     .await
 }

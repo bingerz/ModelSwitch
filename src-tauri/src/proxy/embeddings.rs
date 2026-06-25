@@ -332,6 +332,7 @@ pub async fn handle_embeddings(
                 None,
                 None,
                 None,
+                None,
             ))
             .await;
     });

@@ -36,6 +36,7 @@ async fn log_attempt_failure(
     reason: FailureReason,
     start: std::time::Instant,
     request_id: Option<&str>,
+    virtual_key_id: Option<String>,
 ) {
     let reason_str = reason.log_str();
     logger
@@ -54,6 +55,7 @@ async fn log_attempt_failure(
             None,
             None,
             request_id,
+            virtual_key_id,
         ))
         .await;
 }
@@ -132,6 +134,7 @@ pub(super) async fn try_channel_attempt(
             FailureReason::RateLimited,
             start,
             request_id,
+            vk_id.map(|id| id.to_string()),
         )
         .await;
         return AttemptOutcome::Retry;
@@ -178,6 +181,7 @@ pub(super) async fn try_channel_attempt(
                 FailureReason::NoCredential,
                 start,
                 request_id,
+            vk_id.map(|id| id.to_string()),
             )
             .await;
             return AttemptOutcome::Retry;
@@ -278,6 +282,7 @@ pub(super) async fn try_channel_attempt(
                 FailureReason::ContextOverflow,
                 start,
                 request_id,
+            vk_id.map(|id| id.to_string()),
             )
             .await;
             return AttemptOutcome::ContextOverflow;
@@ -306,6 +311,7 @@ pub(super) async fn try_channel_attempt(
                     FailureReason::ConnectionError,
                     start,
                     request_id,
+            vk_id.map(|id| id.to_string()),
                 )
                 .await;
                 return AttemptOutcome::Retry;
@@ -394,6 +400,7 @@ pub(super) async fn try_channel_attempt(
                             FailureReason::Timeout,
                             start,
                             request_id,
+            vk_id.map(|id| id.to_string()),
                         )
                         .await;
                         return AttemptOutcome::Retry;
@@ -429,6 +436,7 @@ pub(super) async fn try_channel_attempt(
                 FailureReason::ConnectionError,
                 start,
                 request_id,
+            vk_id.map(|id| id.to_string()),
             )
             .await;
             return AttemptOutcome::Retry;
@@ -471,6 +479,7 @@ pub(super) async fn try_channel_attempt(
             FailureReason::RateLimited,
             start,
             request_id,
+            vk_id.map(|id| id.to_string()),
         )
         .await;
         return AttemptOutcome::Retry;
@@ -491,6 +500,7 @@ pub(super) async fn try_channel_attempt(
             FailureReason::ServerError,
             start,
             request_id,
+            vk_id.map(|id| id.to_string()),
         )
         .await;
         return AttemptOutcome::Retry;
@@ -519,6 +529,7 @@ pub(super) async fn try_channel_attempt(
                 FailureReason::ContextOverflow,
                 start,
                 request_id,
+            vk_id.map(|id| id.to_string()),
             )
             .await;
             return AttemptOutcome::ContextOverflow;
@@ -532,6 +543,7 @@ pub(super) async fn try_channel_attempt(
             FailureReason::ClientError(status_code.as_u16()),
             start,
             request_id,
+            vk_id.map(|id| id.to_string()),
         )
         .await;
         return AttemptOutcome::Respond(json_response(status_code, body_text));
@@ -624,6 +636,7 @@ pub(super) async fn try_channel_attempt(
                                 FailureReason::ServerError,
                                 start,
                                 request_id,
+            vk_id.map(|id| id.to_string()),
                             )
                             .await;
                             return AttemptOutcome::Retry;
@@ -653,6 +666,7 @@ pub(super) async fn try_channel_attempt(
                             FailureReason::ConnectionError,
                             start,
                             request_id,
+            vk_id.map(|id| id.to_string()),
                         )
                         .await;
                         return AttemptOutcome::Retry;
@@ -674,6 +688,7 @@ pub(super) async fn try_channel_attempt(
                             FailureReason::ServerError,
                             start,
                             request_id,
+            vk_id.map(|id| id.to_string()),
                         )
                         .await;
                         return AttemptOutcome::Retry;
@@ -701,6 +716,7 @@ pub(super) async fn try_channel_attempt(
                             FailureReason::Timeout,
                             start,
                             request_id,
+            vk_id.map(|id| id.to_string()),
                         )
                         .await;
                         return AttemptOutcome::Retry;

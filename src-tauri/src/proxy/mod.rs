@@ -67,6 +67,7 @@ pub(crate) fn make_log(
     cache_hit_tokens: Option<u64>,
     cache_miss_tokens: Option<u64>,
     request_id: Option<&str>,
+    virtual_key_id: Option<String>,
 ) -> DispatchLog {
     DispatchLog {
         id: Uuid::new_v4(),
@@ -85,6 +86,7 @@ pub(crate) fn make_log(
         cache_hit_tokens,
         cache_miss_tokens,
         request_id: request_id.map(|s| s.to_string()),
+        virtual_key_id,
     }
 }
 

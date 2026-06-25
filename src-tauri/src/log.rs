@@ -28,6 +28,10 @@ pub struct DispatchLog {
     pub cache_hit_tokens: Option<u64>,
     pub cache_miss_tokens: Option<u64>,
     pub request_id: Option<String>,
+    /// Virtual key ID that authenticated the request, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub virtual_key_id: Option<String>,
 }
 
 pub struct DispatchLogger {

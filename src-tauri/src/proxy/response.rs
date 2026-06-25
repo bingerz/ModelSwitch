@@ -260,6 +260,7 @@ pub(super) async fn handle_streaming_success(
         None,
         None,
         request_id,
+        vk_id.map(|id| id.to_string()),
     );
     log_entry.id = log_id;
     state.logger.log(log_entry).await;
@@ -745,6 +746,7 @@ pub(super) async fn handle_json_success(
                     bg_cache_hit_tokens,
                     bg_cache_miss_tokens,
                     bg_request_id.as_deref(),
+                    bg_vk_id.map(|id| id.to_string()),
                 ))
                 .await;
 
