@@ -54,8 +54,6 @@ pub struct CreateRedemptionCodeRequest {
 #[derive(Debug, Deserialize)]
 pub struct RedeemCodeRequest {
     pub code: String,
-    #[serde(default)]
-    pub user_id: Option<String>,
 }
 
 /// `GET /api/redemption-codes` — list all redemption codes.
@@ -93,7 +91,7 @@ pub async fn redeem_code(
     State(state): State<Arc<AppState>>,
     Json(req): Json<RedeemCodeRequest>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, axum::response::Response> {
-    let redeemed_by = req.user_id.unwrap_or_else(|| "admin".to_string());
+    let redeemed_by = "admin-api".to_string();
     match state.redemption_codes.redeem(&req.code, &redeemed_by) {
         Ok(credits_cents) => {
             state
@@ -145,16 +143,18 @@ pub async fn delete_redemption_code(
 pub async fn get_notification_config(
     State(state): State<Arc<AppState>>,
 ) -> Json<ApiResponse<NotificationConfig>> {
-    let config = state.notifications.get_config().await;
+    let mut config = state.notifications.get_config().await;
+    config.webhook_secret = None; // never expose secrets in GET
     Json(ApiResponse::ok(config))
 }
 
 /// `PUT /api/notifications` — update notification config.
 pub async fn update_notification_config(
     State(state): State<Arc<AppState>>,
-    Json(config): Json<NotificationConfig>,
+    Json(mut config): Json<NotificationConfig>,
 ) -> Json<ApiResponse<NotificationConfig>> {
     state.notifications.update_config(config.clone()).await;
+    config.webhook_secret = None; // don't echo back secrets
     Json(ApiResponse::ok(config))
 }
 
@@ -317,7 +317,6 @@ mod tests {
             State(state),
             Json(RedeemCodeRequest {
                 code: created.data.code.clone(),
-                user_id: Some("user-1".to_string()),
             }),
         )
         .await
@@ -333,7 +332,6 @@ mod tests {
             State(state),
             Json(RedeemCodeRequest {
                 code: "nonexistent".to_string(),
-                user_id: None,
             }),
         )
         .await;

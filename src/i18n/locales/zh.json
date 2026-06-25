@@ -633,17 +633,13 @@
   "notifications": {
     "title": "通知",
     "webhook": "Webhook",
-    "enableWebhook": "启用 Webhook 通知",
     "webhookUrl": "Webhook URL",
     "webhookSecret": "HMAC 密钥",
+    "webhookSecretPlaceholder": "输入新密钥以更改",
     "bark": "Bark 推送",
-    "enableBark": "启用 Bark 推送通知",
     "barkUrl": "Bark 服务器 URL",
-    "barkKey": "Bark 设备密钥",
-    "events": "通知事件",
-    "eventChannelFailure": "通道故障",
-    "eventQuotaWarning": "配额警告",
-    "eventCooldown": "冷却触发",
+    "budgetThreshold": "预算阈值",
+    "budgetThresholdHint": "当预算使用超过此百分比时通知",
     "saved": "通知配置已保存",
     "saveFailed": "保存通知配置失败"
   }

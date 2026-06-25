@@ -633,17 +633,13 @@
   "notifications": {
     "title": "Notifications",
     "webhook": "Webhook",
-    "enableWebhook": "Enable webhook notifications",
     "webhookUrl": "Webhook URL",
     "webhookSecret": "HMAC Secret",
+    "webhookSecretPlaceholder": "Enter new secret to change",
     "bark": "Bark Push",
-    "enableBark": "Enable Bark push notifications",
     "barkUrl": "Bark Server URL",
-    "barkKey": "Bark Device Key",
-    "events": "Notification Events",
-    "eventChannelFailure": "Channel failure",
-    "eventQuotaWarning": "Quota warning",
-    "eventCooldown": "Cooldown triggered",
+    "budgetThreshold": "Budget Threshold",
+    "budgetThresholdHint": "Notify when budget usage exceeds this percentage",
     "saved": "Notification configuration saved",
     "saveFailed": "Failed to save notification configuration"
   }

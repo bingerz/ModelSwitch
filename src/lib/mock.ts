@@ -412,17 +412,19 @@ export const mockApi: typeof api = {
   notificationConfig: async (): Promise<NotificationConfig> => {
     await simDelay();
     return {
-      webhook: { enabled: false, url: null, secret: null },
-      bark: { enabled: false, url: null, key: null },
-      events: { channel_failure: true, quota_warning: true, cooldown_triggered: true },
+      webhook_url: null,
+      webhook_secret: null,
+      bark_url: null,
+      budget_threshold_pct: 80,
     };
   },
   updateNotification: async (config: Partial<NotificationConfig>): Promise<NotificationConfig> => {
     await simDelay();
     return {
-      webhook: config.webhook ?? { enabled: false, url: null, secret: null },
-      bark: config.bark ?? { enabled: false, url: null, key: null },
-      events: config.events ?? { channel_failure: true, quota_warning: true, cooldown_triggered: true },
+      webhook_url: config.webhook_url ?? null,
+      webhook_secret: config.webhook_secret ?? null,
+      bark_url: config.bark_url ?? null,
+      budget_threshold_pct: config.budget_threshold_pct ?? 80,
     };
   },
 

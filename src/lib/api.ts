@@ -375,21 +375,10 @@ export interface RedemptionCode {
 }
 
 export interface NotificationConfig {
-  webhook: {
-    enabled: boolean;
-    url: string | null;
-    secret: string | null;
-  };
-  bark: {
-    enabled: boolean;
-    url: string | null;
-    key: string | null;
-  };
-  events: {
-    channel_failure: boolean;
-    quota_warning: boolean;
-    cooldown_triggered: boolean;
-  };
+  webhook_url: string | null;
+  webhook_secret: string | null;
+  bark_url: string | null;
+  budget_threshold_pct: number;
 }
 
 export const api = {
