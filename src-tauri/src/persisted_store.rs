@@ -41,10 +41,14 @@ where
     }
 
     /// Persist all data to disk as JSON. Best-effort — errors are logged.
+    ///
+    /// A `schema_version: 1` key is injected alongside the HashMap entries so
+    /// that the migration framework can detect the current version on the
+    /// next startup.
     pub async fn persist(&self) {
         let data = self.data.read().await;
         let json = match serde_json::to_string(&*data) {
-            Ok(s) => s,
+            Ok(s) => inject_schema_version(&s),
             Err(e) => {
                 tracing::error!("Failed to serialize store: {e}");
                 return;
@@ -86,6 +90,10 @@ where
     }
 
     /// Load data from disk. Merges into existing entries (does NOT overwrite).
+    ///
+    /// Strips a top-level `schema_version` key (added by the migration
+    /// framework) before deserializing into `HashMap<K, V>` so that it does
+    /// not interfere with key parsing.
     pub async fn load(&self) {
         let json = match tokio::fs::read_to_string(&self.store_path).await {
             Ok(s) => s,
@@ -96,7 +104,11 @@ where
             }
         };
 
-        let loaded: HashMap<K, V> = match serde_json::from_str(&json) {
+        // Strip `schema_version` if present so it doesn't break HashMap<K, V>
+        // deserialization (the key "schema_version" is not a valid K).
+        let cleaned_json = strip_schema_version(&json);
+
+        let loaded: HashMap<K, V> = match serde_json::from_str(&cleaned_json) {
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!("Failed to parse store: {e}");
@@ -127,7 +139,7 @@ where
             }
             match guard {
                 Some(g) => match serde_json::to_string(&*g) {
-                    Ok(s) => s,
+                    Ok(s) => inject_schema_version(&s),
                     Err(e) => {
                         tracing::error!("Failed to serialize store (sync): {e}");
                         return;
@@ -181,6 +193,45 @@ where
     pub fn path(&self) -> &std::path::Path {
         &self.store_path
     }
+}
+
+// ---------------------------------------------------------------------------
+// Schema version helpers (used by the migration framework)
+// ---------------------------------------------------------------------------
+
+/// Current data-file schema version. Must match `migration::CURRENT_SCHEMA_VERSION`.
+const DATA_SCHEMA_VERSION: u32 = 1;
+
+/// Strip a top-level `schema_version` key from a JSON object string so that
+/// it does not interfere with `HashMap<K, V>` deserialization. If the JSON is
+/// not an object or does not contain the key, the original string is returned
+/// unchanged.
+fn strip_schema_version(json: &str) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return json.to_string();
+    };
+    if let Some(obj) = value.as_object_mut() {
+        if obj.remove("schema_version").is_some() {
+            return serde_json::to_string(&value).unwrap_or_else(|_| json.to_string());
+        }
+    }
+    json.to_string()
+}
+
+/// Inject `schema_version: N` into a JSON object string. If the JSON is not
+/// an object, the original string is returned unchanged.
+fn inject_schema_version(json: &str) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(json) else {
+        return json.to_string();
+    };
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert(
+            "schema_version".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(DATA_SCHEMA_VERSION)),
+        );
+        return serde_json::to_string(&value).unwrap_or_else(|_| json.to_string());
+    }
+    json.to_string()
 }
 
 // ---------------------------------------------------------------------------

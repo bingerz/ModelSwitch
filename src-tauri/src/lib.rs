@@ -9,6 +9,7 @@ mod log;
 mod mcp;
 pub mod metrics;
 mod middleware;
+pub mod migration;
 pub mod model_registry;
 pub mod notification;
 pub mod persisted_store;

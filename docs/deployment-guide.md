@@ -8,8 +8,9 @@
 2. [Docker 部署](#docker-部署)
 3. [systemd 部署](#systemd-部署)
 4. [DeepSeek 企业评估场景配置](#deepseek-企业评估场景配置)
-5. [备份与恢复](#备份与恢复)
-6. [故障排查](#故障排查)
+5. [日志归档](#日志归档)
+6. [备份与恢复](#备份与恢复)
+7. [故障排查](#故障排查)
 
 ---
 
@@ -235,6 +236,105 @@ monthly_budget_cents = 20000 # $200/月
 
 ---
 
+## 日志归档
+
+### 概述
+
+ModelSwitch 的调度日志 (`logs.ndjson`) 和审计日志 (`audit.ndjson`) 会自动轮转, 默认保留 5 个轮转文件 (约 500MB)。对于需要长期保存日志以满足合规要求的场景, 可以使用 `scripts/archive-logs.sh` 脚本将旧日志压缩归档到单独的目录。
+
+### 归档脚本
+
+**功能:**
+- 将超过指定天数的 NDJSON 日志文件压缩 (gzip) 并移动到归档目录
+- 自动清理超过归档保留期的旧归档文件
+- 记录归档操作日志
+
+**可配置环境变量:**
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `MODELSWITCH_CONFIG_DIR` | `~/.config/modelswitch` | 数据目录 |
+| `LOG_RETENTION_DAYS` | `30` | 日志保留天数, 超过后归档 |
+| `ARCHIVE_RETENTION_DAYS` | `180` | 归档保留天数, 超过后删除 |
+
+### 手动执行
+
+```bash
+# 使用默认配置 (30 天归档, 180 天清理)
+./scripts/archive-logs.sh
+
+# 自定义保留期
+LOG_RETENTION_DAYS=14 ARCHIVE_RETENTION_DAYS=365 ./scripts/archive-logs.sh
+```
+
+### 配置每日自动归档 (推荐)
+
+使用 `scripts/cron-setup.sh` 一键安装 cron 任务, 每天凌晨 2 点自动执行归档:
+
+```bash
+./scripts/cron-setup.sh
+# 输出: Cron job installed: daily log archiving at 2 AM
+```
+
+验证 cron 任务:
+
+```bash
+crontab -l
+# 应包含: 0 2 * * * /path/to/scripts/archive-logs.sh
+```
+
+移除 cron 任务:
+
+```bash
+crontab -l | grep -v archive-logs.sh | crontab -
+```
+
+### 归档文件结构
+
+```
+~/.config/modelswitch/
+├── logs.ndjson              # 当前活跃日志
+├── audit.ndjson             # 当前审计日志
+└── archive/                 # 归档目录
+    ├── logs.ndjson.20260625-020000.gz
+    ├── audit.ndjson.20260625-020000.gz
+    └── archive.log          # 归档操作日志
+```
+
+### Docker 环境中的日志归档
+
+Docker 部署时, 可以在宿主机上配置 cron 调用归档脚本:
+
+```bash
+# 指定容器数据目录
+export MODELSWITCH_CONFIG_DIR=/var/lib/docker/volumes/modelswitch-data/_data
+./scripts/archive-logs.sh
+```
+
+或者在 `docker-compose.yml` 中添加一个归档服务:
+
+```yaml
+services:
+  log-archiver:
+    image: alpine:latest
+    volumes:
+      - modelswitch-data:/data
+      - ./scripts:/scripts:ro
+    environment:
+      - MODELSWITCH_CONFIG_DIR=/data
+      - LOG_RETENTION_DAYS=30
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        apk add --no-cache gzip findutils
+        echo "0 2 * * * /scripts/archive-logs.sh" > /etc/crontabs/root
+        crond -f
+    restart: unless-stopped
+```
+
+---
+
 ## 备份与恢复
 
 ### 定时备份 (推荐配置 cron)
@@ -393,4 +493,6 @@ curl http://localhost:8080/healthz
 | `deploy/install-systemd.sh` | systemd 一键安装脚本 |
 | `scripts/backup.sh` | 数据备份脚本 |
 | `scripts/restore.sh` | 数据恢复脚本 |
+| `scripts/archive-logs.sh` | 日志归档脚本 |
+| `scripts/cron-setup.sh` | cron 任务安装脚本 |
 | `config.example.toml` | 配置文件模板 |

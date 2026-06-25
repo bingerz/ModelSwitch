@@ -165,6 +165,13 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     let credential_store = create_credential_store();
     let channel_mgr = Arc::new(ChannelManager::new(&config, Arc::clone(&credential_store)));
     let log_file = config::app_config_dir().join("logs.ndjson");
+
+    // Run data migrations before loading stores — old data files from
+    // previous versions are upgraded in-place with a `.bak` backup.
+    let config_dir = config::app_config_dir();
+    let _ = crate::migration::migrate_data_file(&config_dir.join("virtual_keys.json"));
+    let _ = crate::migration::migrate_data_file(&config_dir.join("audit.ndjson"));
+
     let logger = Arc::new(DispatchLogger::with_persistence(
         config.gateway.log_max_entries,
         log_file,
