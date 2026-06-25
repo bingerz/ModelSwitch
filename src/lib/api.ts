@@ -336,6 +336,43 @@ export interface CreateVirtualKeyResponse {
   plaintext: string;
 }
 
+export interface PaginatedVirtualKeys {
+  data: VirtualKey[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface ListVirtualKeysParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+}
+
+export interface BatchCreateVirtualKeyData {
+  count: number;
+  name_prefix: string;
+  daily_budget_cents?: number | null;
+  monthly_budget_cents?: number | null;
+  allowed_models?: string[] | null;
+  allowed_ips?: string[];
+}
+
+export interface BatchCreateVirtualKeyItem {
+  id: string;
+  name: string;
+  key: string;
+  key_prefix: string;
+  daily_budget_cents: number | null;
+  monthly_budget_cents: number | null;
+  enabled: boolean;
+  created_at: string;
+  spend: VirtualKeySpend;
+  allowed_models: string[] | null;
+  denied_models: string[];
+  allowed_ips: string[];
+}
+
 export interface CreateVirtualKeyData {
   name: string;
   daily_budget_cents?: number | null;
@@ -516,9 +553,23 @@ export const api = {
     listAllTools: () => request<McpToolInfo[]>("/api/mcp/tools"),
   },
   virtualKeys: {
-    list: () => request<VirtualKey[]>("/api/virtual-keys"),
+    list: (params?: ListVirtualKeysParams) => {
+      const search = new URLSearchParams();
+      if (params?.page) search.set("page", String(params.page));
+      if (params?.limit) search.set("limit", String(params.limit));
+      if (params?.search) search.set("search", params.search);
+      const qs = search.toString();
+      return request<PaginatedVirtualKeys>(
+        qs ? `/api/virtual-keys?${qs}` : "/api/virtual-keys",
+      );
+    },
     create: (data: CreateVirtualKeyData) =>
       request<CreateVirtualKeyResponse>("/api/virtual-keys", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    batchCreate: (data: BatchCreateVirtualKeyData) =>
+      request<BatchCreateVirtualKeyItem[]>("/api/virtual-keys/batch", {
         method: "POST",
         body: JSON.stringify(data),
       }),

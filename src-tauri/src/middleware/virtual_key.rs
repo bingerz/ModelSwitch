@@ -120,6 +120,9 @@ mod tests {
                 None,
                 vec![],
                 vec!["10.0.0.5".to_string()],
+                None,
+                None,
+                None,
             )
             .await;
 
@@ -162,6 +165,9 @@ mod tests {
                 None,
                 vec![],
                 vec!["10.0.0.5".to_string()],
+                None,
+                None,
+                None,
             )
             .await;
 
@@ -196,7 +202,17 @@ mod tests {
         let (_, plaintext) = state
             .billing
             .virtual_key_store
-            .create("open".to_string(), None, None, None, vec![], vec![])
+            .create(
+                "open".to_string(),
+                None,
+                None,
+                None,
+                vec![],
+                vec![],
+                None,
+                None,
+                None,
+            )
             .await;
 
         let app = axum::Router::new()

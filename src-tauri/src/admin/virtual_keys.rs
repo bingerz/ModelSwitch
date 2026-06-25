@@ -25,6 +25,16 @@ pub struct CreateVirtualKeyRequest {
     pub denied_models: Vec<String>,
     #[serde(default)]
     pub allowed_ips: Option<Vec<String>>,
+    /// Per-key requests-per-minute limit.
+    #[serde(default)]
+    pub rpm_limit: Option<u32>,
+    /// Per-key tokens-per-minute limit.
+    #[serde(default)]
+    pub tpm_limit: Option<u32>,
+    /// Optional expiry timestamp (RFC 3339). When set, the key becomes
+    /// invalid after this time.
+    #[serde(default)]
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Request body for `POST /api/virtual-keys/batch`.
@@ -48,6 +58,15 @@ pub struct BatchCreateVirtualKeyRequest {
     /// Shared IP allowlist applied to every generated key.
     #[serde(default)]
     pub allowed_ips: Vec<String>,
+    /// Per-key RPM limit applied to every generated key.
+    #[serde(default)]
+    pub rpm_limit: Option<u32>,
+    /// Per-key TPM limit applied to every generated key.
+    #[serde(default)]
+    pub tpm_limit: Option<u32>,
+    /// Optional expiry timestamp applied to every generated key.
+    #[serde(default)]
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -66,6 +85,12 @@ pub struct UpdateVirtualKeyRequest {
     pub denied_models: Option<Vec<String>>,
     #[serde(default)]
     pub allowed_ips: Option<Vec<String>>,
+    #[serde(default)]
+    pub rpm_limit: Option<Option<u32>>,
+    #[serde(default)]
+    pub tpm_limit: Option<Option<u32>>,
+    #[serde(default)]
+    pub expires_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
 }
 
 /// Response shape for the list endpoint -- never exposes `key_hash`.
@@ -82,6 +107,12 @@ pub struct VirtualKeyResponse {
     pub allowed_models: Option<Vec<String>>,
     pub denied_models: Vec<String>,
     pub allowed_ips: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpm_limit: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tpm_limit: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl From<&crate::virtual_key::VirtualKey> for VirtualKeyResponse {
@@ -98,6 +129,9 @@ impl From<&crate::virtual_key::VirtualKey> for VirtualKeyResponse {
             allowed_models: k.allowed_models.clone(),
             denied_models: k.denied_models.clone(),
             allowed_ips: k.allowed_ips.clone(),
+            rpm_limit: k.rpm_limit,
+            tpm_limit: k.tpm_limit,
+            expires_at: k.expires_at,
         }
     }
 }
@@ -217,6 +251,9 @@ pub async fn create_virtual_key(
             req.allowed_models,
             req.denied_models,
             req.allowed_ips.unwrap_or_default(),
+            req.rpm_limit,
+            req.tpm_limit,
+            req.expires_at,
         )
         .await;
     persist_virtual_keys(&state).await;
@@ -233,6 +270,9 @@ pub async fn create_virtual_key(
         "allowed_models": vk.allowed_models,
         "denied_models": vk.denied_models,
         "allowed_ips": vk.allowed_ips,
+        "rpm_limit": vk.rpm_limit,
+        "tpm_limit": vk.tpm_limit,
+        "expires_at": vk.expires_at,
     });
     Ok(Json(ApiResponse::ok(body)))
 }
@@ -292,6 +332,9 @@ pub async fn batch_create_virtual_keys(
                 req.allowed_models.clone(),
                 Vec::new(),
                 req.allowed_ips.clone(),
+                req.rpm_limit,
+                req.tpm_limit,
+                req.expires_at,
             )
             .await;
         created.push(serde_json::json!({
@@ -307,6 +350,9 @@ pub async fn batch_create_virtual_keys(
             "allowed_models": vk.allowed_models,
             "denied_models": vk.denied_models,
             "allowed_ips": vk.allowed_ips,
+            "rpm_limit": vk.rpm_limit,
+            "tpm_limit": vk.tpm_limit,
+            "expires_at": vk.expires_at,
         }));
     }
 
@@ -332,6 +378,9 @@ pub async fn update_virtual_key(
             req.allowed_models,
             req.denied_models,
             req.allowed_ips,
+            req.rpm_limit,
+            req.tpm_limit,
+            req.expires_at,
         )
         .await
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Virtual key not found"))?;
@@ -388,6 +437,9 @@ mod tests {
             allowed_models: None,
             denied_models: vec![],
             allowed_ips: None,
+            rpm_limit: None,
+            tpm_limit: None,
+            expires_at: None,
         };
         let result = create_virtual_key(State(state), Json(req)).await;
         assert!(result.is_ok());
@@ -407,6 +459,9 @@ mod tests {
             allowed_models: None,
             denied_models: vec![],
             allowed_ips: None,
+            rpm_limit: None,
+            tpm_limit: None,
+            expires_at: None,
         };
         let create_result = create_virtual_key(State(state.clone()), Json(req))
             .await
@@ -432,6 +487,9 @@ mod tests {
                 allowed_models: None,
                 denied_models: vec![],
                 allowed_ips: None,
+                rpm_limit: None,
+                tpm_limit: None,
+                expires_at: None,
             };
             create_virtual_key(State(state.clone()), Json(req))
                 .await
@@ -472,6 +530,9 @@ mod tests {
                 allowed_models: None,
                 denied_models: vec![],
                 allowed_ips: None,
+                rpm_limit: None,
+                tpm_limit: None,
+                expires_at: None,
             };
             create_virtual_key(State(state.clone()), Json(req))
                 .await
@@ -519,6 +580,9 @@ mod tests {
             monthly_budget_cents: Some(3000),
             allowed_models: Some(vec!["gpt-4".to_string()]),
             allowed_ips: vec![],
+            rpm_limit: None,
+            tpm_limit: None,
+            expires_at: None,
         };
         let result = batch_create_virtual_keys(State(state.clone()), Json(req))
             .await
@@ -548,6 +612,9 @@ mod tests {
             monthly_budget_cents: None,
             allowed_models: None,
             allowed_ips: vec![],
+            rpm_limit: None,
+            tpm_limit: None,
+            expires_at: None,
         };
         let result = batch_create_virtual_keys(State(state), Json(req)).await;
         assert!(result.is_err());
@@ -563,6 +630,9 @@ mod tests {
             monthly_budget_cents: None,
             allowed_models: None,
             allowed_ips: vec![],
+            rpm_limit: None,
+            tpm_limit: None,
+            expires_at: None,
         };
         let result = batch_create_virtual_keys(State(state), Json(req)).await;
         assert!(result.is_err());
@@ -578,6 +648,9 @@ mod tests {
             monthly_budget_cents: None,
             allowed_models: None,
             allowed_ips: vec![],
+            rpm_limit: None,
+            tpm_limit: None,
+            expires_at: None,
         };
         let result = batch_create_virtual_keys(State(state), Json(req)).await;
         assert!(result.is_err());
