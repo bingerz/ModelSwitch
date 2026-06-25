@@ -8,6 +8,7 @@ pub mod webview_scrape;
 use crate::config::app_config_dir;
 use crate::persisted_store::PersistedStore;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -302,6 +303,113 @@ impl QuotaStore {
 
 pub type SharedQuotaStore = Arc<QuotaStore>;
 
+/// A redemption code that can be exchanged for quota credits.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RedemptionCode {
+    pub code: String,
+    pub credits_cents: u64,
+    pub used: bool,
+    pub used_by: Option<String>,
+    pub used_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Errors that can occur when redeeming a code.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+pub enum RedemptionError {
+    #[error("code not found")]
+    NotFound,
+    #[error("code already used")]
+    AlreadyUsed,
+    #[error("code expired")]
+    Expired,
+}
+
+/// In-memory store for redemption codes. Thread-safe via `parking_lot::RwLock`.
+#[derive(Debug, Default)]
+pub struct RedemptionCodeStore {
+    codes: parking_lot::RwLock<HashMap<String, RedemptionCode>>,
+}
+
+impl RedemptionCodeStore {
+    pub fn new() -> Self {
+        Self {
+            codes: parking_lot::RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Generate a new redemption code with a random UUID and insert it into the store.
+    pub fn generate(
+        &self,
+        credits_cents: u64,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> RedemptionCode {
+        let code = RedemptionCode {
+            code: Uuid::new_v4().to_string(),
+            credits_cents,
+            used: false,
+            used_by: None,
+            used_at: None,
+            created_at: chrono::Utc::now(),
+            expires_at,
+        };
+        let mut map = self.codes.write();
+        map.insert(code.code.clone(), code.clone());
+        code
+    }
+
+    /// Redeem a code. Returns the credits (in cents) on success, or an error
+    /// if the code is missing, already used, or expired.
+    pub fn redeem(&self, code: &str, redeemed_by: &str) -> Result<u64, RedemptionError> {
+        let mut map = self.codes.write();
+        let entry = map.get_mut(code).ok_or(RedemptionError::NotFound)?;
+        if entry.used {
+            return Err(RedemptionError::AlreadyUsed);
+        }
+        if let Some(exp) = entry.expires_at {
+            if chrono::Utc::now() > exp {
+                return Err(RedemptionError::Expired);
+            }
+        }
+        entry.used = true;
+        entry.used_by = Some(redeemed_by.to_string());
+        entry.used_at = Some(chrono::Utc::now());
+        Ok(entry.credits_cents)
+    }
+
+    /// List all codes (for admin UI).
+    pub fn list(&self) -> Vec<RedemptionCode> {
+        let map = self.codes.read();
+        map.values().cloned().collect()
+    }
+
+    /// Delete a code. Returns `true` if a code was removed.
+    pub fn delete(&self, code: &str) -> bool {
+        let mut map = self.codes.write();
+        map.remove(code).is_some()
+    }
+
+    /// Check if a code is valid (exists, not used, not expired).
+    pub fn is_valid(&self, code: &str) -> bool {
+        let map = self.codes.read();
+        match map.get(code) {
+            Some(entry) => {
+                if entry.used {
+                    return false;
+                }
+                if let Some(exp) = entry.expires_at {
+                    if chrono::Utc::now() > exp {
+                        return false;
+                    }
+                }
+                true
+            }
+            None => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,5 +530,84 @@ mod tests {
         assert_eq!(info.total_requests_counted, Some(1));
         // Cost must also survive
         assert_eq!(info.total_estimated_cost, Some(0.005));
+    }
+
+    #[test]
+    fn generate_creates_valid_code() {
+        let store = RedemptionCodeStore::new();
+        let code = store.generate(500, None);
+
+        assert_eq!(code.credits_cents, 500);
+        assert!(!code.used);
+        assert!(code.used_by.is_none());
+        assert!(code.used_at.is_none());
+        assert!(code.expires_at.is_none());
+        assert!(!code.code.is_empty());
+        // Generated code should be valid in the store and listed.
+        assert!(store.is_valid(&code.code));
+        assert_eq!(store.list().len(), 1);
+    }
+
+    #[test]
+    fn redeem_success_returns_credits() {
+        let store = RedemptionCodeStore::new();
+        let code = store.generate(1000, None);
+
+        let result = store.redeem(&code.code, "channel-1");
+        assert_eq!(result, Ok(1000));
+
+        // After redemption the code should no longer be valid.
+        assert!(!store.is_valid(&code.code));
+
+        // The stored entry should reflect usage metadata.
+        let stored = store
+            .list()
+            .into_iter()
+            .find(|c| c.code == code.code)
+            .expect("code should still be in store");
+        assert!(stored.used);
+        assert_eq!(stored.used_by.as_deref(), Some("channel-1"));
+        assert!(stored.used_at.is_some());
+    }
+
+    #[test]
+    fn redeem_already_used_fails() {
+        let store = RedemptionCodeStore::new();
+        let code = store.generate(250, None);
+
+        // First redemption succeeds.
+        let first = store.redeem(&code.code, "channel-1");
+        assert_eq!(first, Ok(250));
+
+        // Second redemption must fail with AlreadyUsed.
+        let second = store.redeem(&code.code, "channel-2");
+        assert_eq!(second, Err(RedemptionError::AlreadyUsed));
+    }
+
+    #[test]
+    fn redeem_expired_fails() {
+        let store = RedemptionCodeStore::new();
+        let past = chrono::Utc::now() - chrono::Duration::seconds(1);
+        let code = store.generate(100, Some(past));
+
+        // is_valid should reflect expiry.
+        assert!(!store.is_valid(&code.code));
+
+        let result = store.redeem(&code.code, "channel-1");
+        assert_eq!(result, Err(RedemptionError::Expired));
+    }
+
+    #[test]
+    fn redeem_unknown_code_fails() {
+        let store = RedemptionCodeStore::new();
+
+        let result = store.redeem("nonexistent-code", "channel-1");
+        assert_eq!(result, Err(RedemptionError::NotFound));
+
+        // is_valid on an unknown code should also be false.
+        assert!(!store.is_valid("nonexistent-code"));
+
+        // Delete on an unknown code should return false.
+        assert!(!store.delete("nonexistent-code"));
     }
 }
