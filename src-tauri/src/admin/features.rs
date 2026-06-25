@@ -155,12 +155,12 @@ pub async fn update_notification_config(
 ) -> Result<Json<ApiResponse<NotificationConfig>>, axum::response::Response> {
     // SSRF prevention: validate webhook and bark URLs
     if let Some(ref url) = config.webhook_url {
-        if let Err(e) = crate::notification::validate_notification_url(url) {
+        if let Err(e) = crate::notification::validate_notification_url(url).await {
             return Err(ApiError::new(StatusCode::BAD_REQUEST, &e));
         }
     }
     if let Some(ref url) = config.bark_url {
-        if let Err(e) = crate::notification::validate_notification_url(url) {
+        if let Err(e) = crate::notification::validate_notification_url(url).await {
             return Err(ApiError::new(StatusCode::BAD_REQUEST, &e));
         }
     }
@@ -382,8 +382,9 @@ mod tests {
     #[tokio::test]
     async fn update_notification_config_persists() {
         let state = build_test_state(vec![]);
+        // Use a literal public IP to avoid DNS resolution in tests
         let new_config = NotificationConfig {
-            webhook_url: Some("https://example.com/hook".to_string()),
+            webhook_url: Some("https://1.1.1.1/hook".to_string()),
             budget_threshold_pct: 90,
             ..Default::default()
         };
