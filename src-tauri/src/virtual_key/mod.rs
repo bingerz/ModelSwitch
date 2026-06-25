@@ -6,6 +6,7 @@
 //! the proxy enforces that incoming requests carry a valid key; otherwise
 //! the gateway behaves exactly as before (open proxy keyed on channel creds).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{Local, Utc};
@@ -143,6 +144,8 @@ pub enum ReserveResult {
 
 pub struct VirtualKeyStore {
     store: PersistedStore<Uuid, VirtualKey>,
+    /// O(1) lookup from key prefix (first 16 chars) to virtual key ID.
+    prefix_index: parking_lot::RwLock<HashMap<String, Uuid>>,
 }
 
 pub type SharedVirtualKeyStore = Arc<VirtualKeyStore>;
@@ -151,6 +154,7 @@ impl VirtualKeyStore {
     pub fn new() -> Self {
         Self {
             store: PersistedStore::new(persistence_path()),
+            prefix_index: parking_lot::RwLock::new(HashMap::new()),
         }
     }
 
@@ -158,6 +162,7 @@ impl VirtualKeyStore {
     pub fn with_store_path(path: std::path::PathBuf) -> Self {
         Self {
             store: PersistedStore::new(path),
+            prefix_index: parking_lot::RwLock::new(HashMap::new()),
         }
     }
 
@@ -214,6 +219,9 @@ impl VirtualKeyStore {
         };
         let vk_clone = vk.clone();
         self.store.write().await.insert(vk.id, vk);
+        self.prefix_index
+            .write()
+            .insert(vk_clone.key_prefix.clone(), vk_clone.id);
         (vk_clone, plaintext)
     }
 
@@ -226,7 +234,11 @@ impl VirtualKeyStore {
     }
 
     pub async fn delete(&self, id: Uuid) -> bool {
-        self.store.write().await.remove(&id).is_some()
+        let removed = self.store.write().await.remove(&id);
+        if let Some(vk) = &removed {
+            self.prefix_index.write().remove(&vk.key_prefix);
+        }
+        removed.is_some()
     }
 
     /// Update fields on a virtual key. Each `Option<T>` field, when `Some`,
@@ -396,9 +408,30 @@ impl VirtualKeyStore {
     }
 
     /// Load keys from disk. A missing file is treated as an empty store.
+    /// Rebuilds the prefix index from the loaded data so O(1) prefix lookup
+    /// works immediately after startup.
     pub async fn load(&self) -> anyhow::Result<()> {
         self.store.load().await;
+        let keys = self.store.read().await;
+        let mut index = self.prefix_index.write();
+        index.clear();
+        for vk in keys.values() {
+            index.insert(vk.key_prefix.clone(), vk.id);
+        }
+        drop(index);
+        drop(keys);
         Ok(())
+    }
+
+    /// O(1) lookup of a virtual key ID by the prefix of an incoming plaintext key.
+    /// Extracts the first 16 chars (matching [`VirtualKey::key_prefix`]) and
+    /// checks the in-memory index. Returns `None` if no key with that prefix
+    /// exists. This only identifies which key the prefix belongs to — callers
+    /// must still verify the full key (e.g. via [`validate`](Self::validate))
+    /// before trusting the identity, since prefixes are not secret.
+    pub async fn find_by_prefix(&self, key: &str) -> Option<Uuid> {
+        let prefix: &str = key.get(..16).unwrap_or(key);
+        self.prefix_index.read().get(prefix).copied()
     }
 }
 
@@ -1000,5 +1033,61 @@ mod tests {
         };
         assert!(!vk.is_model_denied("gpt-4"));
         assert!(!vk.is_model_denied("claude-3"));
+    }
+
+    #[tokio::test]
+    async fn prefix_index_finds_match() {
+        let store = VirtualKeyStore::new();
+        let (vk, plaintext) = store
+            .create("test".to_string(), None, None, None, vec![])
+            .await;
+        let found = store.find_by_prefix(&plaintext).await;
+        assert_eq!(found, Some(vk.id));
+    }
+
+    #[tokio::test]
+    async fn prefix_index_returns_none_for_unknown() {
+        let store = VirtualKeyStore::new();
+        let _ = store
+            .create("test".to_string(), None, None, None, vec![])
+            .await;
+        // Different prefix — should not match
+        let found = store.find_by_prefix("ms-vk-unknownkey").await;
+        assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn prefix_index_removes_on_delete() {
+        let store = VirtualKeyStore::new();
+        let (vk, plaintext) = store
+            .create("test".to_string(), None, None, None, vec![])
+            .await;
+        assert!(store.delete(vk.id).await);
+        let found = store.find_by_prefix(&plaintext).await;
+        assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn prefix_index_updates_on_reload() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-vk-prefix-reload-{}.json",
+            Uuid::new_v4().simple()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        // Create and persist a key with one store
+        let store = VirtualKeyStore::with_store_path(path.clone());
+        let (vk, plaintext) = store
+            .create("persisted".to_string(), None, None, None, vec![])
+            .await;
+        store.persist().await.unwrap();
+
+        // Fresh store loads from disk — index should be populated
+        let store2 = VirtualKeyStore::with_store_path(path.clone());
+        store2.load().await.unwrap();
+        let found = store2.find_by_prefix(&plaintext).await;
+        assert_eq!(found, Some(vk.id));
+
+        let _ = std::fs::remove_file(&path);
     }
 }
