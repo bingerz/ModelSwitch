@@ -41,6 +41,11 @@ export function EditChannelForm({
   const [tpmLimit, setTpmLimit] = useState(
     channel.tpm_limit != null ? String(channel.tpm_limit) : ""
   );
+  const [accountGroup, setAccountGroup] = useState(channel.account_group ?? "");
+  const [excludedModels, setExcludedModels] = useState(
+    channel.excluded_models.join(", ")
+  );
+  const [tags, setTags] = useState(channel.tags.join(", "));
   const [credentialType, setCredentialType] = useState("api_key");
   const [credentialValue, setCredentialValue] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +73,17 @@ export function EditChannelForm({
         cooldown_minutes: cooldownMinutes ? parseInt(cooldownMinutes, 10) : null,
         credential_type: credentialValue ? credentialType : undefined,
         credential_value: credentialValue || undefined,
+        rpm_limit: rpmLimit ? parseInt(rpmLimit, 10) : null,
+        tpm_limit: tpmLimit ? parseInt(tpmLimit, 10) : null,
+        account_group: accountGroup.trim() || null,
+        excluded_models: excludedModels
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        tags: tags
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
       });
       toast.success(t("channels.updated"));
       onSave();
@@ -97,6 +113,9 @@ export function EditChannelForm({
         outputCostPerMtok={outputCostPerMtok} setOutputCostPerMtok={setOutputCostPerMtok}
         rpmLimit={rpmLimit} setRpmLimit={setRpmLimit}
         tpmLimit={tpmLimit} setTpmLimit={setTpmLimit}
+        accountGroup={accountGroup} setAccountGroup={setAccountGroup}
+        excludedModels={excludedModels} setExcludedModels={setExcludedModels}
+        tags={tags} setTags={setTags}
         presetModels={[]}
         modelMapping={modelMapping} setModelMapping={setModelMapping}
         showCredential={true}

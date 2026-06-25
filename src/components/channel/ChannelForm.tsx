@@ -33,6 +33,9 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
   const [outputCostPerMtok, setOutputCostPerMtok] = useState("");
   const [rpmLimit, setRpmLimit] = useState("");
   const [tpmLimit, setTpmLimit] = useState("");
+  const [accountGroup, setAccountGroup] = useState("");
+  const [excludedModels, setExcludedModels] = useState("");
+  const [tags, setTags] = useState("");
   const [apiFormat, setApiFormat] = useState<ApiFormat>("anthropic");
 
   // Listen for WebView login cookies (safe lazy import)
@@ -150,6 +153,15 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
         cooldown_minutes: cooldownMinutes ? parseInt(cooldownMinutes, 10) : null,
         rpm_limit: rpmLimit ? parseInt(rpmLimit, 10) : null,
         tpm_limit: tpmLimit ? parseInt(tpmLimit, 10) : null,
+        account_group: accountGroup.trim() || null,
+        excluded_models: excludedModels
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        tags: tags
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
       });
       toast.success(t("channels.created"));
       onSave();
@@ -184,6 +196,9 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
         outputCostPerMtok={outputCostPerMtok} setOutputCostPerMtok={setOutputCostPerMtok}
         rpmLimit={rpmLimit} setRpmLimit={setRpmLimit}
         tpmLimit={tpmLimit} setTpmLimit={setTpmLimit}
+        accountGroup={accountGroup} setAccountGroup={setAccountGroup}
+        excludedModels={excludedModels} setExcludedModels={setExcludedModels}
+        tags={tags} setTags={setTags}
         presetModels={activePreset?.models ?? []}
         modelMapping={modelMapping} setModelMapping={setModelMapping}
         apiKeyUrl={activePreset?.apiKeyUrl}

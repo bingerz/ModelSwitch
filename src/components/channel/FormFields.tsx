@@ -30,6 +30,12 @@ export interface FormFieldsProps {
   setRpmLimit: (v: string) => void;
   tpmLimit: string;
   setTpmLimit: (v: string) => void;
+  accountGroup: string;
+  setAccountGroup: (v: string) => void;
+  excludedModels: string;
+  setExcludedModels: (v: string) => void;
+  tags: string;
+  setTags: (v: string) => void;
   presetModels: string[];
   modelMapping: Record<string, string>;
   setModelMapping: (v: Record<string, string>) => void;
@@ -72,6 +78,12 @@ export function FormFields({
   setRpmLimit,
   tpmLimit,
   setTpmLimit,
+  accountGroup,
+  setAccountGroup,
+  excludedModels,
+  setExcludedModels,
+  tags,
+  setTags,
   presetModels,
   modelMapping,
   setModelMapping,
@@ -320,6 +332,36 @@ export function FormFields({
               placeholder={t("channels.tpmPlaceholder")}
               min={1}
             />
+          </label>
+          <label className="form-field">
+            <span>{t("channels.accountGroup")}</span>
+            <input
+              type="text"
+              value={accountGroup}
+              onChange={(e) => setAccountGroup(e.target.value)}
+              placeholder="e.g., production, staging"
+            />
+            <small className="form-hint">{t("channels.accountGroupHint")}</small>
+          </label>
+          <label className="form-field">
+            <span>{t("channels.excludedModels")}</span>
+            <input
+              type="text"
+              value={excludedModels}
+              onChange={(e) => setExcludedModels(e.target.value)}
+              placeholder="e.g., gpt-4, claude-3-opus"
+            />
+            <small className="form-hint">{t("channels.excludedModelsHint")}</small>
+          </label>
+          <label className="form-field">
+            <span>{t("channels.tags")}</span>
+            <input
+              type="text"
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+              placeholder="e.g., priority, backup"
+            />
+            <small className="form-hint">{t("channels.tagsHint")}</small>
           </label>
         </div>
       )}
