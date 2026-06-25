@@ -152,10 +152,21 @@ pub async fn get_notification_config(
 pub async fn update_notification_config(
     State(state): State<Arc<AppState>>,
     Json(mut config): Json<NotificationConfig>,
-) -> Json<ApiResponse<NotificationConfig>> {
+) -> Result<Json<ApiResponse<NotificationConfig>>, axum::response::Response> {
+    // SSRF prevention: validate webhook and bark URLs
+    if let Some(ref url) = config.webhook_url {
+        if let Err(e) = crate::notification::validate_notification_url(url) {
+            return Err(ApiError::new(StatusCode::BAD_REQUEST, &e));
+        }
+    }
+    if let Some(ref url) = config.bark_url {
+        if let Err(e) = crate::notification::validate_notification_url(url) {
+            return Err(ApiError::new(StatusCode::BAD_REQUEST, &e));
+        }
+    }
     state.notifications.update_config(config.clone()).await;
     config.webhook_secret = None; // don't echo back secrets
-    Json(ApiResponse::ok(config))
+    Ok(Json(ApiResponse::ok(config)))
 }
 
 // ─── Channel Auto-Test ────────────────────────────────
@@ -377,7 +388,9 @@ mod tests {
             ..Default::default()
         };
         let result =
-            update_notification_config(State(state.clone()), Json(new_config)).await;
+            update_notification_config(State(state.clone()), Json(new_config))
+                .await
+                .expect("update should succeed");
         assert!(result.ok);
         assert_eq!(result.data.budget_threshold_pct, 90);
 

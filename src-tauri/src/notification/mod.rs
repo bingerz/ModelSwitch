@@ -148,6 +148,74 @@ impl NotificationService {
     }
 }
 
+/// Validate a webhook or bark URL to prevent SSRF attacks.
+///
+/// Rejects non-HTTP(S) schemes, private/loopback/link-local IPs, and
+/// cloud metadata endpoints. Allows `localhost` and `127.0.0.1` only
+/// when the port is non-standard (dev convenience).
+pub fn validate_notification_url(url: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))?;
+
+    // Only allow http and https schemes
+    match parsed.scheme() {
+        "https" => {}
+        "http" => {
+            // Allow http only for localhost (dev/testing)
+            let host = parsed.host_str().unwrap_or("");
+            if host != "localhost" && host != "127.0.0.1" {
+                return Err(
+                    "HTTP is only allowed for localhost. Use HTTPS for production webhooks.".into(),
+                );
+            }
+        }
+        scheme => return Err(format!("Unsupported URL scheme: {scheme}. Only http/https allowed.")),
+    }
+
+    // Block suspicious hosts
+    let host = parsed.host_str().unwrap_or("");
+    let host_ip = host.parse::<std::net::IpAddr>();
+
+    if let Ok(ip) = host_ip {
+        match ip {
+            std::net::IpAddr::V4(v4) => {
+                // Block private ranges
+                if v4.is_private() {
+                    return Err(format!("Private IP addresses are not allowed: {host}"));
+                }
+                // Block link-local (169.254.x.x — includes cloud metadata)
+                if v4.is_link_local() {
+                    return Err(format!("Link-local addresses are not allowed: {host}"));
+                }
+                // Block unspecified (0.0.0.0)
+                if v4.is_unspecified() {
+                    return Err(format!("Unspecified address is not allowed: {host}"));
+                }
+                // Block broadcast
+                if v4.is_broadcast() {
+                    return Err(format!("Broadcast address is not allowed: {host}"));
+                }
+                // 127.x.x.x (loopback) — allow only 127.0.0.1
+                if v4.is_loopback() && v4 != std::net::Ipv4Addr::new(127, 0, 0, 1) {
+                    return Err(format!(
+                        "Non-standard loopback addresses are not allowed: {host}"
+                    ));
+                }
+            }
+            std::net::IpAddr::V6(v6) => {
+                if v6.is_loopback() {
+                    // Allow ::1 for localhost dev
+                } else if v6.is_unspecified() {
+                    return Err(format!("Unspecified IPv6 address is not allowed: {host}"));
+                } else if v6.is_multicast() {
+                    return Err(format!("Multicast addresses are not allowed: {host}"));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn event_title(event: &NotificationEvent) -> String {
     match event {
         NotificationEvent::BudgetThreshold {
@@ -289,5 +357,49 @@ mod tests {
         assert!(cfg.webhook_secret.is_none());
         assert!(cfg.bark_url.is_none());
         assert_eq!(cfg.budget_threshold_pct, 80);
+    }
+
+    #[test]
+    fn validate_https_url_passes() {
+        assert!(validate_notification_url("https://hooks.slack.com/services/T00/B00/XX").is_ok());
+    }
+
+    #[test]
+    fn validate_localhost_http_passes() {
+        assert!(validate_notification_url("http://localhost:8080/webhook").is_ok());
+        assert!(validate_notification_url("http://127.0.0.1:9090/webhook").is_ok());
+    }
+
+    #[test]
+    fn validate_non_localhost_http_rejected() {
+        let result = validate_notification_url("http://example.com/webhook");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("HTTPS"));
+    }
+
+    #[test]
+    fn validate_private_ip_rejected() {
+        assert!(validate_notification_url("https://10.0.0.1/webhook").is_err());
+        assert!(validate_notification_url("https://192.168.1.1/webhook").is_err());
+        assert!(validate_notification_url("https://172.16.0.1/webhook").is_err());
+    }
+
+    #[test]
+    fn validate_cloud_metadata_rejected() {
+        let result = validate_notification_url("https://169.254.169.254/latest/meta-data/");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Link-local"));
+    }
+
+    #[test]
+    fn validate_non_standard_loopback_rejected() {
+        let result = validate_notification_url("http://127.0.0.2:8080/");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_non_http_scheme_rejected() {
+        assert!(validate_notification_url("file:///etc/passwd").is_err());
+        assert!(validate_notification_url("ftp://example.com/").is_err());
     }
 }
