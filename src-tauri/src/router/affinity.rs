@@ -72,11 +72,8 @@ impl AffinityState {
         }
 
         // Collect (session_id, last_used) pairs and sort oldest-first.
-        let mut entries: Vec<(String, Instant)> = self
-            .map
-            .iter()
-            .map(|(k, (_, t))| (k.clone(), *t))
-            .collect();
+        let mut entries: Vec<(String, Instant)> =
+            self.map.iter().map(|(k, (_, t))| (k.clone(), *t)).collect();
         entries.sort_by_key(|(_, t)| *t);
 
         let excess = self.map.len() - self.max_entries;
