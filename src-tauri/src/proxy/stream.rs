@@ -117,10 +117,14 @@ fn translate_protocol_sse_chunk(
 /// the constant `STREAM_READ_TIMEOUT`. Pass `None` to skip the first-byte
 /// timeout (falls back to `STREAM_READ_TIMEOUT` for all reads).
 ///
+/// `start` is the request start instant used to compute time-to-first-token.
+///
 /// Returns the response, a unified output buffer that captures the exact bytes
-/// delivered to the client (after any Gemini translation), and a `Notify` that
+/// delivered to the client (after any Gemini translation), a `Notify` that
 /// is signaled once the upstream stream has been fully consumed (allowing the
-/// caller to react immediately without polling).
+/// caller to react immediately without polling), and an `Option<Duration>`
+/// holding the observed TTFT (set once the first upstream chunk is received;
+/// `None` if the stream ended before any data arrived).
 ///
 /// All SSE line parsing (`data:` extraction, usage detection) is deferred to
 /// the post-stream telemetry task. The per-chunk hot path performs only a
@@ -132,7 +136,13 @@ pub fn sse_stream_response_with_telemetry(
     model: String,
     first_byte_timeout: Option<std::time::Duration>,
     protocol_translation: Option<(RequestFormat, RequestFormat)>,
-) -> (Response, Arc<Mutex<BytesMut>>, Arc<Notify>) {
+    start: std::time::Instant,
+) -> (
+    Response,
+    Arc<Mutex<BytesMut>>,
+    Arc<Notify>,
+    Arc<std::sync::Mutex<Option<std::time::Duration>>>,
+) {
     use tokio::sync::mpsc;
 
     let output_buffer: Arc<Mutex<BytesMut>> = Arc::new(Mutex::new(BytesMut::new()));
@@ -140,10 +150,16 @@ pub fn sse_stream_response_with_telemetry(
 
     let stream_done: Arc<Notify> = Arc::new(Notify::new());
 
+    // TTFT capture: written once by the stream task when the first upstream
+    // chunk arrives, read by the telemetry task after `stream_done` fires.
+    let ttft: Arc<std::sync::Mutex<Option<std::time::Duration>>> =
+        Arc::new(std::sync::Mutex::new(None));
+
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(32);
 
     {
         let stream_done = Arc::clone(&stream_done);
+        let ttft_clone = Arc::clone(&ttft);
         tokio::spawn(async move {
             let mut upstream = Box::pin(upstream_stream);
             let mut first_chunk = true;
@@ -152,14 +168,14 @@ pub fn sse_stream_response_with_telemetry(
                 let next_result = if first_chunk {
                     first_chunk = false;
                     match first_byte_timeout {
-                        Some(ttft) => {
-                            match tokio::time::timeout(ttft, upstream.next()).await {
+                        Some(ttft_limit) => {
+                            match tokio::time::timeout(ttft_limit, upstream.next()).await {
                                 Ok(Some(result)) => result,
                                 Ok(None) => break, // stream ended normally before any data
                                 Err(_elapsed) => {
                                     tracing::warn!(
                                         "TTFT first-byte timeout ({:?}) — aborting stream",
-                                        ttft
+                                        ttft_limit
                                     );
                                     let _ = tx
                                         .send(Err(std::io::Error::new(
@@ -213,7 +229,15 @@ pub fn sse_stream_response_with_telemetry(
                     }
                 };
                 let bytes = match next_result {
-                    Ok(b) => b,
+                    Ok(b) => {
+                        // Capture TTFT on the first successful chunk read.
+                        if let Ok(mut slot) = ttft_clone.lock() {
+                            if slot.is_none() {
+                                *slot = Some(start.elapsed());
+                            }
+                        }
+                        b
+                    }
                     Err(e) => {
                         // Forward error to client if still connected
                         let _ = tx.send(Err(std::io::Error::other(e))).await;
@@ -311,7 +335,7 @@ pub fn sse_stream_response_with_telemetry(
         .body(body)
         .expect("valid HTTP response construction");
 
-    (response, output_buffer, stream_done)
+    (response, output_buffer, stream_done, ttft)
 }
 
 /// Create a non-streaming JSON response.
@@ -430,8 +454,8 @@ mod tests {
         ];
         let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
 
-        let (_response, output_buffer, stream_done) =
-            sse_stream_response_with_telemetry(upstream, false, "gpt-4".to_string(), None, None);
+        let (_response, output_buffer, stream_done, _ttft) =
+            sse_stream_response_with_telemetry(upstream, false, "gpt-4".to_string(), None, None, std::time::Instant::now());
 
         // Consume the response body so the background task completes
         let body = _response.into_body();

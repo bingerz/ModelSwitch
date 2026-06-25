@@ -160,12 +160,13 @@ pub(super) async fn handle_streaming_success(
             upstream_stream
         };
 
-    let (stream_resp, output_buffer, stream_done) = sse_stream_response_with_telemetry(
+    let (stream_resp, output_buffer, stream_done, ttft) = sse_stream_response_with_telemetry(
         combined_stream,
         is_gemini,
         upstream_model.to_string(),
         first_byte_timeout,
         protocol_translation,
+        start,
     );
 
     let est_tokens = estimate_tokens(body, true);
@@ -216,6 +217,7 @@ pub(super) async fn handle_streaming_success(
     crate::metrics::request_duration()
         .with_label_values(&[provider_label, current_model])
         .observe(start.elapsed().as_secs_f64());
+    crate::metrics::record_latency(start.elapsed(), current_model, provider_label);
     let _ = state
         .channel_mgr
         .record_latency(channel.id, start.elapsed().as_millis() as u64)
@@ -248,6 +250,7 @@ pub(super) async fn handle_streaming_success(
         let bg_key_material = cache_key_material.to_string();
         let bg_pool_guard = pool_guard;
         let bg_active_guard = active_guard;
+        let bg_ttft = Arc::clone(&ttft);
         crate::spawn_bg(async move {
             // Hold the pool guard and active-request guard for the entire
             // lifetime of the background task. This keeps the HTTP pool's
@@ -270,6 +273,16 @@ pub(super) async fn handle_streaming_success(
                 bg_stream_done.notified(),
             )
             .await;
+
+            // Record TTFT once the stream has produced its first chunk. The
+            // value is `None` when the upstream never produced any data (e.g.
+            // empty stream or first-byte timeout), in which case we skip the
+            // observation.
+            if let Ok(slot) = bg_ttft.lock() {
+                if let Some(ttft) = *slot {
+                    crate::metrics::record_ttft(ttft, &bg_current_model, &bg_provider_name);
+                }
+            }
 
             // Single post-stream pass: lock the output buffer once and convert
             // to a String. All SSE parsing (data-line extraction, usage
@@ -383,6 +396,17 @@ pub(super) async fn handle_streaming_success(
                     crate::metrics::output_tokens_total()
                         .with_label_values(&[&bg_provider_name, &bg_current_model])
                         .inc_by(ot);
+                }
+
+                // Latency / token / cost histograms (complement the existing
+                // counters and duration histogram above).
+                crate::metrics::record_tokens(
+                    input_tokens.unwrap_or(0),
+                    output_tokens.unwrap_or(0),
+                    &bg_current_model,
+                );
+                if let Some(cost) = real_cost {
+                    crate::metrics::record_cost(cost, &bg_current_model);
                 }
             }
         });
@@ -665,6 +689,7 @@ pub(super) async fn handle_json_success(
             crate::metrics::request_duration()
                 .with_label_values(&[provider_label, &bg_current_model])
                 .observe(bg_start.elapsed().as_secs_f64());
+            crate::metrics::record_latency(bg_start.elapsed(), &bg_current_model, provider_label);
 
             // Token-level metrics
             if let Some(it) = bg_input_tokens {
@@ -676,6 +701,16 @@ pub(super) async fn handle_json_success(
                 crate::metrics::output_tokens_total()
                     .with_label_values(&[provider_label, &bg_current_model])
                     .inc_by(ot);
+            }
+            // Token-usage histogram (prompt + completion observations).
+            crate::metrics::record_tokens(
+                bg_input_tokens.unwrap_or(0),
+                bg_output_tokens.unwrap_or(0),
+                &bg_current_model,
+            );
+            // Cost histogram.
+            if let Some(cost) = bg_estimated_cost {
+                crate::metrics::record_cost(cost, &bg_current_model);
             }
 
             let _ = bg_channel_mgr
