@@ -15,6 +15,15 @@ pub enum Provider {
     Gemini,
     OpenRouter,
     Ollama,
+    Mistral,
+    Groq,
+    Together,
+    Cohere,
+    XAI,
+    SiliconFlow,
+    Yi,
+    Moonshot,
+    Zhipu,
     Custom(String),
 }
 
@@ -40,6 +49,15 @@ impl Provider {
             "gemini" => Provider::Gemini,
             "openrouter" => Provider::OpenRouter,
             "ollama" => Provider::Ollama,
+            "mistral" => Provider::Mistral,
+            "groq" => Provider::Groq,
+            "together" => Provider::Together,
+            "cohere" => Provider::Cohere,
+            "xai" => Provider::XAI,
+            "siliconflow" => Provider::SiliconFlow,
+            "yi" => Provider::Yi,
+            "moonshot" => Provider::Moonshot,
+            "zhipu" => Provider::Zhipu,
             other => Provider::Custom(other.to_string()),
         }
     }
@@ -52,6 +70,15 @@ impl Provider {
             Provider::Gemini => "gemini",
             Provider::OpenRouter => "openrouter",
             Provider::Ollama => "ollama",
+            Provider::Mistral => "mistral",
+            Provider::Groq => "groq",
+            Provider::Together => "together",
+            Provider::Cohere => "cohere",
+            Provider::XAI => "xai",
+            Provider::SiliconFlow => "siliconflow",
+            Provider::Yi => "yi",
+            Provider::Moonshot => "moonshot",
+            Provider::Zhipu => "zhipu",
             Provider::Custom(s) => s,
         }
     }
