@@ -320,6 +320,7 @@ impl VirtualKeyStore {
         enabled: Option<bool>,
         allowed_models: Option<Option<Vec<String>>>,
         denied_models: Option<Vec<String>>,
+        allowed_ips: Option<Vec<String>>,
     ) -> Option<VirtualKey> {
         let mut keys = self.store.write().await;
         let vk = keys.get_mut(&id)?;
@@ -340,6 +341,9 @@ impl VirtualKeyStore {
         }
         if let Some(dm) = denied_models {
             vk.denied_models = dm;
+        }
+        if let Some(ai) = allowed_ips {
+            vk.allowed_ips = ai;
         }
         Some(vk.clone())
     }
@@ -578,7 +582,7 @@ mod tests {
             .create("test".to_string(), None, None, None, vec![], vec![])
             .await;
         store
-            .update(created.id, None, None, None, Some(false), None, None)
+            .update(created.id, None, None, None, Some(false), None, None, None)
             .await;
         let validated = store.validate(&plaintext).await;
         assert!(validated.is_none());
@@ -771,7 +775,7 @@ mod tests {
             .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
             .await;
         store
-            .update(vk.id, None, None, None, Some(false), None, None)
+            .update(vk.id, None, None, None, Some(false), None, None, None)
             .await;
         let result = store.reserve_spend(vk.id, 10).await;
         assert!(matches!(result, ReserveResult::NoBudget));
