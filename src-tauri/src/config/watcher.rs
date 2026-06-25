@@ -110,6 +110,7 @@ fn channel_to_config(ch: &Channel) -> ChannelConfig {
         max_retries: ch.max_retries,
         models_endpoint: ch.models_endpoint.clone(),
         models_refresh_interval_secs: ch.models_refresh_interval_secs,
+        tags: ch.tags.clone(),
     }
 }
 
@@ -312,6 +313,7 @@ mod tests {
             max_retries: None,
             models_endpoint: None,
             models_refresh_interval_secs: 0,
+            tags: vec![],
         }
     }
 

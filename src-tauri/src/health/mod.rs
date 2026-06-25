@@ -199,6 +199,7 @@ mod tests {
             max_retries: None,
             models_endpoint: None,
             models_refresh_interval_secs: 300,
+            tags: vec![],
         }
     }
 

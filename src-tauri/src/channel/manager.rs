@@ -261,6 +261,7 @@ impl ChannelManager {
                         max_retries: c.max_retries,
                         models_endpoint: c.models_endpoint.clone(),
                         models_refresh_interval_secs: c.models_refresh_interval_secs,
+                        tags: c.tags.clone(),
                     })
                 })
                 .collect()
@@ -388,6 +389,7 @@ mod tests {
             max_retries: None,
             models_endpoint: None,
             models_refresh_interval_secs: 300,
+            tags: vec![],
         }
     }
 

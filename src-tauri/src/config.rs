@@ -406,6 +406,9 @@ pub struct ChannelConfig {
     /// Interval in seconds between model list refresh polls. Defaults to 300 (5 minutes).
     #[serde(default)]
     pub models_refresh_interval_secs: u64,
+    /// User-defined tags for grouping and filtering channels.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// Per-channel quota polling configuration.

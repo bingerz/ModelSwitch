@@ -183,6 +183,9 @@ pub struct Channel {
     pub models_endpoint: Option<String>,
     /// Interval between model list refreshes in seconds.
     pub models_refresh_interval_secs: u64,
+    /// User-defined tags for grouping and filtering channels.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 impl Channel {
@@ -356,6 +359,7 @@ impl Channel {
             max_retries: c.max_retries,
             models_endpoint: c.models_endpoint.clone(),
             models_refresh_interval_secs: c.models_refresh_interval_secs,
+            tags: c.tags.clone(),
         }
     }
 }
@@ -447,6 +451,7 @@ mod tests {
             max_retries: None,
             models_endpoint: None,
             models_refresh_interval_secs: 300,
+            tags: vec![],
         }
     }
 
