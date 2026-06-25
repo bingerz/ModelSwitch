@@ -688,6 +688,16 @@
     "barkUrl": "Bark 服务器 URL",
     "budgetThreshold": "预算阈值",
     "budgetThresholdHint": "当预算使用超过此百分比时通知",
+    "smtp": "SMTP 邮件",
+    "smtpEnable": "启用 SMTP 邮件通知",
+    "smtpHost": "SMTP 主机",
+    "smtpPort": "SMTP 端口",
+    "smtpUsername": "用户名",
+    "smtpPassword": "密码",
+    "smtpPasswordPlaceholder": "输入新密码以更改",
+    "smtpFrom": "发件地址",
+    "smtpAdminEmail": "管理员收件地址",
+    "smtpUseTls": "要求 STARTTLS",
     "saved": "通知配置已保存",
     "saveFailed": "保存通知配置失败"
   }

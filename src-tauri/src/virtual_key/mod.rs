@@ -62,6 +62,10 @@ pub struct VirtualKey {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default)]
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Optional department/group label for aggregating spend by team.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -329,6 +333,7 @@ impl VirtualKeyStore {
         rpm_limit: Option<u32>,
         tpm_limit: Option<u32>,
         expires_at: Option<chrono::DateTime<chrono::Utc>>,
+        group: Option<String>,
     ) -> (VirtualKey, String) {
         let plaintext = format!("ms-vk-{}", Uuid::new_v4().simple());
         let hash = sha256_hex(&plaintext);
@@ -350,6 +355,7 @@ impl VirtualKeyStore {
             rpm_limit,
             tpm_limit,
             expires_at,
+            group,
         };
         let vk_clone = vk.clone();
         self.store.write().await.insert(vk.id, vk);
@@ -391,6 +397,7 @@ impl VirtualKeyStore {
         rpm_limit: Option<Option<u32>>,
         tpm_limit: Option<Option<u32>>,
         expires_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
+        group: Option<Option<String>>,
     ) -> Option<VirtualKey> {
         let mut keys = self.store.write().await;
         let vk = keys.get_mut(&id)?;
@@ -423,6 +430,9 @@ impl VirtualKeyStore {
         }
         if let Some(exp) = expires_at {
             vk.expires_at = exp;
+        }
+        if let Some(g) = group {
+            vk.group = g;
         }
         Some(vk.clone())
     }
@@ -631,6 +641,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
         assert!(plaintext.starts_with("ms-vk-"), "prefix was: {plaintext}");
@@ -657,6 +668,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
         let result = store.validate("ms-vk-wrongkey").await;
@@ -674,6 +686,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
                 None,
                 None,
                 None,
@@ -698,6 +711,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
         store
@@ -707,6 +721,7 @@ mod tests {
                 None,
                 None,
                 Some(false),
+                None,
                 None,
                 None,
                 None,
@@ -733,6 +748,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
         store.accumulate_spend(vk.id, 50).await;
@@ -754,6 +770,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
                 None,
                 None,
                 None,
@@ -814,6 +831,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         assert!(vk.is_budget_exceeded());
     }
@@ -848,6 +866,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         assert!(vk.is_budget_exceeded());
     }
@@ -882,6 +901,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         assert!(!vk.is_budget_exceeded());
     }
@@ -916,6 +936,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
         let result = store.reserve_spend(vk.id, 10).await;
@@ -937,6 +958,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
                 None,
                 None,
                 None,
@@ -962,6 +984,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
         store
@@ -971,6 +994,7 @@ mod tests {
                 None,
                 None,
                 Some(false),
+                None,
                 None,
                 None,
                 None,
@@ -1001,6 +1025,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
                 None,
                 None,
                 None,
@@ -1045,6 +1070,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
         // Accumulate 90 cents of spend
@@ -1074,6 +1100,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
                 None,
                 None,
                 None,
@@ -1108,6 +1135,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
         // Accumulate 90 cents, then reserve exactly 10 → 90 + 10 = 100, not exceeding
@@ -1129,6 +1157,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
                 None,
                 None,
                 None,
@@ -1156,6 +1185,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
         store.reserve_spend(vk.id, 20).await;
@@ -1177,6 +1207,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
                 None,
                 None,
                 None,
@@ -1202,6 +1233,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
         store.reserve_spend(vk.id, 40).await;
@@ -1224,6 +1256,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
                 None,
                 None,
                 None,
@@ -1260,6 +1293,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
         assert!(store.has_keys().await);
@@ -1276,6 +1310,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
                 None,
                 None,
                 None,
@@ -1304,6 +1339,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
                 None,
                 None,
                 None,
@@ -1345,6 +1381,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         assert!(vk.is_model_allowed("gpt-4"));
         assert!(vk.is_model_allowed("claude-3"));
@@ -1368,6 +1405,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         assert!(vk.is_model_allowed("gpt-4"));
         assert!(vk.is_model_allowed("gpt-4o"));
@@ -1396,6 +1434,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         assert!(vk.is_model_denied("gpt-4"));
         // Prefix matching must NOT apply to denylist — only glob
@@ -1421,6 +1460,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         assert!(vk.is_model_denied("gpt-4"));
         assert!(vk.is_model_denied("gpt-4o"));
@@ -1446,6 +1486,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         assert!(!vk.is_model_denied("gpt-4"));
         assert!(!vk.is_model_denied("claude-3"));
@@ -1462,6 +1503,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
                 None,
                 None,
                 None,
@@ -1485,6 +1527,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
         // Different prefix — should not match
@@ -1503,6 +1546,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
                 None,
                 None,
                 None,
@@ -1531,6 +1575,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
                 None,
                 None,
                 None,
@@ -1565,6 +1610,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         assert!(vk.check_ip_allowed("192.168.1.1"));
         assert!(vk.check_ip_allowed("10.0.0.1"));
@@ -1589,6 +1635,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         assert!(vk.check_ip_allowed("192.168.1.5"));
         assert!(vk.check_ip_allowed("10.0.0.3"));
@@ -1612,6 +1659,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         assert!(!vk.check_ip_allowed("192.168.1.6"));
         assert!(!vk.check_ip_allowed("10.0.0.4"));
@@ -1636,6 +1684,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         assert!(vk.check_ip_allowed("192.168.1.0"));
         assert!(vk.check_ip_allowed("192.168.1.1"));
@@ -1661,6 +1710,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         assert!(!vk.check_ip_allowed("192.168.2.1"));
         assert!(!vk.check_ip_allowed("10.0.0.1"));

@@ -117,6 +117,115 @@ export function NotificationPanel() {
         </div>
       </div>
 
+      {/* SMTP Email */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">{t("notifications.smtp")}</h3>
+        <div style={{ marginTop: "var(--space-3)" }}>
+          <label className="settings-stat-label">
+            <input
+              type="checkbox"
+              checked={config.smtp_enabled}
+              onChange={(e) => setConfig({ ...config, smtp_enabled: e.target.checked })}
+              style={{ marginRight: "var(--space-2)" }}
+            />
+            {t("notifications.smtpEnable")}
+          </label>
+        </div>
+        <div style={{ marginTop: "var(--space-2)" }}>
+          <label className="settings-stat-label">{t("notifications.smtpHost")}</label>
+          <input
+            type="text"
+            className="settings-input"
+            value={config.smtp_host ?? ""}
+            onChange={(e) =>
+              setConfig({ ...config, smtp_host: e.target.value || null })
+            }
+            placeholder="smtp.gmail.com"
+            style={{ width: "100%", maxWidth: "400px" }}
+          />
+        </div>
+        <div style={{ marginTop: "var(--space-2)" }}>
+          <label className="settings-stat-label">{t("notifications.smtpPort")}</label>
+          <input
+            type="number"
+            min="1"
+            max="65535"
+            className="settings-input"
+            value={config.smtp_port ?? 587}
+            onChange={(e) =>
+              setConfig({
+                ...config,
+                smtp_port: parseInt(e.target.value, 10) || 587,
+              })
+            }
+            style={{ width: "100%", maxWidth: "100px" }}
+          />
+        </div>
+        <div style={{ marginTop: "var(--space-2)" }}>
+          <label className="settings-stat-label">{t("notifications.smtpUsername")}</label>
+          <input
+            type="text"
+            className="settings-input"
+            value={config.smtp_username ?? ""}
+            onChange={(e) =>
+              setConfig({ ...config, smtp_username: e.target.value || null })
+            }
+            placeholder="alerts@example.com"
+            style={{ width: "100%", maxWidth: "300px" }}
+          />
+        </div>
+        <div style={{ marginTop: "var(--space-2)" }}>
+          <label className="settings-stat-label">{t("notifications.smtpPassword")}</label>
+          <input
+            type="password"
+            className="settings-input"
+            value={config.smtp_password ?? ""}
+            onChange={(e) =>
+              setConfig({ ...config, smtp_password: e.target.value || null })
+            }
+            placeholder={t("notifications.smtpPasswordPlaceholder")}
+            style={{ width: "100%", maxWidth: "300px" }}
+          />
+        </div>
+        <div style={{ marginTop: "var(--space-2)" }}>
+          <label className="settings-stat-label">{t("notifications.smtpFrom")}</label>
+          <input
+            type="email"
+            className="settings-input"
+            value={config.smtp_from ?? ""}
+            onChange={(e) =>
+              setConfig({ ...config, smtp_from: e.target.value || null })
+            }
+            placeholder="alerts@example.com"
+            style={{ width: "100%", maxWidth: "300px" }}
+          />
+        </div>
+        <div style={{ marginTop: "var(--space-2)" }}>
+          <label className="settings-stat-label">{t("notifications.smtpAdminEmail")}</label>
+          <input
+            type="email"
+            className="settings-input"
+            value={config.smtp_admin_email ?? ""}
+            onChange={(e) =>
+              setConfig({ ...config, smtp_admin_email: e.target.value || null })
+            }
+            placeholder="admin@example.com"
+            style={{ width: "100%", maxWidth: "300px" }}
+          />
+        </div>
+        <div style={{ marginTop: "var(--space-2)" }}>
+          <label className="settings-stat-label">
+            <input
+              type="checkbox"
+              checked={config.smtp_use_tls}
+              onChange={(e) => setConfig({ ...config, smtp_use_tls: e.target.checked })}
+              style={{ marginRight: "var(--space-2)" }}
+            />
+            {t("notifications.smtpUseTls")}
+          </label>
+        </div>
+      </div>
+
       <div className="settings-actions">
         <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
           {saving ? t("common.saving") : t("common.save")}

@@ -5,6 +5,7 @@ pub mod features;
 pub mod mcp;
 pub mod portal;
 pub mod provider_budgets;
+pub mod reports;
 pub mod system;
 pub mod virtual_keys;
 
@@ -48,6 +49,7 @@ pub use channels::*;
 pub use features::*;
 pub use mcp::*;
 pub use provider_budgets::*;
+pub use reports::*;
 pub use system::*;
 pub use virtual_keys::*;
 

@@ -1,9 +1,12 @@
 pub mod bark;
+pub mod email;
 pub mod webhook;
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+pub use email::{EmailNotifier, NotificationError};
 
 /// Notification event types dispatched by the gateway to configured channels.
 #[derive(Debug, Clone, Serialize)]
@@ -43,6 +46,34 @@ pub struct NotificationConfig {
     /// Budget threshold percentage that triggers a notification (default 80).
     #[serde(default = "default_threshold")]
     pub budget_threshold_pct: u8,
+    /// Enable SMTP email notifications.
+    #[serde(default)]
+    pub smtp_enabled: bool,
+    /// SMTP server hostname (e.g., `smtp.gmail.com`).
+    #[serde(default)]
+    pub smtp_host: Option<String>,
+    /// SMTP server port (typically 587 for STARTTLS, 465 for implicit TLS).
+    #[serde(default)]
+    pub smtp_port: Option<u16>,
+    /// SMTP username for authentication.
+    #[serde(default)]
+    pub smtp_username: Option<String>,
+    /// SMTP password for authentication. Redacted on GET responses.
+    #[serde(default)]
+    pub smtp_password: Option<String>,
+    /// From address used on outgoing messages (e.g., `alerts@example.com`).
+    #[serde(default)]
+    pub smtp_from: Option<String>,
+    /// Recipient for budget/operational alerts (admin distribution list).
+    #[serde(default)]
+    pub smtp_admin_email: Option<String>,
+    /// Require STARTTLS before sending (recommended).
+    #[serde(default = "default_smtp_use_tls")]
+    pub smtp_use_tls: bool,
+}
+
+fn default_smtp_use_tls() -> bool {
+    true
 }
 
 fn default_threshold() -> u8 {
@@ -56,6 +87,14 @@ impl Default for NotificationConfig {
             webhook_secret: None,
             bark_url: None,
             budget_threshold_pct: default_threshold(),
+            smtp_enabled: false,
+            smtp_host: None,
+            smtp_port: None,
+            smtp_username: None,
+            smtp_password: None,
+            smtp_from: None,
+            smtp_admin_email: None,
+            smtp_use_tls: default_smtp_use_tls(),
         }
     }
 }
@@ -119,6 +158,27 @@ impl NotificationService {
                 }
             });
         }
+
+        if config.smtp_enabled {
+            if let Some(ref recipient) = config.smtp_admin_email {
+                let subject = format!("[ModelSwitch] {}", event_title(&event));
+                let body = serde_json::to_string_pretty(&event).unwrap_or_default();
+                let recipient = recipient.clone();
+                let smtp = build_email_notifier(&config);
+                tokio::spawn(async move {
+                    match smtp {
+                        Ok(notifier) => {
+                            if let Err(e) = notifier.send(&recipient, &subject, &body).await {
+                                tracing::warn!(error = %e, "SMTP notification failed");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "SMTP notifier build failed");
+                        }
+                    }
+                });
+            }
+        }
     }
 
     /// Check whether a budget threshold should trigger a notification.
@@ -147,6 +207,27 @@ impl NotificationService {
     pub async fn update_config(&self, config: NotificationConfig) {
         *self.config.write().await = config;
     }
+}
+
+/// Construct an `EmailNotifier` from the live notification configuration.
+///
+/// Returns `None`-like errors when mandatory SMTP fields are missing so
+/// the dispatcher can log a clear reason without panicking.
+fn build_email_notifier(config: &NotificationConfig) -> Result<EmailNotifier, NotificationError> {
+    let host = config
+        .smtp_host
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| NotificationError::Smtp("smtp_host not configured".into()))?;
+    let port = config.smtp_port.unwrap_or(587);
+    let username = config.smtp_username.as_deref().unwrap_or("");
+    let password = config.smtp_password.as_deref().unwrap_or("");
+    let from = config
+        .smtp_from
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| NotificationError::Smtp("smtp_from not configured".into()))?;
+    EmailNotifier::new(host, port, username, password, from, config.smtp_use_tls)
 }
 
 /// Validate a webhook or bark URL to prevent SSRF attacks.
@@ -381,6 +462,62 @@ mod tests {
         assert!(cfg.webhook_secret.is_none());
         assert!(cfg.bark_url.is_none());
         assert_eq!(cfg.budget_threshold_pct, 80);
+        assert!(!cfg.smtp_enabled);
+        assert!(cfg.smtp_host.is_none());
+        assert!(cfg.smtp_password.is_none());
+        assert!(cfg.smtp_admin_email.is_none());
+        assert!(cfg.smtp_use_tls);
+    }
+
+    #[test]
+    fn build_email_notifier_returns_err_when_host_missing() {
+        let cfg = NotificationConfig::default();
+        let result = build_email_notifier(&cfg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_email_notifier_returns_err_when_from_missing() {
+        let cfg = NotificationConfig {
+            smtp_enabled: true,
+            smtp_host: Some("smtp.example.com".into()),
+            smtp_port: Some(587),
+            smtp_from: None,
+            ..NotificationConfig::default()
+        };
+        let result = build_email_notifier(&cfg);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_email_notifier_succeeds_with_complete_config() {
+        let cfg = NotificationConfig {
+            smtp_enabled: true,
+            smtp_host: Some("smtp.example.com".into()),
+            smtp_port: Some(587),
+            smtp_username: Some("alerts".into()),
+            smtp_password: Some("pass".into()),
+            smtp_from: Some("alerts@example.com".into()),
+            ..NotificationConfig::default()
+        };
+        let result = build_email_notifier(&cfg);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn smtp_password_serializes_like_webhook_secret() {
+        // SMTP password follows the same redaction pattern as webhook_secret:
+        // serialized normally, but manually redacted in the admin GET endpoint
+        // so the frontend can round-trip the object without losing the value.
+        let cfg = NotificationConfig {
+            smtp_password: Some("sekret".into()),
+            ..NotificationConfig::default()
+        };
+        let json = serde_json::to_string(&cfg).expect("serialize");
+        assert!(
+            json.contains("sekret"),
+            "password must be present in raw serialization (redaction happens in admin layer): {json}"
+        );
     }
 
     #[tokio::test]

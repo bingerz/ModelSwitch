@@ -160,6 +160,33 @@ drain_timeout_secs = 30                       # Max wait for in-flight requests 
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Notifications & Alerts
+# ══════════════════════════════════════════════════════════════════════
+# Dispatch alerts when budgets are exhausted, channels are disabled, etc.
+# All channels are optional — enable only what you use.
+
+# [gateway.notification]
+# budget_threshold_pct = 80                   # Notify at 80% budget usage (default 80)
+
+# Webhook (HMAC-SHA256 signed when webhook_secret is set)
+# webhook_url = "https://hooks.slack.com/services/..."
+# webhook_secret = "your-hmac-secret"
+
+# Bark push (iOS)
+# bark_url = "https://api.day.app/yourkey"
+
+# SMTP email notifications
+# smtp_enabled = true
+# smtp_host = "smtp.gmail.com"
+# smtp_port = 587                             # 587 for STARTTLS, 465 for implicit TLS
+# smtp_username = "alerts@example.com"
+# smtp_password = "your-app-password"
+# smtp_from = "alerts@example.com"
+# smtp_admin_email = "oncall@example.com"     # Recipient for budget/operational alerts
+# smtp_use_tls = true                         # Require STARTTLS (recommended)
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Privacy Sanitizer
 # ══════════════════════════════════════════════════════════════════════
 # Redacts secrets from request bodies before forwarding to upstream.

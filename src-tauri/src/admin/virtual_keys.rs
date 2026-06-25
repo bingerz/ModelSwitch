@@ -35,6 +35,9 @@ pub struct CreateVirtualKeyRequest {
     /// invalid after this time.
     #[serde(default)]
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Optional department/group label for spend aggregation.
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 /// Request body for `POST /api/virtual-keys/batch`.
@@ -67,6 +70,9 @@ pub struct BatchCreateVirtualKeyRequest {
     /// Optional expiry timestamp applied to every generated key.
     #[serde(default)]
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Optional department/group label applied to every generated key.
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -91,6 +97,8 @@ pub struct UpdateVirtualKeyRequest {
     pub tpm_limit: Option<Option<u32>>,
     #[serde(default)]
     pub expires_at: Option<Option<chrono::DateTime<chrono::Utc>>>,
+    #[serde(default)]
+    pub group: Option<Option<String>>,
 }
 
 /// Response shape for the list endpoint -- never exposes `key_hash`.
@@ -113,6 +121,8 @@ pub struct VirtualKeyResponse {
     pub tpm_limit: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 impl From<&crate::virtual_key::VirtualKey> for VirtualKeyResponse {
@@ -132,6 +142,7 @@ impl From<&crate::virtual_key::VirtualKey> for VirtualKeyResponse {
             rpm_limit: k.rpm_limit,
             tpm_limit: k.tpm_limit,
             expires_at: k.expires_at,
+            group: k.group.clone(),
         }
     }
 }
@@ -254,6 +265,7 @@ pub async fn create_virtual_key(
             req.rpm_limit,
             req.tpm_limit,
             req.expires_at,
+            req.group,
         )
         .await;
     persist_virtual_keys(&state).await;
@@ -273,6 +285,7 @@ pub async fn create_virtual_key(
         "rpm_limit": vk.rpm_limit,
         "tpm_limit": vk.tpm_limit,
         "expires_at": vk.expires_at,
+        "group": vk.group,
     });
     Ok(Json(ApiResponse::ok(body)))
 }
@@ -335,6 +348,7 @@ pub async fn batch_create_virtual_keys(
                 req.rpm_limit,
                 req.tpm_limit,
                 req.expires_at,
+                req.group.clone(),
             )
             .await;
         created.push(serde_json::json!({
@@ -353,6 +367,7 @@ pub async fn batch_create_virtual_keys(
             "rpm_limit": vk.rpm_limit,
             "tpm_limit": vk.tpm_limit,
             "expires_at": vk.expires_at,
+            "group": vk.group,
         }));
     }
 
@@ -381,6 +396,7 @@ pub async fn update_virtual_key(
             req.rpm_limit,
             req.tpm_limit,
             req.expires_at,
+            req.group,
         )
         .await
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Virtual key not found"))?;
@@ -401,6 +417,53 @@ pub async fn delete_virtual_key(
     }
 }
 
+// ─── Group Summary ─────────────────────────────────────
+
+/// A single department/group spend summary row.
+#[derive(Debug, Serialize)]
+pub struct GroupSummary {
+    pub group: String,
+    pub key_count: usize,
+    pub daily_spent_cents: u64,
+    pub monthly_spent_cents: u64,
+}
+
+/// GET /api/virtual-keys/groups -- aggregate key counts and spend by group.
+///
+/// Keys without a group are excluded from the result.
+pub async fn list_virtual_key_groups(
+    State(state): State<Arc<AppState>>,
+) -> Json<ApiResponse<Vec<GroupSummary>>> {
+    use std::collections::BTreeMap;
+
+    let keys = state.billing.virtual_key_store.list().await;
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let this_month = chrono::Local::now().format("%Y-%m").to_string();
+
+    let mut buckets: BTreeMap<String, GroupSummary> = BTreeMap::new();
+    for k in &keys {
+        let group = match &k.group {
+            Some(g) if !g.trim().is_empty() => g.clone(),
+            _ => continue,
+        };
+        let entry = buckets.entry(group.clone()).or_insert(GroupSummary {
+            group,
+            key_count: 0,
+            daily_spent_cents: 0,
+            monthly_spent_cents: 0,
+        });
+        entry.key_count += 1;
+        if k.spend.today.date == today {
+            entry.daily_spent_cents += k.spend.today.cents;
+        }
+        if k.spend.this_month.month == this_month {
+            entry.monthly_spent_cents += k.spend.this_month.cents;
+        }
+    }
+
+    Json(ApiResponse::ok(buckets.into_values().collect()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,6 +479,21 @@ mod tests {
             page: 1,
             limit: DEFAULT_PAGE_LIMIT,
             search: None,
+        }
+    }
+
+    fn make_create_req(name: &str) -> CreateVirtualKeyRequest {
+        CreateVirtualKeyRequest {
+            name: name.to_string(),
+            daily_budget_cents: None,
+            monthly_budget_cents: None,
+            allowed_models: None,
+            denied_models: vec![],
+            allowed_ips: None,
+            rpm_limit: None,
+            tpm_limit: None,
+            expires_at: None,
+            group: None,
         }
     }
 
@@ -440,6 +518,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         let result = create_virtual_key(State(state), Json(req)).await;
         assert!(result.is_ok());
@@ -462,6 +541,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         let create_result = create_virtual_key(State(state.clone()), Json(req))
             .await
@@ -490,6 +570,7 @@ mod tests {
                 rpm_limit: None,
                 tpm_limit: None,
                 expires_at: None,
+                group: None,
             };
             create_virtual_key(State(state.clone()), Json(req))
                 .await
@@ -533,6 +614,7 @@ mod tests {
                 rpm_limit: None,
                 tpm_limit: None,
                 expires_at: None,
+                group: None,
             };
             create_virtual_key(State(state.clone()), Json(req))
                 .await
@@ -583,6 +665,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         let result = batch_create_virtual_keys(State(state.clone()), Json(req))
             .await
@@ -615,6 +698,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         let result = batch_create_virtual_keys(State(state), Json(req)).await;
         assert!(result.is_err());
@@ -633,6 +717,7 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         let result = batch_create_virtual_keys(State(state), Json(req)).await;
         assert!(result.is_err());
@@ -651,8 +736,74 @@ mod tests {
             rpm_limit: None,
             tpm_limit: None,
             expires_at: None,
+            group: None,
         };
         let result = batch_create_virtual_keys(State(state), Json(req)).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn groups_summary_returns_empty_when_no_keys() {
+        let state = build_test_state(vec![]);
+        let result = list_virtual_key_groups(State(state)).await;
+        assert!(result.0.data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn groups_summary_aggregates_by_group() {
+        let state = build_test_state(vec![]);
+        // Two keys in "engineering", one in "sales", one without a group.
+        for (name, group) in &[
+            ("eng-1", Some("engineering")),
+            ("eng-2", Some("engineering")),
+            ("sales-1", Some("sales")),
+            ("ungrouped-1", None),
+        ] {
+            let req = CreateVirtualKeyRequest {
+                name: name.to_string(),
+                daily_budget_cents: None,
+                monthly_budget_cents: None,
+                allowed_models: None,
+                denied_models: vec![],
+                allowed_ips: None,
+                rpm_limit: None,
+                tpm_limit: None,
+                expires_at: None,
+                group: group.map(|s| s.to_string()),
+            };
+            create_virtual_key(State(state.clone()), Json(req))
+                .await
+                .unwrap();
+        }
+
+        let result = list_virtual_key_groups(State(state)).await;
+        let groups = result.0.data;
+        // Only two groups should appear (ungrouped excluded).
+        assert_eq!(groups.len(), 2);
+        let eng = groups.iter().find(|g| g.group == "engineering").unwrap();
+        assert_eq!(eng.key_count, 2);
+        let sales = groups.iter().find(|g| g.group == "sales").unwrap();
+        assert_eq!(sales.key_count, 1);
+    }
+
+    #[tokio::test]
+    async fn create_virtual_key_with_group() {
+        let state = build_test_state(vec![]);
+        let req = CreateVirtualKeyRequest {
+            name: "grouped-key".to_string(),
+            daily_budget_cents: None,
+            monthly_budget_cents: None,
+            allowed_models: None,
+            denied_models: vec![],
+            allowed_ips: None,
+            rpm_limit: None,
+            tpm_limit: None,
+            expires_at: None,
+            group: Some("marketing".to_string()),
+        };
+        let result = create_virtual_key(State(state), Json(req)).await;
+        assert!(result.is_ok());
+        let data = result.unwrap().0.data;
+        assert_eq!(data["group"].as_str().unwrap(), "marketing");
     }
 }

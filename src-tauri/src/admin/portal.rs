@@ -184,6 +184,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
 
@@ -241,6 +242,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
         // Disable the key
@@ -253,6 +255,7 @@ mod tests {
                 None,
                 None,
                 Some(false),
+                None,
                 None,
                 None,
                 None,
@@ -286,6 +289,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
 
@@ -313,6 +317,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .await;
 
@@ -334,6 +339,7 @@ mod tests {
                 None,
                 vec![],
                 vec![],
+                None,
                 None,
                 None,
                 None,

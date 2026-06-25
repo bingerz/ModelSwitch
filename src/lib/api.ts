@@ -448,6 +448,14 @@ export interface NotificationConfig {
   webhook_secret: string | null;
   bark_url: string | null;
   budget_threshold_pct: number;
+  smtp_enabled: boolean;
+  smtp_host: string | null;
+  smtp_port: number | null;
+  smtp_username: string | null;
+  smtp_password: string | null;
+  smtp_from: string | null;
+  smtp_admin_email: string | null;
+  smtp_use_tls: boolean;
 }
 
 // ─── Model Registry Types ───────────────────────────────

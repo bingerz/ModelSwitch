@@ -145,6 +145,7 @@ pub async fn get_notification_config(
 ) -> Json<ApiResponse<NotificationConfig>> {
     let mut config = state.notifications.get_config().await;
     config.webhook_secret = None; // never expose secrets in GET
+    config.smtp_password = None; // never expose secrets in GET
     Json(ApiResponse::ok(config))
 }
 
@@ -164,8 +165,16 @@ pub async fn update_notification_config(
             return Err(ApiError::new(StatusCode::BAD_REQUEST, &e));
         }
     }
+    // Preserve the existing SMTP password when the client sends `null`
+    // (which happens when the config was loaded via GET and the user
+    // did not type a new password before saving).
+    if config.smtp_password.is_none() {
+        let existing = state.notifications.get_config().await;
+        config.smtp_password = existing.smtp_password;
+    }
     state.notifications.update_config(config.clone()).await;
     config.webhook_secret = None; // don't echo back secrets
+    config.smtp_password = None; // don't echo back secrets
     Ok(Json(ApiResponse::ok(config)))
 }
 

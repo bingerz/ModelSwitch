@@ -853,6 +853,15 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
             &format!("{prefix}/model-registry"),
             get(admin::get_model_registry),
         )
+        // Usage reports (JSON + CSV export)
+        .route(
+            &format!("{prefix}/reports/usage"),
+            get(admin::get_usage_report),
+        )
+        .route(
+            &format!("{prefix}/reports/usage/csv"),
+            get(admin::get_usage_report_csv),
+        )
 }
 
 /// Portal routes — employee self-service, authenticated by virtual key.
