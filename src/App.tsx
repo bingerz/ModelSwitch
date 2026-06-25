@@ -16,12 +16,13 @@ import { AuditLogPanel } from "./components/AuditLogPanel";
 import { GuardrailsPanel } from "./components/GuardrailsPanel";
 import { RedemptionCodesPanel } from "./components/RedemptionCodesPanel";
 import { MetricsPanel } from "./components/MetricsPanel";
+import { ModelRegistryPanel } from "./components/ModelRegistryPanel";
 import { NotificationPanel } from "./components/NotificationPanel";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { MockBadge } from "./components/MockBadge";
 import { QuotaProvider } from "./hooks/useQuota";
 
-type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "logs" | "cost" | "quota" | "settings" | "audit" | "redemption" | "metrics" | "guardrails" | "notifications";
+type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "logs" | "cost" | "quota" | "settings" | "audit" | "redemption" | "metrics" | "guardrails" | "notifications" | "registry";
 type Theme = "light" | "dark";
 
 function getTabGroups(t: (key: string) => string): { title: string; tabs: { id: TabId; label: string }[] }[] {
@@ -46,6 +47,7 @@ function getTabGroups(t: (key: string) => string): { title: string; tabs: { id: 
         { id: "logs", label: t("nav.logs") },
         { id: "metrics", label: t("nav.metrics") },
         { id: "audit", label: t("nav.audit") },
+        { id: "registry", label: t("nav.registry") },
       ],
     },
     {
@@ -105,7 +107,7 @@ function AppInner() {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key >= "1" && e.key <= "9") {
         e.preventDefault();
-        const tabs: TabId[] = ["dashboard", "channels", "virtualKeys", "mcp", "logs", "cost", "quota", "settings", "audit", "redemption", "metrics", "guardrails", "notifications"];
+        const tabs: TabId[] = ["dashboard", "channels", "virtualKeys", "mcp", "logs", "cost", "quota", "settings", "audit", "redemption", "metrics", "guardrails", "notifications", "registry"];
         const idx = parseInt(e.key, 10) - 1;
         if (tabs[idx]) {
           setActiveTab(tabs[idx]);
@@ -266,6 +268,7 @@ function AppInner() {
           {activeTab === "redemption" && <RedemptionCodesPanel />}
           {activeTab === "metrics" && <MetricsPanel />}
           {activeTab === "notifications" && <NotificationPanel />}
+          {activeTab === "registry" && <ModelRegistryPanel />}
         </main>
       </div>
       <StatusBar />

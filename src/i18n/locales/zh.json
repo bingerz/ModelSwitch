@@ -95,7 +95,8 @@
     "redemption": "兑换码",
     "metrics": "指标",
     "guardrails": "内容护栏",
-    "notifications": "通知"
+    "notifications": "通知",
+    "registry": "模型注册表"
   },
   "login": {
     "brand": "ModelSwitch",

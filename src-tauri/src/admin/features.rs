@@ -14,7 +14,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -255,6 +255,88 @@ pub async fn get_channel_cooldown(
     }))))
 }
 
+// ─── Model Registry ──────────────────────────────────
+
+/// One model row in the registry response, enriched with the channel that
+/// discovered it (when applicable).
+#[derive(Debug, Serialize)]
+pub struct ModelRegistryItem {
+    pub name: String,
+    pub source_type: &'static str,
+    /// Endpoint URL the model was discovered from, when not built-in.
+    pub source: Option<String>,
+    /// Channel ID that owns the discovery endpoint, when applicable.
+    pub channel_id: Option<Uuid>,
+    /// Channel name that owns the discovery endpoint, when applicable.
+    pub channel_name: Option<String>,
+    pub last_refreshed_secs: Option<u64>,
+    pub supports_thinking: bool,
+    pub supports_vision: bool,
+    pub supports_tools: bool,
+    pub max_context_tokens: Option<u64>,
+    pub thinking_format: crate::model_registry::ThinkingFormat,
+}
+
+/// `GET /api/model-registry` — return all models known to the gateway.
+///
+/// Combines the in-memory [`ModelRegistry`] with channel metadata so the UI
+/// can show which channel exposed each discovered model.
+pub async fn get_model_registry(
+    State(state): State<Arc<AppState>>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    let entries = {
+        let registry = state.model_registry.read();
+        registry.list_all()
+    };
+
+    // Build endpoint -> channel lookup so we can attach channel info.
+    let endpoint_to_channel: HashMap<String, (Uuid, String)> = {
+        let channels = state.channel_mgr.channels();
+        let guard = channels.read().await;
+        guard
+            .values()
+            .filter_map(|ch_arc| {
+                let ch = ch_arc.read();
+                ch.models_endpoint
+                    .clone()
+                    .map(|ep| (ep, (ch.id, ch.name.clone())))
+            })
+            .collect()
+    };
+
+    let items: Vec<ModelRegistryItem> = entries
+        .into_iter()
+        .map(|entry| {
+            let (channel_id, channel_name) = entry
+                .capabilities
+                .source
+                .as_ref()
+                .and_then(|s| endpoint_to_channel.get(s))
+                .map(|(id, name)| (Some(*id), Some(name.clone())))
+                .unwrap_or((None, None));
+            ModelRegistryItem {
+                name: entry.name,
+                source_type: entry.source_type,
+                source: entry.capabilities.source.clone(),
+                channel_id,
+                channel_name,
+                last_refreshed_secs: entry.last_refreshed_secs,
+                supports_thinking: entry.capabilities.supports_thinking,
+                supports_vision: entry.capabilities.supports_vision,
+                supports_tools: entry.capabilities.supports_tools,
+                max_context_tokens: entry.capabilities.max_context_tokens,
+                thinking_format: entry.capabilities.thinking_format,
+            }
+        })
+        .collect();
+
+    let total = items.len();
+    Json(ApiResponse::ok(serde_json::json!({
+        "models": items,
+        "total": total,
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,5 +524,23 @@ mod tests {
         let response =
             get_channel_cooldown(State(state), Path(Uuid::new_v4())).await;
         assert!(response.is_err());
+    }
+
+    #[tokio::test]
+    async fn get_model_registry_returns_builtin_entries() {
+        let state = build_test_state(vec![]);
+        let result = get_model_registry(State(state)).await;
+        assert!(result.ok);
+        let models = result.data["models"].as_array().expect("models array");
+        // Default registry seeds several built-in models (gpt-4o, claude-3-5-sonnet, etc.)
+        assert!(!models.is_empty(), "built-in models should be present");
+        let total = result.data["total"].as_u64().expect("total number");
+        assert_eq!(total, models.len() as u64);
+
+        // Every entry should have a name and a source_type of "builtin".
+        for model in models {
+            assert!(model["name"].as_str().is_some());
+            assert_eq!(model["source_type"], "builtin");
+        }
     }
 }

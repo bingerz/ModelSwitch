@@ -175,3 +175,150 @@
 .settings-table tbody tr:last-child td {
   border-bottom: none;
 }
+
+/* ─── Model Registry Panel ─── */
+.registry-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+  flex-wrap: wrap;
+}
+
+.registry-search {
+  position: relative;
+  flex: 1;
+  min-width: 200px;
+  max-width: 360px;
+}
+
+.registry-search-icon {
+  position: absolute;
+  left: var(--space-2);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
+
+.registry-search-input {
+  width: 100%;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-size: var(--text-sm);
+}
+
+.registry-search-input:focus {
+  outline: none;
+  border-color: var(--color-accent, var(--color-primary));
+}
+
+.registry-filter-select {
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.registry-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.registry-group-toggle input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.registry-count-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.registry-count-divider {
+  opacity: 0.5;
+}
+
+.registry-discovered-count {
+  color: var(--color-success, var(--color-primary));
+}
+
+.registry-caps {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.registry-cap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+
+.registry-cap-thinking {
+  background: var(--color-success-bg, rgba(34, 197, 94, 0.15));
+  color: var(--color-success, var(--color-primary));
+  border-color: transparent;
+}
+
+.registry-cap-format {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.registry-group {
+  margin-bottom: var(--space-4);
+}
+
+.registry-group:last-child {
+  margin-bottom: 0;
+}
+
+.registry-group-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--space-1);
+}
+
+.registry-group-title {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+
+.registry-group-count {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+

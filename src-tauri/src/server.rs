@@ -830,6 +830,11 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
             &format!("{prefix}/completion-ratios"),
             put(admin::update_completion_ratios),
         )
+        // Model registry inspection
+        .route(
+            &format!("{prefix}/model-registry"),
+            get(admin::get_model_registry),
+        )
 }
 
 /// Build the Axum Router with all proxy and admin routes.

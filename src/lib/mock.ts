@@ -468,6 +468,95 @@ export const mockApi: typeof api = {
     return ratios;
   },
 
+  // Model registry inspection
+  modelRegistry: async () => {
+    await simDelay();
+    const now = Math.floor(Date.now() / 1000);
+    return {
+      models: [
+        {
+          name: "gpt-4o",
+          source_type: "builtin" as const,
+          source: null,
+          channel_id: null,
+          channel_name: null,
+          last_refreshed_secs: null,
+          supports_thinking: false,
+          supports_vision: true,
+          supports_tools: true,
+          max_context_tokens: 128000,
+          thinking_format: "Level" as const,
+        },
+        {
+          name: "gpt-4o-mini",
+          source_type: "builtin" as const,
+          source: null,
+          channel_id: null,
+          channel_name: null,
+          last_refreshed_secs: null,
+          supports_thinking: false,
+          supports_vision: true,
+          supports_tools: true,
+          max_context_tokens: 128000,
+          thinking_format: "Level" as const,
+        },
+        {
+          name: "claude-sonnet-4",
+          source_type: "builtin" as const,
+          source: null,
+          channel_id: null,
+          channel_name: null,
+          last_refreshed_secs: null,
+          supports_thinking: true,
+          supports_vision: true,
+          supports_tools: true,
+          max_context_tokens: 200000,
+          thinking_format: "Budget" as const,
+        },
+        {
+          name: "deepseek-chat",
+          source_type: "discovered" as const,
+          source: "https://api.deepseek.com/v1/models",
+          channel_id: "ch-0001",
+          channel_name: "DeepSeek Primary",
+          last_refreshed_secs: now - 120,
+          supports_thinking: false,
+          supports_vision: false,
+          supports_tools: true,
+          max_context_tokens: 64000,
+          thinking_format: "None" as const,
+        },
+        {
+          name: "deepseek-reasoner",
+          source_type: "discovered" as const,
+          source: "https://api.deepseek.com/v1/models",
+          channel_id: "ch-0001",
+          channel_name: "DeepSeek Primary",
+          last_refreshed_secs: now - 120,
+          supports_thinking: true,
+          supports_vision: false,
+          supports_tools: false,
+          max_context_tokens: 64000,
+          thinking_format: "Budget" as const,
+        },
+        {
+          name: "gemini-2.5-pro",
+          source_type: "builtin" as const,
+          source: null,
+          channel_id: null,
+          channel_name: null,
+          last_refreshed_secs: null,
+          supports_thinking: true,
+          supports_vision: true,
+          supports_tools: true,
+          max_context_tokens: 1000000,
+          thinking_format: "Budget" as const,
+        },
+      ],
+      total: 6,
+    };
+  },
+
   // Per-channel payload rules (runtime override)
   updatePayloadRules: async (channelId: string) => {
     await simDelay();

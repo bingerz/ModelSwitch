@@ -413,6 +413,34 @@ export interface NotificationConfig {
   budget_threshold_pct: number;
 }
 
+// ─── Model Registry Types ───────────────────────────────
+
+export type ThinkingFormat = "None" | "Budget" | "Level" | "Hybrid";
+
+export interface ModelRegistryItem {
+  name: string;
+  /** `"builtin"` for hardcoded entries, `"discovered"` for upstream-polled ones. */
+  source_type: "builtin" | "discovered";
+  /** Endpoint URL the model was discovered from, when not built-in. */
+  source: string | null;
+  /** Channel ID that owns the discovery endpoint, when applicable. */
+  channel_id: string | null;
+  /** Channel name that owns the discovery endpoint, when applicable. */
+  channel_name: string | null;
+  /** Epoch seconds of the last successful refresh, or null for built-in. */
+  last_refreshed_secs: number | null;
+  supports_thinking: boolean;
+  supports_vision: boolean;
+  supports_tools: boolean;
+  max_context_tokens: number | null;
+  thinking_format: ThinkingFormat;
+}
+
+export interface ModelRegistryResponse {
+  models: ModelRegistryItem[];
+  total: number;
+}
+
 export const api = {
   listChannels: () => request<Channel[]>("/api/channels"),
   createChannel: (data: Partial<Channel> & { credential_value: string; credential_type?: string }) =>
@@ -618,6 +646,10 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(ratios),
     }),
+
+  // Model registry inspection
+  modelRegistry: () =>
+    request<ModelRegistryResponse>("/api/model-registry"),
 
   // Per-channel payload rules (runtime override)
   updatePayloadRules: (channelId: string, rules: PayloadRulesConfig) =>

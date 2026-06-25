@@ -95,7 +95,8 @@
     "redemption": "Redemption Codes",
     "metrics": "Metrics",
     "guardrails": "Guardrails",
-    "notifications": "Notifications"
+    "notifications": "Notifications",
+    "registry": "Model Registry"
   },
   "login": {
     "brand": "ModelSwitch",
@@ -667,5 +668,43 @@
     "budgetThresholdHint": "Notify when budget usage exceeds this percentage",
     "saved": "Notification configuration saved",
     "saveFailed": "Failed to save notification configuration"
+  },
+  "registry": {
+    "title": "Model Registry",
+    "hint": "Models known to the gateway, including built-in entries and those discovered from upstream channels.",
+    "searchPlaceholder": "Search models...",
+    "noModels": "No models discovered yet",
+    "noModelsHint": "Built-in and discovered models will appear here once the gateway starts.",
+    "noResults": "No models match your filter",
+    "noResultsHint": "Try clearing the search or switching the source filter.",
+    "totalModels_one": "{{count}} model",
+    "totalModels_other": "{{count}} models",
+    "discoveredCount_one": "{{count}} discovered",
+    "discoveredCount_other": "{{count}} discovered",
+    "modelsCount_one": "{{count}} model",
+    "modelsCount_other": "{{count}} models",
+    "modelName": "Model",
+    "source": "Source",
+    "channel": "Channel",
+    "lastUpdated": "Last Updated",
+    "capabilities": "Caps",
+    "context": "Context",
+    "vision": "Vision",
+    "toolUse": "Tool use",
+    "thinking": "Extended thinking",
+    "thinkingFormat": "Thinking format",
+    "builtin": "Built-in",
+    "discovered": "Discovered",
+    "allSources": "All sources",
+    "sourceFilter": "Source filter",
+    "groupByChannel": "Group by channel",
+    "unknownSource": "Unknown",
+    "justNow": "just now",
+    "minutesAgo_one": "{{count}} min ago",
+    "minutesAgo_other": "{{count}} min ago",
+    "hoursAgo_one": "{{count}} hr ago",
+    "hoursAgo_other": "{{count}} hr ago",
+    "daysAgo_one": "{{count}} day ago",
+    "daysAgo_other": "{{count}} days ago"
   }
 }

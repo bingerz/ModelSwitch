@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::time::{SystemTime, UNIX_EPOCH};
 use url::Url;
 
 /// Check if an IP address is in a private/reserved range.
@@ -22,7 +23,7 @@ fn is_private_ip(ip: &IpAddr) -> bool {
 }
 
 /// Supported thinking parameter formats for a model family.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub enum ThinkingFormat {
     /// No extended thinking support.
     #[default]
@@ -36,7 +37,7 @@ pub enum ThinkingFormat {
 }
 
 /// Capability profile for a single model (or model family prefix).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct ModelCapabilities {
     pub supports_thinking: bool,
     pub supports_vision: bool,
@@ -48,12 +49,27 @@ pub struct ModelCapabilities {
     pub source: Option<String>,
 }
 
+/// One entry in the registry, aimed at API exposure. Includes the model ID,
+/// its capabilities, where it came from, and (for discovered entries) the
+/// last time the source was polled.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ModelRegistryEntry {
+    pub name: String,
+    pub capabilities: ModelCapabilities,
+    /// `"builtin"` for hardcoded entries, `"discovered"` for upstream-polled ones.
+    pub source_type: &'static str,
+    /// Epoch seconds of the last successful refresh, or `None` for built-in.
+    pub last_refreshed_secs: Option<u64>,
+}
+
 /// Registry of known model capabilities.
 ///
 /// Models not in the registry receive default capabilities
 /// (`supports_vision = true`, `supports_tools = true` for safety).
 pub struct ModelRegistry {
     models: HashMap<String, ModelCapabilities>,
+    /// Per-source last refresh time (epoch seconds). Keyed by endpoint URL.
+    refresh_times: HashMap<String, u64>,
 }
 
 impl ModelRegistry {
@@ -174,7 +190,10 @@ impl ModelRegistry {
             );
         }
 
-        Self { models }
+        Self {
+            models,
+            refresh_times: HashMap::new(),
+        }
     }
 
     /// Update the internal model list with fetched models.
@@ -192,11 +211,43 @@ impl ModelRegistry {
             capabilities.source = Some(source.to_string());
             self.models.insert(model_id, capabilities);
         }
+        // Record refresh time for this source
+        if let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) {
+            self.refresh_times.insert(source.to_string(), now.as_secs());
+        }
     }
 
     /// Return all registered model IDs (both built-in and dynamically discovered).
     pub fn list_models(&self) -> Vec<String> {
         self.models.keys().cloned().collect()
+    }
+
+    /// Return all registry entries with capabilities and source metadata,
+    /// sorted by model name for stable display.
+    pub fn list_all(&self) -> Vec<ModelRegistryEntry> {
+        let mut entries: Vec<ModelRegistryEntry> = self
+            .models
+            .iter()
+            .map(|(name, caps)| {
+                let source_type = if caps.source.is_some() {
+                    "discovered"
+                } else {
+                    "builtin"
+                };
+                let last_refreshed_secs = caps
+                    .source
+                    .as_ref()
+                    .and_then(|s| self.refresh_times.get(s).copied());
+                ModelRegistryEntry {
+                    name: name.clone(),
+                    capabilities: caps.clone(),
+                    source_type,
+                    last_refreshed_secs,
+                }
+            })
+            .collect();
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        entries
     }
 
     /// Look up capabilities for a model.
