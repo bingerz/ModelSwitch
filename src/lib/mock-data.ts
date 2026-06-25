@@ -109,6 +109,8 @@ export function buildChannels(now: Date): Channel[] {
       proxy_url: null,
       headers: {},
       max_retries: null,
+      models_endpoint: null,
+      models_refresh_interval_secs: 0,
     },
     {
       id: "ch-openai-p2",
@@ -139,6 +141,8 @@ export function buildChannels(now: Date): Channel[] {
       proxy_url: null,
       headers: {},
       max_retries: null,
+      models_endpoint: null,
+      models_refresh_interval_secs: 0,
     },
     {
       id: "ch-anthropic-p1",
@@ -169,6 +173,8 @@ export function buildChannels(now: Date): Channel[] {
       proxy_url: null,
       headers: {},
       max_retries: null,
+      models_endpoint: null,
+      models_refresh_interval_secs: 0,
     },
     {
       id: "ch-anthropic-p2",
@@ -199,6 +205,8 @@ export function buildChannels(now: Date): Channel[] {
       proxy_url: null,
       headers: {},
       max_retries: null,
+      models_endpoint: null,
+      models_refresh_interval_secs: 0,
     },
     {
       id: "ch-gemini-p2",
@@ -229,6 +237,8 @@ export function buildChannels(now: Date): Channel[] {
       proxy_url: null,
       headers: {},
       max_retries: null,
+      models_endpoint: null,
+      models_refresh_interval_secs: 0,
     },
     {
       id: "ch-groq-p1",
@@ -259,6 +269,8 @@ export function buildChannels(now: Date): Channel[] {
       proxy_url: null,
       headers: {},
       max_retries: null,
+      models_endpoint: null,
+      models_refresh_interval_secs: 0,
     },
     {
       id: "ch-openrouter-p3",
@@ -289,6 +301,8 @@ export function buildChannels(now: Date): Channel[] {
       proxy_url: null,
       headers: {},
       max_retries: null,
+      models_endpoint: null,
+      models_refresh_interval_secs: 0,
     },
     {
       id: "ch-deepseek-p2",
@@ -319,6 +333,8 @@ export function buildChannels(now: Date): Channel[] {
       proxy_url: null,
       headers: {},
       max_retries: null,
+      models_endpoint: null,
+      models_refresh_interval_secs: 0,
     },
   ];
 }

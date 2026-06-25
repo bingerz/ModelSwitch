@@ -109,6 +109,8 @@ export const mockApi: typeof api = {
       proxy_url: input.proxy_url ?? null,
       headers: input.headers ?? {},
       max_retries: input.max_retries ?? null,
+      models_endpoint: input.models_endpoint ?? null,
+      models_refresh_interval_secs: input.models_refresh_interval_secs ?? 300,
     };
     return channel;
   },
@@ -153,6 +155,18 @@ export const mockApi: typeof api = {
     return {
       status: ch?.status ?? "healthy",
       circuit_open_until: ch?.circuit_open_until ?? null,
+    };
+  },
+
+  channelCooldown: async (_id: string) => {
+    await simDelay();
+    return {
+      channel_id: _id,
+      channel_name: "mock",
+      in_cooldown: false,
+      cooldown_remaining_secs: 0,
+      circuit_open_until: null,
+      model_cooldowns: {},
     };
   },
 
@@ -452,5 +466,11 @@ export const mockApi: typeof api = {
   updateCompletionRatios: async (ratios: Record<string, number>) => {
     await simDelay();
     return ratios;
+  },
+
+  // Per-channel payload rules (runtime override)
+  updatePayloadRules: async (channelId: string) => {
+    await simDelay();
+    return { channel_id: channelId, updated: true };
   },
 };

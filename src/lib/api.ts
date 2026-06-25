@@ -31,6 +31,8 @@ export interface Channel {
   proxy_url: string | null;
   headers: Record<string, string>;
   max_retries: number | null;
+  models_endpoint: string | null;
+  models_refresh_interval_secs: number;
 }
 
 export interface DispatchLog {
@@ -195,6 +197,36 @@ export interface UpdateChannelData {
   proxy_url?: string | null;
   headers?: Record<string, string>;
   max_retries?: number | null;
+  models_endpoint?: string | null;
+  models_refresh_interval_secs?: number;
+}
+
+// ─── Payload Rules Types ─────────────────────────────────
+
+/** A single per-model payload rule with optional model/protocol matching. */
+export interface ModelPayloadRule {
+  /** Model name patterns (supports `*` / `?` wildcards). Empty matches all. */
+  models: string[];
+  /** Protocol restriction: "openai", "anthropic", "gemini", or null for all. */
+  protocol?: string | null;
+  /** Default params to merge (using dotted JSON paths). */
+  defaults?: Record<string, unknown>;
+  /** Override params that always replace (using dotted JSON paths). */
+  overrides?: Record<string, unknown>;
+  /** Paths to strip. */
+  strip?: string[];
+}
+
+/** Per-channel payload manipulation rules. All keys use dotted JSON path notation. */
+export interface PayloadRulesConfig {
+  /** Default params merged into the request if absent. */
+  defaults?: Record<string, unknown>;
+  /** Override params that always replace existing values. */
+  overrides?: Record<string, unknown>;
+  /** Parameter paths to strip from the outgoing request. */
+  strip?: string[];
+  /** Optional per-model rules applied after channel-level rules. */
+  model_rules?: ModelPayloadRule[];
 }
 
 export interface GwStatus {
@@ -402,6 +434,15 @@ export const api = {
     request<{ status: string; circuit_open_until: string | null }>(
       `/api/channels/${id}/status`
     ),
+  channelCooldown: (id: string) =>
+    request<{
+      channel_id: string;
+      channel_name: string;
+      in_cooldown: boolean;
+      cooldown_remaining_secs: number;
+      circuit_open_until: string | null;
+      model_cooldowns: Record<string, string | null>;
+    }>(`/api/channels/${id}/cooldown`),
   logs: async (offset = 0, limit = 50): Promise<DispatchLog[]> => {
     const token = localStorage.getItem("admin_token");
     const res = await fetch(`${API_BASE}/api/logs?offset=${offset}&limit=${limit}`, {
@@ -577,6 +618,16 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(ratios),
     }),
+
+  // Per-channel payload rules (runtime override)
+  updatePayloadRules: (channelId: string, rules: PayloadRulesConfig) =>
+    request<{ channel_id: string; updated: boolean }>(
+      `/api/channels/${channelId}/payload-rules`,
+      {
+        method: "PUT",
+        body: JSON.stringify(rules),
+      }
+    ),
 };
 
 // ─── Mock mode ──────────────────────────────────────────

@@ -1,5 +1,6 @@
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { Channel } from "../../lib/api";
+import { api, type Channel } from "../../lib/api";
 import type { QuotaInfo } from "../../lib/api";
 import { STATUS_DOT, type ChannelStatus } from "./types";
 import {
@@ -52,6 +53,16 @@ export function ChannelCard({
   const statusKey = (ch.status as ChannelStatus) ?? "disabled";
   const modelCount = Object.keys(ch.model_mapping).length;
 
+  const [cooldown, setCooldown] = useState<{
+    in_cooldown: boolean;
+    cooldown_remaining_secs: number;
+    circuit_open_until: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    api.channelCooldown(ch.id).then(setCooldown).catch(() => {});
+  }, [ch.id]);
+
   return (
     <div
       className={`channel-card ${ch.status === "circuit_open" ? "channel-card-warning" : ""} ${!ch.enabled ? "channel-card-disabled" : ""}`}
@@ -91,6 +102,23 @@ export function ChannelCard({
             {ch.circuit_open_until
               ? ` \u00B7 ${formatRecoveryTime(ch.circuit_open_until)}`
               : ""}
+          </span>
+        )}
+        {cooldown?.in_cooldown && (
+          <span
+            className="channel-circuit-tag"
+            style={{ background: "var(--color-warning)", color: "var(--color-text-primary)" }}
+            title={
+              cooldown.circuit_open_until
+                ? t("channels.circuitOpen")
+                : undefined
+            }
+          >
+            {t("channels.cooldownActive")}
+            {" \u00B7 "}
+            {t("channels.cooldownRemaining", {
+              secs: Math.ceil(cooldown.cooldown_remaining_secs),
+            })}
           </span>
         )}
       </div>
