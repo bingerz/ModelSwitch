@@ -21,6 +21,7 @@ mod webview_login;
 
 mod server;
 mod shutdown;
+pub mod telemetry;
 #[cfg(feature = "tauri")]
 mod tauri_cmds;
 #[cfg(test)]

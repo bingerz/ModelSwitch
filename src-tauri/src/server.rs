@@ -224,6 +224,9 @@ fn build_infra(config_path: Option<std::path::PathBuf>) -> (AppConfig, crate::ht
         )
         .try_init();
 
+    // Log OTLP status if configured
+    crate::telemetry::init_tracing();
+
     // Load config
     let config = match config_path {
         Some(path) => AppConfig::load_from(path).unwrap_or_else(|e| {
@@ -522,6 +525,135 @@ async fn run_model_discovery(
     }
 }
 
+/// Build admin route tree under the given path prefix (e.g., `/api` or `/v1/api`).
+/// Both prefixes are mounted to ensure backward compatibility during versioning migration.
+fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
+    Router::new()
+        .route(&format!("{prefix}/channels"), get(admin::list_channels))
+        .route(&format!("{prefix}/channels"), post(admin::create_channel))
+        .route(
+            &format!("{prefix}/channels/{{id}}"),
+            put(admin::update_channel),
+        )
+        .route(
+            &format!("{prefix}/channels/{{id}}"),
+            delete(admin::delete_channel),
+        )
+        .route(
+            &format!("{prefix}/channels/{{id}}/ping"),
+            post(admin::ping_channel),
+        )
+        .route(
+            &format!("{prefix}/channels/{{id}}/status"),
+            get(admin::channel_status),
+        )
+        .route(
+            &format!("{prefix}/channels/batch/enable"),
+            post(admin::batch_enable_channels),
+        )
+        .route(
+            &format!("{prefix}/channels/batch/disable"),
+            post(admin::batch_disable_channels),
+        )
+        .route(
+            &format!("{prefix}/channels/batch/delete"),
+            post(admin::batch_delete_channels),
+        )
+        .route(
+            &format!("{prefix}/channels/batch/tags"),
+            put(admin::batch_update_tags),
+        )
+        .route(&format!("{prefix}/logs"), get(admin::get_logs))
+        .route(&format!("{prefix}/stats"), get(admin::get_stats))
+        .route(&format!("{prefix}/stats/cost"), get(admin::get_cost_stats))
+        .route(
+            &format!("{prefix}/stats/usage"),
+            get(admin::get_usage_history),
+        )
+        .route(&format!("{prefix}/quota"), get(admin::get_quota))
+        .route(
+            &format!("{prefix}/auth/cookies"),
+            post(admin::receive_login_cookies),
+        )
+        .route(
+            &format!("{prefix}/auth/pending-cookies"),
+            get(admin::get_pending_cookies),
+        )
+        .route(
+            &format!("{prefix}/channels/{{id}}/reset-circuit"),
+            post(admin::reset_circuit),
+        )
+        .route(
+            &format!("{prefix}/channels/{{id}}/payload-rules"),
+            put(admin::set_payload_rules),
+        )
+        .route(&format!("{prefix}/cache/flush"), post(admin::flush_cache))
+        .route(&format!("{prefix}/cache/stats"), get(admin::cache_stats))
+        .route(
+            &format!("{prefix}/config/reload"),
+            post(admin::reload_config),
+        )
+        .route(
+            &format!("{prefix}/mcp/servers"),
+            get(admin::list_mcp_servers),
+        )
+        .route(
+            &format!("{prefix}/mcp/servers"),
+            post(admin::create_mcp_server),
+        )
+        .route(
+            &format!("{prefix}/mcp/servers/{{id}}"),
+            put(admin::update_mcp_server),
+        )
+        .route(
+            &format!("{prefix}/mcp/servers/{{id}}"),
+            delete(admin::delete_mcp_server),
+        )
+        .route(
+            &format!("{prefix}/mcp/servers/{{id}}/start"),
+            post(admin::start_mcp_server),
+        )
+        .route(
+            &format!("{prefix}/mcp/servers/{{id}}/stop"),
+            post(admin::stop_mcp_server),
+        )
+        .route(
+            &format!("{prefix}/mcp/servers/{{id}}/tools"),
+            get(admin::list_mcp_server_tools),
+        )
+        .route(&format!("{prefix}/mcp/tools"), get(admin::list_all_mcp_tools))
+        .route(
+            &format!("{prefix}/virtual-keys"),
+            get(admin::list_virtual_keys),
+        )
+        .route(
+            &format!("{prefix}/virtual-keys"),
+            post(admin::create_virtual_key),
+        )
+        .route(
+            &format!("{prefix}/virtual-keys/{{id}}"),
+            put(admin::update_virtual_key),
+        )
+        .route(
+            &format!("{prefix}/virtual-keys/{{id}}"),
+            delete(admin::delete_virtual_key),
+        )
+        .route(
+            &format!("{prefix}/provider-budgets"),
+            get(admin::list_provider_budgets),
+        )
+        .route(
+            &format!("{prefix}/provider-budgets/{{provider}}"),
+            put(admin::set_provider_budget),
+        )
+        .route(
+            &format!("{prefix}/provider-budgets/{{provider}}"),
+            delete(admin::delete_provider_budget),
+        )
+        .route(&format!("{prefix}/gateway/info"), get(admin::gateway_info))
+        .route(&format!("{prefix}/audit-log"), get(admin::get_audit_log))
+}
+
 /// Build the Axum Router with all proxy and admin routes.
 /// Proxy routes use optional virtual-key auth (pass-through when no keys configured);
 /// admin routes use optional Bearer token auth.
@@ -594,74 +726,10 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
         ))
         .with_state(proxy_state);
 
-    // Admin routes -- optional Bearer token auth
-    let admin_router = Router::new()
-        .route("/api/channels", get(admin::list_channels))
-        .route("/api/channels", post(admin::create_channel))
-        .route("/api/channels/{id}", put(admin::update_channel))
-        .route("/api/channels/{id}", delete(admin::delete_channel))
-        .route("/api/channels/{id}/ping", post(admin::ping_channel))
-        .route("/api/channels/{id}/status", get(admin::channel_status))
-        .route(
-            "/api/channels/batch/enable",
-            post(admin::batch_enable_channels),
-        )
-        .route(
-            "/api/channels/batch/disable",
-            post(admin::batch_disable_channels),
-        )
-        .route(
-            "/api/channels/batch/delete",
-            post(admin::batch_delete_channels),
-        )
-        .route(
-            "/api/channels/batch/tags",
-            put(admin::batch_update_tags),
-        )
-        .route("/api/logs", get(admin::get_logs))
-        .route("/api/stats", get(admin::get_stats))
-        .route("/api/stats/cost", get(admin::get_cost_stats))
-        .route("/api/stats/usage", get(admin::get_usage_history))
-        .route("/api/quota", get(admin::get_quota))
-        .route("/api/auth/cookies", post(admin::receive_login_cookies))
-        .route("/api/auth/pending-cookies", get(admin::get_pending_cookies))
-        .route(
-            "/api/channels/{id}/reset-circuit",
-            post(admin::reset_circuit),
-        )
-        .route(
-            "/api/channels/{id}/payload-rules",
-            put(admin::set_payload_rules),
-        )
-        .route("/api/cache/flush", post(admin::flush_cache))
-        .route("/api/cache/stats", get(admin::cache_stats))
-        .route("/api/config/reload", post(admin::reload_config))
-        .route("/api/mcp/servers", get(admin::list_mcp_servers))
-        .route("/api/mcp/servers", post(admin::create_mcp_server))
-        .route("/api/mcp/servers/{id}", put(admin::update_mcp_server))
-        .route("/api/mcp/servers/{id}", delete(admin::delete_mcp_server))
-        .route("/api/mcp/servers/{id}/start", post(admin::start_mcp_server))
-        .route("/api/mcp/servers/{id}/stop", post(admin::stop_mcp_server))
-        .route(
-            "/api/mcp/servers/{id}/tools",
-            get(admin::list_mcp_server_tools),
-        )
-        .route("/api/mcp/tools", get(admin::list_all_mcp_tools))
-        .route("/api/virtual-keys", get(admin::list_virtual_keys))
-        .route("/api/virtual-keys", post(admin::create_virtual_key))
-        .route("/api/virtual-keys/{id}", put(admin::update_virtual_key))
-        .route("/api/virtual-keys/{id}", delete(admin::delete_virtual_key))
-        .route("/api/provider-budgets", get(admin::list_provider_budgets))
-        .route(
-            "/api/provider-budgets/{provider}",
-            put(admin::set_provider_budget),
-        )
-        .route(
-            "/api/provider-budgets/{provider}",
-            delete(admin::delete_provider_budget),
-        )
-        .route("/api/gateway/info", get(admin::gateway_info))
-        .route("/api/audit-log", get(admin::get_audit_log))
+    // Admin routes -- optional Bearer token auth.
+    // Mounted under both `/api` (backward compat) and `/v1/api` (versioned).
+    let admin_router = admin_routes("/api")
+        .merge(admin_routes("/v1/api"))
         .with_state(admin_route_state)
         .layer(axum::middleware::from_fn_with_state(
             admin_auth_state,
@@ -672,6 +740,7 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
         .merge(proxy_router)
         .merge(admin_router)
         .route("/metrics", get(metrics_handler))
+        .route("/v1/metrics", get(metrics_handler))
         .route("/healthz", get(healthz_handler));
 
     // Conditionally mount MCP Gateway Mode endpoint.
@@ -1178,5 +1247,111 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn versioned_admin_channels_route_registered() {
+        let state = build_test_state(vec![]);
+        let app = build_router(state, None);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/v1/api/channels")
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Should NOT be 404 — versioned route is registered
+        assert_ne!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn versioned_and_unversioned_admin_routes_equivalent() {
+        let state = build_test_state(vec![]);
+        let state_copy = Arc::clone(&state);
+        let app_unversioned = build_router(state, None);
+        let app_versioned = build_router(state_copy, None);
+
+        // GET /v1/api/channels returns same status as /api/channels
+        let resp_unversioned = app_unversioned
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/channels")
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let resp_versioned = app_versioned
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/v1/api/channels")
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp_unversioned.status(), resp_versioned.status());
+
+        // Verify response bodies match (same shared state)
+        let body_unversioned =
+            axum::body::to_bytes(resp_unversioned.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+        let body_versioned =
+            axum::body::to_bytes(resp_versioned.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+        assert_eq!(
+            body_unversioned, body_versioned,
+            "versioned and unversioned /api/channels bodies must match"
+        );
+    }
+
+    #[tokio::test]
+    async fn versioned_metrics_route_matches_unversioned() {
+        let state = build_test_state(vec![]);
+        let state_copy = Arc::clone(&state);
+        let app_unversioned = build_router(state, None);
+        let app_versioned = build_router(state_copy, None);
+
+        let resp_unversioned = app_unversioned
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/metrics")
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let resp_versioned = app_versioned
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/v1/metrics")
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp_unversioned.status(), resp_versioned.status());
+
+        let body_unversioned =
+            axum::body::to_bytes(resp_unversioned.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+        let body_versioned =
+            axum::body::to_bytes(resp_versioned.into_body(), 1024 * 1024)
+                .await
+                .unwrap();
+        assert_eq!(
+            body_unversioned, body_versioned,
+            "versioned and unversioned /metrics bodies must match"
+        );
     }
 }
