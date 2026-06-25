@@ -12,10 +12,11 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 /// Default ring-buffer capacity.
 const DEFAULT_MAX_ENTRIES: usize = 1000;
@@ -33,6 +34,11 @@ pub struct AuditEntry {
     pub target: String,
     /// Additional context (before/after diff, request fields, etc.).
     pub details: serde_json::Value,
+    /// Hash of the previous entry in the chain (tamper-detection).
+    /// `None` for the first entry or entries recorded before the chain was enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub prev_hash: Option<String>,
 }
 
 /// Ring-buffer audit log for administrative actions.
@@ -46,6 +52,9 @@ pub struct AuditLog {
     entries: Arc<RwLock<VecDeque<AuditEntry>>>,
     max_entries: usize,
     log_file: Option<PathBuf>,
+    /// Hash of the most recently recorded entry — the chain tip used to
+    /// compute the next entry's `prev_hash`.
+    last_hash: Mutex<Option<String>>,
 }
 
 impl AuditLog {
@@ -55,6 +64,7 @@ impl AuditLog {
             entries: Arc::new(RwLock::new(VecDeque::with_capacity(max_entries))),
             max_entries,
             log_file: None,
+            last_hash: Mutex::new(None),
         }
     }
 
@@ -72,6 +82,7 @@ impl AuditLog {
             entries: Arc::new(RwLock::new(VecDeque::with_capacity(max_entries))),
             max_entries,
             log_file: Some(log_file),
+            last_hash: Mutex::new(None),
         }
     }
 
@@ -120,23 +131,34 @@ impl AuditLog {
             }
         }
 
-        let mut entries = self.entries.write().await;
-        entries.clear();
-        // Keep only the most recent `max_entries` entries from the file.
-        let start = loaded.len().saturating_sub(self.max_entries);
-        for entry in loaded.into_iter().skip(start) {
-            if entries.len() >= self.max_entries {
-                break;
+        let new_tip = {
+            let mut entries = self.entries.write().await;
+            entries.clear();
+            // Keep only the most recent `max_entries` entries from the file.
+            let start = loaded.len().saturating_sub(self.max_entries);
+            for entry in loaded.into_iter().skip(start) {
+                if entries.len() >= self.max_entries {
+                    break;
+                }
+                entries.push_back(entry);
             }
-            entries.push_back(entry);
-        }
 
-        tracing::info!(loaded = entries.len(), "audit log entries loaded from file");
+            let count = entries.len();
+            // Restore the chain tip so subsequent records link to the last loaded entry.
+            let tip = entries.back().map(compute_entry_hash);
+            tracing::info!(loaded = count, "audit log entries loaded from file");
+            tip
+        };
+        *self.last_hash.lock().await = new_tip;
     }
 
     /// Record a new audit entry. If the buffer is at capacity, the oldest
     /// entry is evicted (FIFO ring-buffer semantics). When a log file is
     /// configured, the entry is also appended as NDJSON to disk.
+    ///
+    /// Each entry is linked to its predecessor via a SHA-256 hash stored in
+    /// `prev_hash`, forming a tamper-evident chain. The chain tip is tracked
+    /// in `last_hash` so the next record can extend it.
     pub async fn record(
         &self,
         action: &str,
@@ -144,13 +166,20 @@ impl AuditLog {
         target: &str,
         details: serde_json::Value,
     ) {
+        // Link this entry to the chain tip before inserting.
+        let prev_hash = self.last_hash.lock().await.clone();
         let entry = AuditEntry {
             timestamp: Utc::now(),
             action: action.to_string(),
             actor: actor.to_string(),
             target: target.to_string(),
             details,
+            prev_hash,
         };
+
+        // Compute this entry's hash and advance the chain tip.
+        let computed = compute_entry_hash(&entry);
+        *self.last_hash.lock().await = Some(computed);
 
         if let Some(ref path) = self.log_file {
             let line = match serde_json::to_string(&entry) {
@@ -197,6 +226,32 @@ impl AuditLog {
     /// Clear all audit entries.
     pub async fn clear(&self) {
         self.entries.write().await.clear();
+        *self.last_hash.lock().await = None;
+    }
+
+    /// Verify the integrity of the hash chain across all stored entries.
+    ///
+    /// Returns `true` when every entry's `prev_hash` matches the hash
+    /// recomputed from its predecessor. The oldest entry in the buffer is
+    /// treated as the chain root (its `prev_hash` is not checked against a
+    /// missing predecessor, which naturally happens when older entries have
+    /// been evicted by the ring buffer).
+    pub async fn verify_chain(&self) -> bool {
+        let entries = self.entries.read().await;
+        if entries.len() <= 1 {
+            return true;
+        }
+
+        let mut iter = entries.iter();
+        let mut prev_hash = compute_entry_hash(iter.next().expect("at least one entry"));
+
+        for entry in iter {
+            if entry.prev_hash.as_deref() != Some(prev_hash.as_str()) {
+                return false;
+            }
+            prev_hash = compute_entry_hash(entry);
+        }
+        true
     }
 }
 
@@ -220,6 +275,38 @@ impl AuditLog {
         file.write_all(b"\n").await?;
         Ok(())
     }
+}
+
+// ─── Hash chain helpers ────────────────────────────────
+
+/// Compute the SHA-256 hash of an audit entry for chain verification.
+///
+/// The digest covers `timestamp || action || target || details || prev_hash`,
+/// matching the formula used by [`AuditLog::record`]. The `actor` field is
+/// intentionally excluded to match the chain spec.
+fn compute_entry_hash(entry: &AuditEntry) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(entry.timestamp.to_rfc3339().as_bytes());
+    hasher.update(b"|");
+    hasher.update(entry.action.as_bytes());
+    hasher.update(b"|");
+    hasher.update(entry.target.as_bytes());
+    hasher.update(b"|");
+    // Canonical JSON so key ordering does not change the hash.
+    if let Ok(canonical) = serde_json::to_string(&entry.details) {
+        hasher.update(canonical.as_bytes());
+    }
+    hasher.update(b"|");
+    if let Some(ref ph) = entry.prev_hash {
+        hasher.update(ph.as_bytes());
+    }
+    let result = hasher.finalize();
+    // Hex-encode the digest.
+    let mut out = String::with_capacity(64);
+    for byte in result {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
 }
 
 // ─── Admin Endpoint ─────────────────────────────────────
@@ -563,5 +650,70 @@ mod tests {
         log.record("action", "actor", "t", json!({})).await;
         let entries = log.list(None).await;
         assert_eq!(entries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn hash_chain_verifies_intact_entries() {
+        let log = AuditLog::new(100);
+        log.record("channel.create", "alice", "ch-1", json!({"v": 1}))
+            .await;
+        log.record("channel.update", "bob", "ch-1", json!({"v": 2}))
+            .await;
+        log.record("channel.delete", "carol", "ch-1", json!({"v": 3}))
+            .await;
+
+        // Three intact entries should form a verifiable chain.
+        assert!(
+            log.verify_chain().await,
+            "chain should be valid for untampered entries"
+        );
+    }
+
+    #[tokio::test]
+    async fn hash_chain_detects_tamper() {
+        let log = AuditLog::new(100);
+        log.record("channel.create", "alice", "ch-1", json!({"v": 1}))
+            .await;
+        log.record("channel.update", "bob", "ch-1", json!({"v": 2}))
+            .await;
+        log.record("channel.delete", "carol", "ch-1", json!({"v": 3}))
+            .await;
+
+        // Sanity check before tampering.
+        assert!(log.verify_chain().await);
+
+        // Tamper with the middle entry's details (newest-first ordering means
+        // entries[1] is the middle one in chronological order).
+        {
+            let mut entries = log.entries.write().await;
+            if let Some(mid) = entries.get_mut(1) {
+                mid.details = json!({"v": 999});
+            }
+        }
+
+        assert!(
+            !log.verify_chain().await,
+            "chain should be broken after tampering"
+        );
+    }
+
+    #[tokio::test]
+    async fn hash_chain_prev_hash_links_entries() {
+        let log = AuditLog::new(100);
+        log.record("a", "x", "t1", json!({})).await;
+        log.record("b", "x", "t2", json!({})).await;
+
+        let entries = log.list(None).await;
+        // Newest first: entries[0] = "b", entries[1] = "a"
+        // The newest entry's prev_hash should be Some(...) — the hash of "a".
+        assert!(
+            entries[0].prev_hash.is_some(),
+            "second entry should link to the first"
+        );
+        // The first recorded entry has no predecessor.
+        assert!(
+            entries[1].prev_hash.is_none(),
+            "first entry should have no prev_hash"
+        );
     }
 }

@@ -416,11 +416,11 @@ fn spawn_persistence_tasks(state: &Arc<AppState>) {
         });
     }
 
-    // Periodic quota persistence (every 60s)
+    // Periodic quota persistence (every 10s)
     {
         let persist_quota = Arc::clone(&state.billing.quota_store);
         spawn_bg(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
             loop {
                 interval.tick().await;
                 persist_quota.persist_to_file().await;
@@ -441,11 +441,11 @@ fn spawn_persistence_tasks(state: &Arc<AppState>) {
         });
     }
 
-    // Periodic virtual key persistence (every 60s)
+    // Periodic virtual key persistence (every 10s)
     {
         let persist_vk = Arc::clone(&state.billing.virtual_key_store);
         spawn_bg(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
             loop {
                 interval.tick().await;
                 if let Err(e) = persist_vk.persist().await {
@@ -467,11 +467,11 @@ fn spawn_persistence_tasks(state: &Arc<AppState>) {
         });
     }
 
-    // Periodic provider budget persistence (every 60s)
+    // Periodic provider budget persistence (every 10s)
     {
         let persist_pb = Arc::clone(&state.billing.provider_budgets);
         spawn_bg(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
             loop {
                 interval.tick().await;
                 if let Err(e) = persist_pb.persist().await {
@@ -855,6 +855,15 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
         )
 }
 
+/// Portal routes — employee self-service, authenticated by virtual key.
+/// These are NOT protected by admin_auth_middleware.
+fn portal_routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/api/portal/usage", get(admin::portal::portal_usage))
+        .route("/api/portal/logs", get(admin::portal::portal_logs))
+        .route("/api/portal/test", get(admin::portal::portal_test))
+}
+
 /// Build the Axum Router with all proxy and admin routes.
 /// Proxy routes use optional virtual-key auth (pass-through when no keys configured);
 /// admin routes use optional Bearer token auth.
@@ -940,6 +949,7 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
     let base_router = Router::new()
         .merge(proxy_router)
         .merge(admin_router)
+        .merge(portal_routes().with_state(Arc::clone(&state)))
         .route("/metrics", get(metrics_handler))
         .route("/v1/metrics", get(metrics_handler))
         .route("/healthz", get(healthz_handler));
