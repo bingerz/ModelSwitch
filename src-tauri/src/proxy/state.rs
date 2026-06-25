@@ -1,3 +1,4 @@
+use crate::admin::audit::AuditLog;
 use crate::channel::manager::ChannelManager;
 use crate::credential::SharedCredentialStore;
 use crate::log::DispatchLogger;
@@ -89,6 +90,7 @@ pub struct AppState {
     pub channel_mgr: Arc<ChannelManager>,
     pub credential_store: SharedCredentialStore,
     pub logger: Arc<DispatchLogger>,
+    pub audit_log: Arc<AuditLog>,
     pub http_pool: crate::http_pool::HttpPool,
     pub model_registry: Arc<StdRwLock<ModelRegistry>>,
     pub gateway: ProxyParams,

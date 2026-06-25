@@ -110,6 +110,7 @@ pub(crate) fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppSt
         channel_mgr,
         credential_store,
         logger,
+        audit_log: Arc::new(crate::admin::audit::AuditLog::with_default_capacity()),
         http_pool,
         model_registry: Arc::new(parking_lot::RwLock::new(ModelRegistry::new())),
         gateway: ProxyParams {

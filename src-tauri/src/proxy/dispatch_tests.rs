@@ -190,6 +190,7 @@ fn build_test_state_with_opts(
         channel_mgr,
         credential_store,
         logger,
+        audit_log: Arc::new(crate::admin::audit::AuditLog::with_default_capacity()),
         http_pool,
         gateway: ProxyParams {
             request_timeout_secs: Some(30),

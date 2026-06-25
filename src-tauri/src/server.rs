@@ -1,6 +1,7 @@
 //! Gateway server bootstrap: services initialization, Axum router, and start.
 
 use crate::admin;
+use crate::admin::audit::AuditLog;
 use crate::channel::manager::ChannelManager;
 use crate::config;
 use crate::config::AppConfig;
@@ -143,6 +144,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         channel_mgr: Arc::clone(&channel_mgr),
         credential_store,
         logger: Arc::clone(&logger),
+        audit_log: Arc::new(AuditLog::with_default_capacity()),
         http_pool: http_pool.clone(),
         model_registry: Arc::new(parking_lot::RwLock::new(ModelRegistry::new())),
         gateway: ProxyParams {
@@ -642,6 +644,7 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
             delete(admin::delete_provider_budget),
         )
         .route("/api/gateway/info", get(admin::gateway_info))
+        .route("/api/audit-log", get(admin::get_audit_log))
         .with_state(admin_route_state)
         .layer(axum::middleware::from_fn_with_state(
             admin_auth_state,

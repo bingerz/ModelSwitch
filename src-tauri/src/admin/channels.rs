@@ -164,6 +164,18 @@ pub async fn create_channel(
 
     let created = state.channel_mgr.create(channel).await;
     state.channel_mgr.persist().await;
+    state
+        .audit_log
+        .record(
+            "channel.create",
+            "admin-api",
+            &created.id.to_string(),
+            serde_json::json!({
+                "name": created.name,
+                "provider": format!("{:?}", created.provider),
+            }),
+        )
+        .await;
     Ok(Json(ApiResponse::ok(created)))
 }
 
@@ -230,6 +242,19 @@ pub async fn update_channel(
     match result {
         Some(channel) => {
             state.channel_mgr.persist().await;
+            state
+                .audit_log
+                .record(
+                    "channel.update",
+                    "admin-api",
+                    &id.to_string(),
+                    serde_json::json!({
+                        "name": channel.name,
+                        "provider": format!("{:?}", channel.provider),
+                        "enabled": channel.enabled,
+                    }),
+                )
+                .await;
             Ok(Json(ApiResponse::ok(channel)))
         }
         None => Err(ApiError::new(StatusCode::NOT_FOUND, "Channel not found")),
@@ -240,6 +265,14 @@ pub async fn delete_channel(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> axum::response::Response {
+    // Capture channel name for audit before deletion
+    let channel_name = state
+        .channel_mgr
+        .get(id)
+        .await
+        .map(|ch| ch.name)
+        .unwrap_or_default();
+
     // Clean up credential before deleting
     if let Some(channel) = state.channel_mgr.get(id).await {
         let username = &channel.credential.key_ref;
@@ -252,6 +285,17 @@ pub async fn delete_channel(
         state.billing.quota_store.delete(id).await;
         state.router.cooldown_tracker.remove(id);
         state.channel_mgr.persist().await;
+        state
+            .audit_log
+            .record(
+                "channel.delete",
+                "admin-api",
+                &id.to_string(),
+                serde_json::json!({
+                    "name": channel_name,
+                }),
+            )
+            .await;
         StatusCode::NO_CONTENT.into_response()
     } else {
         ApiError::new(StatusCode::NOT_FOUND, "Channel not found")

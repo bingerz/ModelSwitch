@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod auth;
 pub mod channels;
 pub mod mcp;
@@ -39,6 +40,7 @@ fn default_limit() -> usize {
 
 // ─── Re-exports ────────────────────────────────────────
 
+pub use audit::*;
 pub use auth::*;
 pub use channels::*;
 pub use mcp::*;
