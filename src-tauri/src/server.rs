@@ -40,6 +40,110 @@ use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
+/// Interval at which the TLS reload watcher polls cert/key files on disk.
+const TLS_RELOAD_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Tracks TLS certificate state for hot-reload.
+///
+/// The gateway uses this to detect when on-disk cert/key files have been
+/// rotated, so it can warn operators that a restart is required to pick up
+/// the new credentials. Full live reload (rebuilding the acceptor without
+/// dropping connections) is not yet implemented; for now we only detect and
+/// log.
+#[derive(Debug, Clone)]
+pub struct TlsReloadState {
+    pub cert_path: std::path::PathBuf,
+    pub key_path: std::path::PathBuf,
+    pub last_modified: Option<std::time::SystemTime>,
+}
+
+impl TlsReloadState {
+    /// Create new reload state that will establish its baseline on the first
+    /// call to [`check_cert_freshness`].
+    pub fn new(cert_path: std::path::PathBuf, key_path: std::path::PathBuf) -> Self {
+        Self {
+            cert_path,
+            key_path,
+            last_modified: None,
+        }
+    }
+}
+
+/// Check whether the TLS cert/key files have been modified since the last call.
+///
+/// Reads the modification time of both files, compares against the previously
+/// recorded `last_modified` timestamp, and updates `last_modified` to the
+/// newer of the two current mtimes. Returns `true` if either file is newer
+/// than what was previously recorded.
+///
+/// On the first call (when `last_modified` is `None`), this establishes the
+/// baseline and returns `false` — there is no previous state to compare
+/// against, so we do not want to flag a spurious "change" on startup.
+pub fn check_cert_freshness(state: &mut TlsReloadState) -> bool {
+    let cert_mtime = std::fs::metadata(&state.cert_path)
+        .and_then(|m| m.modified())
+        .ok();
+    let key_mtime = std::fs::metadata(&state.key_path)
+        .and_then(|m| m.modified())
+        .ok();
+
+    let latest = match (cert_mtime, key_mtime) {
+        (Some(c), Some(k)) => Some(c.max(k)),
+        (Some(c), None) => Some(c),
+        (None, Some(k)) => Some(k),
+        (None, None) => None,
+    };
+
+    let changed = match (state.last_modified, latest) {
+        (Some(prev), Some(curr)) => curr > prev,
+        _ => false,
+    };
+
+    state.last_modified = latest;
+    changed
+}
+
+/// Start a background watcher that polls cert/key files for changes every
+/// [`TLS_RELOAD_POLL_INTERVAL`] seconds.
+///
+/// When a change is detected, logs a warning. Actually reloading TLS requires
+/// rebuilding the acceptor state, which is complex. For now, we only detect
+/// and warn so operators know a restart is needed.
+///
+/// Exits cleanly when the `shutdown` watch receives `true` or the sender is
+/// dropped.
+pub fn start_tls_reload_watcher(
+    mut state: TlsReloadState,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
+    spawn_bg(async move {
+        // Establish baseline so the first periodic check has something to
+        // compare against. Without this, the first poll would always return
+        // false anyway, but doing it upfront keeps the loop body uniform.
+        check_cert_freshness(&mut state);
+
+        loop {
+            tokio::select! {
+                biased;
+                changed = shutdown.changed() => {
+                    if changed.is_err() || *shutdown.borrow() {
+                        tracing::info!("TLS reload watcher shutting down");
+                        break;
+                    }
+                }
+                _ = tokio::time::sleep(TLS_RELOAD_POLL_INTERVAL) => {
+                    if check_cert_freshness(&mut state) {
+                        tracing::warn!(
+                            "TLS certificate files changed — restart required \
+                             to apply new certificates"
+                        );
+                    }
+                }
+            }
+        }
+    });
+}
+
 /// Build gateway state and start background services.
 /// Callable from both Tauri setup and CLI mode.
 /// If `config_path` is provided, loads config from that path instead of the default.
@@ -1353,5 +1457,96 @@ mod tests {
             body_unversioned, body_versioned,
             "versioned and unversioned /metrics bodies must match"
         );
+    }
+
+    // ----- TLS reload tests -------------------------------------------------
+
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Counter used to generate unique temp file names per test process/run.
+    static TLS_TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// Create a unique temp file under the system temp dir with the given
+    /// extension. Cleans up on test failure is best-effort via explicit
+    /// `remove_file` in each test.
+    fn tls_test_temp_file(ext: &str) -> std::path::PathBuf {
+        let id = TLS_TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch_test_tls_{}_{}.{}",
+            std::process::id(),
+            id,
+            ext
+        ));
+        std::fs::write(&path, b"initial content").expect("create temp file");
+        path
+    }
+
+    /// Bump a file's modification time forward so `check_cert_freshness` can
+    /// detect a change without needing to `sleep` through filesystem mtime
+    /// granularity (which is 1s on many filesystems).
+    fn tls_bump_mtime(path: &std::path::Path) {
+        let future = std::time::SystemTime::now() + std::time::Duration::from_secs(120);
+        let times = std::fs::FileTimes::new().set_modified(future);
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .expect("open file for set_times");
+        f.set_times(times).expect("set file modification time");
+    }
+
+    #[test]
+    fn tls_reload_state_initializes_correctly() {
+        let cert = std::path::PathBuf::from("/nonexistent/cert.pem");
+        let key = std::path::PathBuf::from("/nonexistent/key.pem");
+        let state = TlsReloadState::new(cert.clone(), key.clone());
+        assert_eq!(state.cert_path, cert);
+        assert_eq!(state.key_path, key);
+        assert!(state.last_modified.is_none(), "last_modified should start None");
+    }
+
+    #[test]
+    fn check_cert_freshness_no_change() {
+        let cert = tls_test_temp_file("pem");
+        let key = tls_test_temp_file("key");
+        let mut state = TlsReloadState::new(cert.clone(), key.clone());
+
+        // First call establishes baseline and must not flag a change.
+        let first = check_cert_freshness(&mut state);
+        assert!(!first, "first check should establish baseline (false)");
+
+        // Second call with no modification must also be false.
+        let second = check_cert_freshness(&mut state);
+        assert!(!second, "no modification between checks should return false");
+
+        let _ = std::fs::remove_file(&cert);
+        let _ = std::fs::remove_file(&key);
+    }
+
+    #[test]
+    fn check_cert_freshness_detects_change() {
+        let cert = tls_test_temp_file("pem");
+        let key = tls_test_temp_file("key");
+        let mut state = TlsReloadState::new(cert.clone(), key.clone());
+
+        // Establish baseline.
+        assert!(!check_cert_freshness(&mut state));
+
+        // Bump the cert file's mtime forward.
+        tls_bump_mtime(&cert);
+
+        // Should now detect a change.
+        let detected = check_cert_freshness(&mut state);
+        assert!(detected, "modification should be detected");
+
+        // A subsequent check with no further modification should return false.
+        let again = check_cert_freshness(&mut state);
+        assert!(!again, "no further modification should return false");
+
+        // Modifying the key file should also be detected.
+        tls_bump_mtime(&key);
+        assert!(check_cert_freshness(&mut state), "key modification detected");
+
+        let _ = std::fs::remove_file(&cert);
+        let _ = std::fs::remove_file(&key);
     }
 }
