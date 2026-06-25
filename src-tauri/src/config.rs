@@ -232,6 +232,11 @@ pub struct GatewayConfig {
     /// Notification/alert configuration for budget thresholds and channel events.
     #[serde(default)]
     pub notification: crate::notification::NotificationConfig,
+    /// Rate-limiting algorithm for per-channel RPM/TPM enforcement.
+    /// "sliding_window" (default) uses the existing rolling-window counters.
+    /// "token_bucket" uses a burst-capable token bucket.
+    #[serde(default)]
+    pub rate_limit_algorithm: crate::proxy::rate_limiter::RateLimitAlgorithm,
 }
 
 /// Per-model pricing overrides. When present, these rates override the
@@ -603,6 +608,7 @@ impl Default for GatewayConfig {
             model_pricing: HashMap::new(),
             tls: TlsConfig::default(),
             notification: crate::notification::NotificationConfig::default(),
+            rate_limit_algorithm: crate::proxy::rate_limiter::RateLimitAlgorithm::default(),
         }
     }
 }
