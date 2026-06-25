@@ -370,6 +370,17 @@ impl From<&ChannelConfig> for Channel {
     }
 }
 
+/// Result of an automated connectivity test for a single channel.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChannelTestResult {
+    pub channel_id: Uuid,
+    pub channel_name: String,
+    pub success: bool,
+    pub latency_ms: Option<u64>,
+    pub error: Option<String>,
+    pub tested_at: DateTime<Utc>,
+}
+
 /// Shared channel storage with per-channel locking.
 ///
 /// Outer `tokio::sync::RwLock<HashMap<Uuid, _>>` is held only briefly for
@@ -404,6 +415,96 @@ pub(crate) fn matches_glob(pattern: &str, text: &str) -> bool {
         }
     }
     match_helper(pattern.as_bytes(), text.as_bytes())
+}
+
+/// Perform a basic connectivity check against a channel's base_url.
+///
+/// Tries `/models` then `/health` with a 5-second timeout. Any HTTP response
+/// (even non-2xx) means the server is reachable — we do not validate auth here.
+async fn check_channel_connectivity(base_url: &str) -> Result<(), String> {
+    let base = base_url.trim_end_matches('/');
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+
+    let candidates = [format!("{base}/models"), format!("{base}/health")];
+    let mut last_err = String::new();
+    for url in &candidates {
+        match client.get(url).send().await {
+            Ok(_) => return Ok(()),
+            Err(e) => last_err = e.to_string(),
+        }
+    }
+    Err(format!("connectivity check failed: {last_err}"))
+}
+
+impl manager::ChannelManager {
+    /// Run a lightweight connectivity test on a single channel.
+    ///
+    /// Performs an HTTP check against the channel's `base_url` and updates
+    /// the channel's circuit-breaker status based on the result.
+    pub async fn run_channel_test(&self, id: Uuid) -> ChannelTestResult {
+        let channel = match self.get(id).await {
+            Some(c) => c,
+            None => {
+                return ChannelTestResult {
+                    channel_id: id,
+                    channel_name: String::new(),
+                    success: false,
+                    latency_ms: None,
+                    error: Some("channel not found".to_string()),
+                    tested_at: Utc::now(),
+                };
+            }
+        };
+
+        let start = std::time::Instant::now();
+        let outcome = check_channel_connectivity(&channel.base_url).await;
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        match outcome {
+            Ok(()) => {
+                let mut updated = channel.clone();
+                updated.status = ChannelStatus::Healthy;
+                updated.consecutive_failures = 0;
+                updated.updated_at = Utc::now();
+                self.update(id, updated).await;
+
+                ChannelTestResult {
+                    channel_id: id,
+                    channel_name: channel.name.clone(),
+                    success: true,
+                    latency_ms: Some(latency_ms),
+                    error: None,
+                    tested_at: Utc::now(),
+                }
+            }
+            Err(e) => {
+                self.mark_circuit_open(id).await;
+                ChannelTestResult {
+                    channel_id: id,
+                    channel_name: channel.name.clone(),
+                    success: false,
+                    latency_ms: Some(latency_ms),
+                    error: Some(e),
+                    tested_at: Utc::now(),
+                }
+            }
+        }
+    }
+
+    /// Run connectivity tests on all enabled channels sequentially.
+    pub async fn run_all_tests(&self) -> Vec<ChannelTestResult> {
+        let channels = self.list().await;
+        let mut results = Vec::with_capacity(channels.len());
+        for ch in channels {
+            if ch.enabled {
+                results.push(self.run_channel_test(ch.id).await);
+            }
+        }
+        results
+    }
 }
 
 #[cfg(test)]
@@ -528,5 +629,99 @@ mod tests {
         ch.clean_expired_model_cooldowns();
         assert!(!ch.model_cooldowns.contains_key("expired-model"));
         assert!(ch.model_cooldowns.contains_key("active-model"));
+    }
+
+    // -- Channel auto-test helpers -------------------------------------------
+
+    fn make_test_manager() -> manager::ChannelManager {
+        use crate::config::{AppConfig, GatewayConfig};
+        use crate::credential::file_store::FileCredentialStore;
+
+        let config = AppConfig {
+            gateway: GatewayConfig {
+                circuit_breaker_minutes: 5,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let credential_store: crate::credential::SharedCredentialStore =
+            Arc::new(FileCredentialStore::new());
+        manager::ChannelManager::new(&config, credential_store)
+    }
+
+    // -- Channel auto-test tests ---------------------------------------------
+
+    #[tokio::test]
+    async fn channel_test_returns_error_for_unknown_channel() {
+        let manager = make_test_manager();
+        let unknown_id = Uuid::new_v4();
+
+        let result = manager.run_channel_test(unknown_id).await;
+
+        assert!(!result.success);
+        assert_eq!(result.channel_id, unknown_id);
+        assert!(result.latency_ms.is_none());
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("not found")),
+            "error should mention 'not found': {:?}",
+            result.error
+        );
+    }
+
+    #[tokio::test]
+    async fn channel_test_updates_status_on_success() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        // Mock HTTP server — any GET responds 200 OK.
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let manager = make_test_manager();
+        let id = Uuid::new_v4();
+        let mut channel = test_channel();
+        channel.id = id;
+        channel.base_url = mock_server.uri();
+        channel.status = ChannelStatus::HalfOpen;
+        manager.create(channel).await;
+
+        let result = manager.run_channel_test(id).await;
+        assert!(
+            result.success,
+            "test should succeed: {:?}",
+            result.error
+        );
+        assert!(result.latency_ms.is_some());
+
+        let updated = manager.get(id).await.expect("channel exists");
+        assert_eq!(updated.status, ChannelStatus::Healthy);
+        assert_eq!(updated.consecutive_failures, 0);
+    }
+
+    #[tokio::test]
+    async fn channel_test_updates_status_on_failure() {
+        let manager = make_test_manager();
+        let id = Uuid::new_v4();
+        let mut channel = test_channel();
+        channel.id = id;
+        // Port 1 on loopback — connection refused immediately.
+        channel.base_url = "http://127.0.0.1:1".to_string();
+        channel.status = ChannelStatus::Healthy;
+        manager.create(channel).await;
+
+        let result = manager.run_channel_test(id).await;
+
+        assert!(!result.success);
+        assert!(result.error.is_some());
+        assert!(result.latency_ms.is_some());
+
+        let updated = manager.get(id).await.expect("channel exists");
+        assert_eq!(updated.status, ChannelStatus::CircuitOpen);
     }
 }
