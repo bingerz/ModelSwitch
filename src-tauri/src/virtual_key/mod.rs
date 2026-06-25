@@ -289,6 +289,32 @@ impl VirtualKeyStore {
         Some(vk.clone())
     }
 
+    /// Authenticate a plaintext key without enforcing enabled/expired/budget
+    /// checks. Returns the [`VirtualKey`] if the hash matches, regardless of
+    /// whether the key is currently disabled, expired, or over budget.
+    ///
+    /// Used by the self-service portal so employees can view their key status
+    /// even when the key is inactive.
+    pub async fn validate_any(&self, plaintext: &str) -> Option<VirtualKey> {
+        let prefix = plaintext.get(..16).unwrap_or(plaintext);
+        let id = {
+            let index = self.prefix_index.read();
+            index.get(prefix).copied()
+        }?;
+
+        let hash = sha256_hex(plaintext);
+        let hash_bytes = hash.into_bytes();
+        let keys = self.store.read().await;
+        let vk = keys.get(&id)?;
+        let stored = vk.key_hash.as_bytes();
+        let matched = stored.len() == hash_bytes.len() && bool::from(stored.ct_eq(&hash_bytes));
+        if matched {
+            Some(vk.clone())
+        } else {
+            None
+        }
+    }
+
     /// Create a new virtual key. Returns `(VirtualKey, plaintext_key)`.
     /// The plaintext is shown to the user once and never stored.
     #[allow(clippy::too_many_arguments)]

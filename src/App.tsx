@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { type GwStatus, invokeTauri, isTauri } from "./lib/api";
 import { ToastProvider, useToast } from "./components/Toast";
 import { LoginPage } from "./components/LoginPage";
+import { Portal } from "./components/Portal";
 import { ChannelPanel } from "./components/channel/ChannelPanel";
 import { LogViewer } from "./components/LogViewer";
 import { StatusBar } from "./components/StatusBar";
@@ -24,6 +25,12 @@ import { QuotaProvider } from "./hooks/useQuota";
 
 type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "logs" | "cost" | "quota" | "settings" | "audit" | "redemption" | "metrics" | "guardrails" | "notifications" | "registry";
 type Theme = "light" | "dark";
+
+// Route check: if the URL path starts with /portal, render the employee
+// self-service portal instead of the admin console.
+function isPortalRoute(): boolean {
+  return window.location.pathname.startsWith("/portal");
+}
 
 function getTabGroups(t: (key: string) => string): { title: string; tabs: { id: TabId; label: string }[] }[] {
   return [
@@ -278,6 +285,12 @@ function AppInner() {
 }
 
 export default function App() {
+  // Employee self-service portal — rendered when URL path starts with /portal.
+  // The portal authenticates via the employee's virtual key, not admin token.
+  if (isPortalRoute()) {
+    return <Portal />;
+  }
+
   return (
     <ToastProvider>
       <QuotaProvider>

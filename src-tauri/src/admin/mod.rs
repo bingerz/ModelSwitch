@@ -3,6 +3,7 @@ pub mod auth;
 pub mod channels;
 pub mod features;
 pub mod mcp;
+pub mod portal;
 pub mod provider_budgets;
 pub mod system;
 pub mod virtual_keys;
