@@ -2,6 +2,7 @@ mod admin;
 mod channel;
 pub mod config;
 pub mod credential;
+pub mod guardrails;
 mod health;
 pub mod http_pool;
 mod log;
