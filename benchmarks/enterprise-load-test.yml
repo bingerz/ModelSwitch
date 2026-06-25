@@ -1,0 +1,37 @@
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+
+export const options = {
+  stages: [
+    { duration: '30s', target: 100 },   // ramp up to 100 users
+    { duration: '1m', target: 500 },     // ramp up to 500 users
+    { duration: '2m', target: 1000 },    // ramp up to 1000 users
+    { duration: '5m', target: 1000 },    // stay at 1000 users
+    { duration: '30s', target: 0 },       // ramp down
+  ],
+  thresholds: {
+    http_req_duration: ['p(99)<500'],    // 99% of requests < 500ms
+    http_req_failed: ['rate<0.05'],       // error rate < 5%
+  },
+};
+
+export default function () {
+  const params = {
+    headers: {
+      'Authorization': `Bearer ${__ENV.VIRTUAL_KEY}`,
+      'Content-Type': 'application/json',
+    },
+  };
+  const payload = JSON.stringify({
+    model: 'deepseek-chat',
+    messages: [{ role: 'user', content: 'Hello' }],
+    max_tokens: 10,
+  });
+
+  const res = http.post(`${__ENV.BASE_URL}/v1/chat/completions`, payload, params);
+  check(res, {
+    'status is 200': (r) => r.status === 200,
+    'response time < 500ms': (r) => r.timings.duration < 500,
+  });
+  sleep(1);
+}

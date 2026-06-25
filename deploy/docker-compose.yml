@@ -5,8 +5,13 @@
 # 使用方式:
 #   1. 复制 .env.example 为 .env 并填写真实的 ADMIN_TOKEN
 #   2. 将 config.toml 放到 ~/.config/modelswitch/config.toml
-#   3. docker compose up -d
-#   4. 健康检查: curl http://localhost:8080/healthz
+#   3. 设置 MODELSWITCH_VERSION 环境变量 (默认 latest)
+#   4. docker compose up -d
+#   5. 健康检查: curl http://localhost:8080/healthz
+#
+# 版本管理:
+#   - 生产环境固定版本:  MODELSWITCH_VERSION=v1.2.3 docker compose up -d
+#   - 回滚到旧版本:      MODELSWITCH_VERSION=v1.2.2 docker compose up -d
 # ══════════════════════════════════════════════════════════════════════
 
 # ── 网络定义 ────────────────────────────────────────────────────────────
@@ -19,10 +24,16 @@ networks:
 # ── 服务定义 ────────────────────────────────────────────────────────────
 services:
   modelswitch:
-    # 使用项目根目录的 Dockerfile 构建
-    build:
-      context: ..
-      dockerfile: Dockerfile
+    # 镜像版本 — 通过环境变量控制, 避免使用 latest 导致不可控更新
+    # 生产环境请在 .env 中固定版本号, 如: MODELSWITCH_VERSION=v1.2.3
+    image: modelswitch:${MODELSWITCH_VERSION:-latest}
+
+    # 本地构建时使用 (注释掉 image 行并取消下方注释)
+    # build:
+    #   context: ..
+    #   dockerfile: Dockerfile
+    #   args:
+    #     - VERSION=${MODELSWITCH_VERSION:-latest}
 
     # 容器名称, 便于日志与监控识别
     container_name: modelswitch

@@ -1,4 +1,7 @@
 # ── Build stage ─────────────────────────────────────────────
+# VERSION arg allows CI to inject a semver tag (e.g. v1.2.3).
+# Usage: docker build --build-arg VERSION=v1.2.3 -t modelswitch:v1.2.3 .
+ARG VERSION=latest
 FROM rust:1.82-bookworm AS builder
 
 WORKDIR /usr/src/modelswitch
@@ -14,7 +17,14 @@ RUN touch src/bin/cli.rs src/lib.rs && \
     cargo build --bin modelswitch-cli --release --no-default-features
 
 # ── Runtime stage ───────────────────────────────────────────
+# Re-declare VERSION so it is visible in this stage for labeling.
+ARG VERSION=latest
 FROM debian:bookworm-slim
+
+LABEL version="${VERSION}"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.title="ModelSwitch"
+LABEL org.opencontainers.image.description="Enterprise LLM Gateway"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates && \
