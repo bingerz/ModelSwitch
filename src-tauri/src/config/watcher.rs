@@ -1,5 +1,5 @@
 use crate::channel::{manager::ChannelManager, Channel, CredentialType};
-use crate::config::{AppConfig, ChannelConfig};
+use crate::config::{AppConfig, ChannelConfig, GatewayConfig};
 use crate::mcp::McpManager;
 use crate::proxy::payload_rules::ChannelPayloadRules;
 use crate::proxy::rate_limiter::RateLimiter;
@@ -7,6 +7,11 @@ use notify::Watcher;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+/// Generic change detector for any `PartialEq` type.
+fn config_changed<T: PartialEq>(old: &T, new: &T) -> bool {
+    old != new
+}
 
 /// Compute which channels were added, removed, or changed.
 #[derive(Debug)]
@@ -28,7 +33,7 @@ fn diff_channels(old: &[ChannelConfig], new: &[ChannelConfig]) -> ChannelDiff {
     for c in new {
         match old_map.get(c.id.as_str()) {
             None => added.push(c.clone()),
-            Some(old_c) if config_changed(old_c, c) => updated.push(c.clone()),
+            Some(old_c) if channel_config_changed(old_c, c) => updated.push(c.clone()),
             _ => {} // unchanged
         }
     }
@@ -48,7 +53,7 @@ fn diff_channels(old: &[ChannelConfig], new: &[ChannelConfig]) -> ChannelDiff {
 
 /// Check if a channel's config has meaningfully changed.
 /// Compares fields that affect routing behavior.
-fn config_changed(old: &ChannelConfig, new: &ChannelConfig) -> bool {
+fn channel_config_changed(old: &ChannelConfig, new: &ChannelConfig) -> bool {
     old.name != new.name
         || old.provider != new.provider
         || old.priority != new.priority
@@ -71,7 +76,7 @@ fn config_changed(old: &ChannelConfig, new: &ChannelConfig) -> bool {
 }
 
 /// Convert a runtime `Channel` back into a `ChannelConfig` for diffing.
-/// Only fields used by `config_changed` need to be accurate; runtime-only
+/// Only fields used by `channel_config_changed` need to be accurate; runtime-only
 /// fields (payload_rules, quota) are set to `None`.
 fn channel_to_config(ch: &Channel) -> ChannelConfig {
     ChannelConfig {
@@ -197,6 +202,125 @@ pub(crate) async fn apply_config_reload(
     tracing::info!("Rate limits and payload rules reloaded");
 }
 
+/// Summary of gateway-level runtime config changes detected during hot-reload.
+#[derive(Debug, Default)]
+pub(crate) struct RuntimeReloadSummary {
+    pub rate_limit_algorithm_changed: bool,
+    pub routing_strategy_changed: bool,
+    pub notification_changed: bool,
+    pub timeout_changed: bool,
+    pub retry_changed: bool,
+    pub cache_changed: bool,
+    pub any_changed: bool,
+}
+
+/// Detect and log gateway-level config changes beyond channels and MCP servers.
+///
+/// This function only detects and logs changes — it does NOT mutate runtime
+/// state. Many of these fields require a restart to take effect.
+pub(crate) fn apply_runtime_config(
+    prev: &GatewayConfig,
+    new: &GatewayConfig,
+) -> RuntimeReloadSummary {
+    // --- Fields using PartialEq (use generic config_changed) ---
+
+    let rate_limit_algorithm_changed =
+        config_changed(&prev.rate_limit_algorithm, &new.rate_limit_algorithm);
+    let routing_strategy_changed =
+        config_changed(&prev.routing_strategy, &new.routing_strategy);
+
+    let timeout_changed = config_changed(&prev.request_timeout_secs, &new.request_timeout_secs)
+        || config_changed(&prev.http_timeout_secs, &new.http_timeout_secs)
+        || config_changed(&prev.stream_keepalive_secs, &new.stream_keepalive_secs)
+        || config_changed(&prev.stream_ttft_timeout_secs, &new.stream_ttft_timeout_secs);
+
+    let retry_changed = config_changed(&prev.max_retries, &new.max_retries)
+        || config_changed(&prev.retry_base_ms, &new.retry_base_ms)
+        || config_changed(&prev.retry_max_ms, &new.retry_max_ms);
+
+    let cache_changed = config_changed(&prev.cache_ttl_secs, &new.cache_ttl_secs)
+        || config_changed(&prev.max_cache_entries, &new.max_cache_entries)
+        || config_changed(&prev.cache_mode, &new.cache_mode);
+
+    // --- NotificationConfig does not impl PartialEq — compare field-by-field ---
+
+    let notification_changed = config_changed(
+        &prev.notification.webhook_url,
+        &new.notification.webhook_url,
+    ) || config_changed(
+        &prev.notification.webhook_secret,
+        &new.notification.webhook_secret,
+    ) || config_changed(
+        &prev.notification.bark_url,
+        &new.notification.bark_url,
+    ) || config_changed(
+        &prev.notification.budget_threshold_pct,
+        &new.notification.budget_threshold_pct,
+    );
+
+    // --- Log each detected change ---
+
+    if rate_limit_algorithm_changed {
+        tracing::info!(
+            "Hot-reloaded rate limit algorithm: {:?}",
+            new.rate_limit_algorithm
+        );
+    }
+    if routing_strategy_changed {
+        tracing::info!(
+            "Hot-reloaded routing strategy: {:?}",
+            new.routing_strategy
+        );
+    }
+    if notification_changed {
+        tracing::info!(
+            "Hot-reloaded notification config: webhook_url={:?}, bark_url={:?}",
+            new.notification.webhook_url,
+            new.notification.bark_url
+        );
+    }
+    if timeout_changed {
+        tracing::info!(
+            "Hot-reloaded timeout config: request_timeout_secs={:?}, http_timeout_secs={}",
+            new.request_timeout_secs,
+            new.http_timeout_secs
+        );
+    }
+    if retry_changed {
+        tracing::info!(
+            "Hot-reloaded retry config: max_retries={}, base_ms={}, max_ms={}",
+            new.max_retries,
+            new.retry_base_ms,
+            new.retry_max_ms
+        );
+    }
+    if cache_changed {
+        tracing::info!(
+            "Hot-reloaded cache config: ttl={}s, max_entries={}, mode={}",
+            new.cache_ttl_secs,
+            new.max_cache_entries,
+            new.cache_mode
+        );
+    }
+
+    let any_changed = rate_limit_algorithm_changed
+        || routing_strategy_changed
+        || notification_changed
+        || timeout_changed
+        || retry_changed
+        || cache_changed;
+
+    RuntimeReloadSummary {
+        rate_limit_algorithm_changed,
+        routing_strategy_changed,
+        notification_changed,
+        timeout_changed,
+        retry_changed,
+        cache_changed,
+        any_changed,
+    }
+}
+
 /// Watch the config file for changes and reload channels and MCP servers when modified.
 pub fn start_config_watcher(
     config_path: PathBuf,
@@ -235,6 +359,7 @@ pub fn start_config_watcher(
             .ok()
             .and_then(|m| m.modified().ok())
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let mut last_config: Option<AppConfig> = None;
 
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -255,6 +380,17 @@ pub fn start_config_watcher(
                                     &payload_rules,
                                 )
                                 .await;
+
+                                // Detect and log gateway-level config changes
+                                if let Some(ref last) = last_config {
+                                    let summary = apply_runtime_config(&last.gateway, &new_config.gateway);
+                                    if summary.any_changed {
+                                        tracing::info!(
+                                            "Gateway runtime config changes detected — some require restart"
+                                        );
+                                    }
+                                }
+                                last_config = Some(new_config);
                             }
                             Err(e) => {
                                 tracing::error!(error = %e, "Failed to reload config");
@@ -869,134 +1005,134 @@ tpm_limit = 10000
     }
 
     #[test]
-    fn config_changed_returns_false_for_identical_configs() {
+    fn channel_config_changed_returns_false_for_identical_configs() {
         let cc = make_channel_config("chan-1", "alpha", "https://a.com", 1);
-        assert!(!config_changed(&cc, &cc));
+        assert!(!channel_config_changed(&cc, &cc));
     }
 
     #[test]
-    fn config_changed_detects_name_change() {
+    fn channel_config_changed_detects_name_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.name = "beta".to_string();
-        assert!(config_changed(&old, &new));
+        assert!(channel_config_changed(&old, &new));
     }
 
     #[test]
-    fn config_changed_detects_priority_change() {
+    fn channel_config_changed_detects_priority_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.priority = 5;
-        assert!(config_changed(&old, &new));
+        assert!(channel_config_changed(&old, &new));
     }
 
     #[test]
-    fn config_changed_detects_weight_change() {
+    fn channel_config_changed_detects_weight_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.weight = 200;
-        assert!(config_changed(&old, &new));
+        assert!(channel_config_changed(&old, &new));
     }
 
     #[test]
-    fn config_changed_detects_enabled_change() {
+    fn channel_config_changed_detects_enabled_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.enabled = false;
-        assert!(config_changed(&old, &new));
+        assert!(channel_config_changed(&old, &new));
     }
 
     #[test]
-    fn config_changed_detects_base_url_change() {
+    fn channel_config_changed_detects_base_url_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.base_url = "https://b.com".to_string();
-        assert!(config_changed(&old, &new));
+        assert!(channel_config_changed(&old, &new));
     }
 
     #[test]
-    fn config_changed_detects_api_key_change() {
+    fn channel_config_changed_detects_api_key_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.api_key = Some("sk-different".to_string());
-        assert!(config_changed(&old, &new));
+        assert!(channel_config_changed(&old, &new));
     }
 
     #[test]
-    fn config_changed_detects_rpm_limit_change() {
+    fn channel_config_changed_detects_rpm_limit_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.rpm_limit = Some(60);
-        assert!(config_changed(&old, &new));
+        assert!(channel_config_changed(&old, &new));
     }
 
     #[test]
-    fn config_changed_detects_proxy_url_change() {
+    fn channel_config_changed_detects_proxy_url_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.proxy_url = Some("socks5://proxy:1080".to_string());
-        assert!(config_changed(&old, &new));
+        assert!(channel_config_changed(&old, &new));
     }
 
     #[test]
-    fn config_changed_detects_model_mapping_change() {
+    fn channel_config_changed_detects_model_mapping_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.model_mapping
             .insert("gpt-4".to_string(), "gpt-4-turbo".to_string());
-        assert!(config_changed(&old, &new));
+        assert!(channel_config_changed(&old, &new));
     }
 
     #[test]
-    fn config_changed_detects_api_keys_change() {
+    fn channel_config_changed_detects_api_keys_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.api_keys.push("sk-extra".to_string());
-        assert!(config_changed(&old, &new));
+        assert!(channel_config_changed(&old, &new));
     }
 
     #[test]
-    fn config_changed_detects_excluded_models_change() {
+    fn channel_config_changed_detects_excluded_models_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.excluded_models.push("*-preview".to_string());
-        assert!(config_changed(&old, &new));
+        assert!(channel_config_changed(&old, &new));
     }
 
     #[test]
-    fn config_changed_detects_max_concurrent_change() {
+    fn channel_config_changed_detects_max_concurrent_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.max_concurrent = Some(10);
-        assert!(config_changed(&old, &new));
+        assert!(channel_config_changed(&old, &new));
     }
 
     #[test]
-    fn config_changed_detects_credential_ref_change() {
+    fn channel_config_changed_detects_credential_ref_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.credential_ref = "different-key".to_string();
-        assert!(config_changed(&old, &new));
+        assert!(channel_config_changed(&old, &new));
     }
 
     #[test]
-    fn config_changed_detects_provider_change() {
+    fn channel_config_changed_detects_provider_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.provider = "anthropic".to_string();
-        assert!(config_changed(&old, &new));
+        assert!(channel_config_changed(&old, &new));
     }
 
     #[test]
-    fn config_changed_detects_tpm_limit_change() {
+    fn channel_config_changed_detects_tpm_limit_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.tpm_limit = Some(10000);
-        assert!(config_changed(&old, &new));
+        assert!(channel_config_changed(&old, &new));
     }
 
     #[test]
-    fn config_changed_ignores_payload_rules_change() {
+    fn channel_config_changed_ignores_payload_rules_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.payload_rules = Some(crate::config::PayloadRulesConfig {
@@ -1005,12 +1141,12 @@ tpm_limit = 10000
             strip: vec!["temperature".to_string()],
             model_rules: vec![],
         });
-        // payload_rules is not compared by config_changed
-        assert!(!config_changed(&old, &new));
+        // payload_rules is not compared by channel_config_changed
+        assert!(!channel_config_changed(&old, &new));
     }
 
     #[test]
-    fn config_changed_ignores_quota_change() {
+    fn channel_config_changed_ignores_quota_change() {
         let old = make_channel_config("chan-1", "alpha", "https://a.com", 1);
         let mut new = old.clone();
         new.quota = Some(crate::config::QuotaConfig {
@@ -1022,7 +1158,51 @@ tpm_limit = 10000
             auth_prefix: None,
             refresh_secs: None,
         });
-        // quota is not compared by config_changed
-        assert!(!config_changed(&old, &new));
+        // quota is not compared by channel_config_changed
+        assert!(!channel_config_changed(&old, &new));
+    }
+
+    // -- Runtime config change detection tests -------------------------------
+
+    #[test]
+    fn apply_runtime_config_detects_algorithm_change() {
+        let mut prev = GatewayConfig::default();
+        let mut new = GatewayConfig::default();
+        new.rate_limit_algorithm = crate::proxy::rate_limiter::RateLimitAlgorithm::TokenBucket;
+
+        let summary = apply_runtime_config(&prev, &new);
+        assert!(summary.rate_limit_algorithm_changed);
+        assert!(summary.any_changed);
+
+        // sanity check: prev is still the default
+        prev.rate_limit_algorithm = crate::proxy::rate_limiter::RateLimitAlgorithm::TokenBucket;
+        let summary2 = apply_runtime_config(&prev, &new);
+        assert!(!summary2.rate_limit_algorithm_changed);
+    }
+
+    #[test]
+    fn apply_runtime_config_detects_no_change() {
+        let prev = GatewayConfig::default();
+        let new = GatewayConfig::default();
+
+        let summary = apply_runtime_config(&prev, &new);
+        assert!(!summary.any_changed);
+        assert!(!summary.rate_limit_algorithm_changed);
+        assert!(!summary.routing_strategy_changed);
+        assert!(!summary.notification_changed);
+        assert!(!summary.timeout_changed);
+        assert!(!summary.retry_changed);
+        assert!(!summary.cache_changed);
+    }
+
+    #[test]
+    fn apply_runtime_config_detects_notification_change() {
+        let prev = GatewayConfig::default();
+        let mut new = GatewayConfig::default();
+        new.notification.webhook_url = Some("https://example.com/webhook".to_string());
+
+        let summary = apply_runtime_config(&prev, &new);
+        assert!(summary.notification_changed);
+        assert!(summary.any_changed);
     }
 }
