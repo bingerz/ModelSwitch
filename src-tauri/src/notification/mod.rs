@@ -80,6 +80,7 @@ impl NotificationService {
             config: Arc::new(RwLock::new(config)),
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .unwrap_or_default(),
             notified_thresholds: Arc::new(RwLock::new(std::collections::HashSet::new())),
