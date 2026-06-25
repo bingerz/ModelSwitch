@@ -13,6 +13,7 @@ import type {
   GuardrailsConfig,
   RedemptionCode,
   NotificationConfig,
+  ProviderBudgetEntry,
 } from "./api";
 import * as mockData from "./mock-data";
 
@@ -337,6 +338,30 @@ export const mockApi: typeof api = {
     return mockData.buildProviderBudgets(new Date());
   },
 
+  setProviderBudget: async (
+    provider: string,
+    budget: { daily_budget_cents?: number | null; monthly_budget_cents?: number | null },
+  ): Promise<ProviderBudgetEntry> => {
+    await simDelay();
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    const thisMonth = now.toISOString().slice(0, 7);
+    return {
+      provider,
+      daily_budget_cents: budget.daily_budget_cents ?? null,
+      monthly_budget_cents: budget.monthly_budget_cents ?? null,
+      spend: {
+        today: { date: today, cents: 0 },
+        this_month: { month: thisMonth, cents: 0 },
+        total_cents: 0,
+      },
+    };
+  },
+
+  deleteProviderBudget: async (_provider: string) => {
+    await simDelay();
+  },
+
   // Batch channel operations
   batchEnableChannels: async (ids: string[]) => {
     await simDelay();
@@ -455,7 +480,15 @@ export const mockApi: typeof api = {
   // MCP health
   mcpHealth: async () => {
     await simDelay();
-    return [];
+    const servers = mockData.buildMcpServers();
+    const now = new Date().toISOString();
+    return servers.map((s, idx) => ({
+      name: s.name,
+      healthy: idx % 3 !== 2,
+      last_check: now,
+      last_error: idx % 3 === 2 ? "connection refused" : null,
+      consecutive_failures: idx % 3 === 2 ? 2 : 0,
+    }));
   },
 
   // Completion ratios
@@ -558,6 +591,10 @@ export const mockApi: typeof api = {
   },
 
   // Per-channel payload rules (runtime override)
+  getPayloadRules: async (_channelId: string) => {
+    await simDelay();
+    return {};
+  },
   updatePayloadRules: async (channelId: string) => {
     await simDelay();
     return { channel_id: channelId, updated: true };

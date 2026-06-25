@@ -699,7 +699,7 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
         )
         .route(
             &format!("{prefix}/channels/{{id}}/payload-rules"),
-            put(admin::set_payload_rules),
+            get(admin::get_payload_rules).put(admin::set_payload_rules),
         )
         .route(&format!("{prefix}/cache/flush"), post(admin::flush_cache))
         .route(&format!("{prefix}/cache/stats"), get(admin::cache_stats))

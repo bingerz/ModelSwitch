@@ -9,10 +9,19 @@ import { McpServerCard } from "./McpServerCard";
 import { McpServerForm } from "./McpServerForm";
 import { McpServerEditForm } from "./McpServerEditForm";
 
+interface McpHealthEntry {
+  name: string;
+  healthy: boolean;
+  last_check: string | null;
+  last_error: string | null;
+  consecutive_failures: number;
+}
+
 export function McpServersPanel() {
   const { t } = useTranslation();
   const toast = useToast();
   const [servers, setServers] = useState<McpServer[]>([]);
+  const [healthMap, setHealthMap] = useState<Record<string, McpHealthEntry>>({});
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -23,14 +32,20 @@ export function McpServersPanel() {
 
   const refresh = useCallback(async () => {
     try {
-      const list = await api.mcp.listServers();
+      const [list, healthList] = await Promise.all([
+        api.mcp.listServers(),
+        api.mcpHealth().catch(() => [] as McpHealthEntry[]),
+      ]);
       setServers(list);
+      const byName: Record<string, McpHealthEntry> = {};
+      for (const h of healthList) byName[h.name] = h;
+      setHealthMap(byName);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("mcp.loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, t]);
 
   useEffect(() => {
     refresh();
@@ -109,6 +124,10 @@ export function McpServersPanel() {
     );
   }
 
+  const healthValues = Object.values(healthMap);
+  const healthyCount = healthValues.filter((h) => h.healthy).length;
+  const showHealthSummary = healthValues.length > 0;
+
   return (
     <section>
       <div className="panel-header">
@@ -117,6 +136,43 @@ export function McpServersPanel() {
           {showAddForm ? t("common.cancel") : t("mcp.create")}
         </button>
       </div>
+
+      {showHealthSummary && (
+        <div
+          className="mcp-health-summary"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--space-2)",
+            padding: "var(--space-2) var(--space-3)",
+            marginBottom: "var(--space-3)",
+            background: "var(--color-surface-2, var(--color-surface))",
+            border: "1px solid var(--color-border)",
+            borderRadius: "6px",
+            fontSize: "var(--text-sm)",
+          }}
+        >
+          <span
+            className="status-dot"
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              display: "inline-block",
+              background:
+                healthyCount === healthValues.length
+                  ? "var(--color-success)"
+                  : healthyCount === 0
+                    ? "var(--color-danger)"
+                    : "var(--color-warning)",
+            }}
+          />
+          <strong>{t("mcp.healthStatus")}:</strong>
+          <span>
+            {t("mcp.healthSummary", { healthy: healthyCount, total: healthValues.length })}
+          </span>
+        </div>
+      )}
 
       {showAddForm && (
         <McpServerForm
@@ -155,6 +211,7 @@ export function McpServersPanel() {
               <McpServerCard
                 key={server.id}
                 server={server}
+                health={healthMap[server.name]}
                 expanded={expandedId === server.id}
                 tools={expandedId === server.id ? toolsCache[server.id] : undefined}
                 confirmDelete={confirmDeleteId === server.id}

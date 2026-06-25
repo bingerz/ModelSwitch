@@ -10,8 +10,17 @@ import {
   truncate,
 } from "./types";
 
+export interface McpHealthEntry {
+  name: string;
+  healthy: boolean;
+  last_check: string | null;
+  last_error: string | null;
+  consecutive_failures: number;
+}
+
 export interface McpServerCardProps {
   server: McpServer;
+  health?: McpHealthEntry;
   expanded: boolean;
   tools: McpToolDetail[] | undefined;
   confirmDelete: boolean;
@@ -25,6 +34,7 @@ export interface McpServerCardProps {
 
 export function McpServerCard({
   server,
+  health,
   expanded,
   tools,
   confirmDelete,
@@ -45,6 +55,22 @@ export function McpServerCard({
       ? t("mcp.errorLabel", { message: truncate(errMsg, 50) })
       : t(sKey === "error" ? "mcp.error" : "mcp.stopped");
 
+  const healthLabel = health
+    ? health.healthy
+      ? t("mcp.healthHealthy")
+      : t("mcp.healthUnhealthy")
+    : t("mcp.healthUnknown");
+  const healthColor = !health
+    ? "var(--color-text-muted)"
+    : health.healthy
+      ? "var(--color-success)"
+      : "var(--color-danger)";
+  const healthTitle = health
+    ? health.healthy
+      ? t("mcp.healthHealthy")
+      : `${t("mcp.healthUnhealthy")} · ${t("mcp.healthFailures", { count: health.consecutive_failures })}`
+    : t("mcp.healthUnknown");
+
   return (
     <div className="mcp-server-card">
       <div className="mcp-server-header">
@@ -58,9 +84,33 @@ export function McpServerCard({
           {!server.enabled && <span className="meta-tag">{t("common.disabled")}</span>}
           {!server.expose_tools && <span className="meta-tag">{t("mcp.hiddenTools")}</span>}
         </div>
-        <span className={`mcp-status-badge mcp-status-${sKey}`}>
-          {statusText}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+          <span
+            className="meta-tag"
+            title={healthTitle}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "4px",
+              color: healthColor,
+              cursor: "help",
+            }}
+          >
+            <span
+              style={{
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                display: "inline-block",
+                background: healthColor,
+              }}
+            />
+            {t("mcp.healthStatus")}: {healthLabel}
+          </span>
+          <span className={`mcp-status-badge mcp-status-${sKey}`}>
+            {statusText}
+          </span>
+        </div>
       </div>
 
       <div className="mcp-server-meta">

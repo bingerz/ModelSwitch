@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   api,
@@ -71,6 +71,33 @@ export function EditChannelForm({
   const [payloadOverrides, setPayloadOverrides] = useState("");
   const [payloadModelRules, setPayloadModelRules] = useState("");
   const [payloadSaving, setPayloadSaving] = useState(false);
+
+  // Load existing payload rules when the form opens so users can see
+  // what is currently configured rather than starting from empty fields.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getPayloadRules(channel.id)
+      .then((rules) => {
+        if (cancelled) return;
+        setPayloadStrip(rules.strip?.join("\n") ?? "");
+        setPayloadDefaults(
+          rules.defaults ? JSON.stringify(rules.defaults, null, 2) : ""
+        );
+        setPayloadOverrides(
+          rules.overrides ? JSON.stringify(rules.overrides, null, 2) : ""
+        );
+        setPayloadModelRules(
+          rules.model_rules ? JSON.stringify(rules.model_rules, null, 2) : ""
+        );
+      })
+      .catch(() => {
+        // No rules configured yet (or endpoint unreachable) — leave defaults empty.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [channel.id]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

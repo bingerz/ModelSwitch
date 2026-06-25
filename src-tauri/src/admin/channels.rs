@@ -1054,3 +1054,33 @@ pub async fn set_payload_rules(
         "updated": true
     }))))
 }
+
+/// Get the current payload rules for a channel.
+///
+/// Returns the stored rules, or an empty default if none have been
+/// configured. Returns 404 if the channel itself does not exist.
+pub async fn get_payload_rules(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ApiResponse<crate::config::PayloadRulesConfig>>, axum::response::Response> {
+    // Verify channel exists
+    state
+        .channel_mgr
+        .get(id)
+        .await
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Channel not found"))?;
+
+    let rules = state
+        .limits
+        .payload_rules
+        .get_full(id)
+        .map(|full| crate::config::PayloadRulesConfig {
+            defaults: full.channel.defaults,
+            overrides: full.channel.overrides,
+            strip: full.channel.strip,
+            model_rules: full.model_rules,
+        })
+        .unwrap_or_default();
+
+    Ok(Json(ApiResponse::ok(rules)))
+}

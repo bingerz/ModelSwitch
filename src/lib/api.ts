@@ -540,6 +540,18 @@ export const api = {
     }),
   gatewayInfo: () => request<GatewayInfo>("/api/gateway/info"),
   providerBudgets: () => request<ProviderBudgetEntry[]>("/api/provider-budgets"),
+  setProviderBudget: (
+    provider: string,
+    budget: { daily_budget_cents?: number | null; monthly_budget_cents?: number | null },
+  ) =>
+    request<ProviderBudgetEntry>(`/api/provider-budgets/${encodeURIComponent(provider)}`, {
+      method: "PUT",
+      body: JSON.stringify(budget),
+    }),
+  deleteProviderBudget: (provider: string) =>
+    request<void>(`/api/provider-budgets/${encodeURIComponent(provider)}`, {
+      method: "DELETE",
+    }),
 
   // Batch channel operations
   batchEnableChannels: (ids: string[]) =>
@@ -560,7 +572,7 @@ export const api = {
   batchUpdateTags: (ids: string[], tags: string[]) =>
     request<{ updated: number }>("/api/channels/batch/tags", {
       method: "PUT",
-      body: JSON.stringify({ ids, tags }),
+      body: JSON.stringify({ ids, add_tags: tags }),
     }),
 
   // Reset circuit breaker
@@ -652,6 +664,8 @@ export const api = {
     request<ModelRegistryResponse>("/api/model-registry"),
 
   // Per-channel payload rules (runtime override)
+  getPayloadRules: (channelId: string) =>
+    request<PayloadRulesConfig>(`/api/channels/${channelId}/payload-rules`),
   updatePayloadRules: (channelId: string, rules: PayloadRulesConfig) =>
     request<{ channel_id: string; updated: boolean }>(
       `/api/channels/${channelId}/payload-rules`,
