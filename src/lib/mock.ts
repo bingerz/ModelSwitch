@@ -506,6 +506,14 @@ export const mockApi: typeof api = {
       webhook_secret: null,
       bark_url: null,
       budget_threshold_pct: 80,
+      smtp_enabled: false,
+      smtp_host: null,
+      smtp_port: null,
+      smtp_username: null,
+      smtp_password: null,
+      smtp_from: null,
+      smtp_admin_email: null,
+      smtp_use_tls: false,
     };
   },
   updateNotification: async (config: Partial<NotificationConfig>): Promise<NotificationConfig> => {
@@ -515,6 +523,14 @@ export const mockApi: typeof api = {
       webhook_secret: config.webhook_secret ?? null,
       bark_url: config.bark_url ?? null,
       budget_threshold_pct: config.budget_threshold_pct ?? 80,
+      smtp_enabled: config.smtp_enabled ?? false,
+      smtp_host: config.smtp_host ?? null,
+      smtp_port: config.smtp_port ?? null,
+      smtp_username: config.smtp_username ?? null,
+      smtp_password: config.smtp_password ?? null,
+      smtp_from: config.smtp_from ?? null,
+      smtp_admin_email: config.smtp_admin_email ?? null,
+      smtp_use_tls: config.smtp_use_tls ?? false,
     };
   },
 
