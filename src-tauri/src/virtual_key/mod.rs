@@ -45,6 +45,10 @@ pub struct VirtualKey {
     /// even if it would otherwise be allowed. Uses glob matching.
     #[serde(default)]
     pub denied_models: Vec<String>,
+    /// IP allowlist for this key. Empty = allow all IPs.
+    /// Supports exact IPs ("192.168.1.5") and IPv4 CIDR ranges ("192.168.1.0/24").
+    #[serde(default)]
+    pub allowed_ips: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -129,6 +133,67 @@ impl VirtualKey {
             .iter()
             .any(|pattern| crate::channel::matches_glob(pattern, model))
     }
+
+    /// Check if an IP address is allowed to use this key.
+    /// If `allowed_ips` is empty, all IPs are permitted.
+    /// Otherwise the IP must match an exact entry or fall within a CIDR range.
+    pub fn check_ip_allowed(&self, ip: &str) -> bool {
+        if self.allowed_ips.is_empty() {
+            return true;
+        }
+        for allowed in &self.allowed_ips {
+            if allowed == ip {
+                return true;
+            }
+            if allowed.contains('/') && ip_in_cidr(ip, allowed) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// Check if an IPv4 address falls within the given CIDR block (e.g., "192.168.1.0/24").
+/// Returns false on any parse error or non-IPv4 input (fail closed for invalid CIDR).
+fn ip_in_cidr(ip: &str, cidr: &str) -> bool {
+    let (network, bits) = match cidr.split_once('/') {
+        Some((n, b)) => (n, b),
+        None => return false,
+    };
+    let bits: u8 = match bits.parse() {
+        Ok(b) if b <= 32 => b,
+        _ => return false,
+    };
+    let ip_u32: u32 = match parse_ipv4(ip) {
+        Some(v) => v,
+        None => return false,
+    };
+    let net_u32: u32 = match parse_ipv4(network) {
+        Some(v) => v,
+        None => return false,
+    };
+    if bits == 0 {
+        return true;
+    }
+    let mask: u32 = !0u32 << (32 - bits);
+    (ip_u32 & mask) == (net_u32 & mask)
+}
+
+/// Parse a dotted-quad IPv4 string into a u32. Returns None on malformed input.
+fn parse_ipv4(s: &str) -> Option<u32> {
+    let octets: Vec<&str> = s.split('.').collect();
+    if octets.len() != 4 {
+        return None;
+    }
+    let mut result: u32 = 0;
+    for oct in octets {
+        let v: u32 = oct.parse().ok()?;
+        if v > 255 {
+            return None;
+        }
+        result = (result << 8) | v;
+    }
+    Some(result)
 }
 
 /// Result of a budget reservation attempt.
@@ -199,6 +264,7 @@ impl VirtualKeyStore {
         monthly_budget_cents: Option<u64>,
         allowed_models: Option<Vec<String>>,
         denied_models: Vec<String>,
+        allowed_ips: Vec<String>,
     ) -> (VirtualKey, String) {
         let plaintext = format!("ms-vk-{}", Uuid::new_v4().simple());
         let hash = sha256_hex(&plaintext);
@@ -216,6 +282,7 @@ impl VirtualKeyStore {
             spend: VirtualKeySpend::default(),
             allowed_models,
             denied_models,
+            allowed_ips,
         };
         let vk_clone = vk.clone();
         self.store.write().await.insert(vk.id, vk);
@@ -471,7 +538,7 @@ mod tests {
     async fn create_generates_key_with_ms_vk_prefix() {
         let store = VirtualKeyStore::new();
         let (vk, plaintext) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![])
+            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
             .await;
         assert!(plaintext.starts_with("ms-vk-"), "prefix was: {plaintext}");
         assert!(plaintext.len() > "ms-vk-".len() + 8);
@@ -487,7 +554,7 @@ mod tests {
     async fn validate_rejects_wrong_key() {
         let store = VirtualKeyStore::new();
         let _ = store
-            .create("test".to_string(), None, None, None, vec![])
+            .create("test".to_string(), None, None, None, vec![], vec![])
             .await;
         let result = store.validate("ms-vk-wrongkey").await;
         assert!(result.is_none());
@@ -497,7 +564,7 @@ mod tests {
     async fn validate_returns_key_when_correct() {
         let store = VirtualKeyStore::new();
         let (created, plaintext) = store
-            .create("test".to_string(), None, None, None, vec![])
+            .create("test".to_string(), None, None, None, vec![], vec![])
             .await;
         let validated = store.validate(&plaintext).await;
         assert!(validated.is_some());
@@ -508,7 +575,7 @@ mod tests {
     async fn validate_returns_none_when_disabled() {
         let store = VirtualKeyStore::new();
         let (created, plaintext) = store
-            .create("test".to_string(), None, None, None, vec![])
+            .create("test".to_string(), None, None, None, vec![], vec![])
             .await;
         store
             .update(created.id, None, None, None, Some(false), None, None)
@@ -521,7 +588,7 @@ mod tests {
     async fn accumulate_spend_updates_daily_and_monthly() {
         let store = VirtualKeyStore::new();
         let (vk, _plaintext) = store
-            .create("test".to_string(), None, None, None, vec![])
+            .create("test".to_string(), None, None, None, vec![], vec![])
             .await;
         store.accumulate_spend(vk.id, 50).await;
         store.accumulate_spend(vk.id, 25).await;
@@ -535,7 +602,7 @@ mod tests {
     async fn accumulate_spend_resets_stale_periods() {
         let store = VirtualKeyStore::new();
         let (mut vk, _plaintext) = store
-            .create("test".to_string(), None, None, None, vec![])
+            .create("test".to_string(), None, None, None, vec![], vec![])
             .await;
         // Manually backdate the spend to a stale day/month
         vk.spend.today = DailySpend {
@@ -588,6 +655,7 @@ mod tests {
             },
             allowed_models: None,
             denied_models: vec![],
+            allowed_ips: vec![],
         };
         assert!(vk.is_budget_exceeded());
     }
@@ -618,6 +686,7 @@ mod tests {
             },
             allowed_models: None,
             denied_models: vec![],
+            allowed_ips: vec![],
         };
         assert!(vk.is_budget_exceeded());
     }
@@ -648,6 +717,7 @@ mod tests {
             },
             allowed_models: None,
             denied_models: vec![],
+            allowed_ips: vec![],
         };
         assert!(!vk.is_budget_exceeded());
     }
@@ -672,7 +742,7 @@ mod tests {
     async fn reserve_spend_charges_budgeted_key() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![])
+            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
             .await;
         let result = store.reserve_spend(vk.id, 10).await;
         assert!(matches!(result, ReserveResult::Reserved(n) if n == 10));
@@ -686,7 +756,7 @@ mod tests {
     async fn reserve_spend_skips_unlimited_key() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), None, None, None, vec![])
+            .create("test".to_string(), None, None, None, vec![], vec![])
             .await;
         let result = store.reserve_spend(vk.id, 10).await;
         assert!(matches!(result, ReserveResult::NoBudget));
@@ -698,7 +768,7 @@ mod tests {
     async fn reserve_spend_skips_disabled_key() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![])
+            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
             .await;
         store
             .update(vk.id, None, None, None, Some(false), None, None)
@@ -718,7 +788,7 @@ mod tests {
     async fn reserve_spend_resets_stale_periods() {
         let store = VirtualKeyStore::new();
         let (mut vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![])
+            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
             .await;
         vk.spend.today = DailySpend {
             date: "1999-01-01".to_string(),
@@ -749,7 +819,7 @@ mod tests {
     async fn reserve_spend_rejects_when_daily_budget_exceeded() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![])
+            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
             .await;
         // Accumulate 90 cents of spend
         store.accumulate_spend(vk.id, 90).await;
@@ -771,7 +841,7 @@ mod tests {
         let store = VirtualKeyStore::new();
         // Daily budget is large so only monthly triggers
         let (vk, _) = store
-            .create("test".to_string(), Some(10_000), Some(500), None, vec![])
+            .create("test".to_string(), Some(10_000), Some(500), None, vec![], vec![])
             .await;
         // Accumulate 490 cents of spend
         store.accumulate_spend(vk.id, 490).await;
@@ -792,7 +862,7 @@ mod tests {
     async fn reserve_spend_allows_exact_limit_boundary() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![])
+            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
             .await;
         // Accumulate 90 cents, then reserve exactly 10 → 90 + 10 = 100, not exceeding
         store.accumulate_spend(vk.id, 90).await;
@@ -806,7 +876,7 @@ mod tests {
     async fn reconcile_spend_refunds_when_actual_less() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![])
+            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
             .await;
         store.reserve_spend(vk.id, 50).await;
         store.reconcile_spend(vk.id, 50, 20).await;
@@ -820,7 +890,7 @@ mod tests {
     async fn reconcile_spend_charges_more_when_actual_greater() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![])
+            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
             .await;
         store.reserve_spend(vk.id, 20).await;
         store.reconcile_spend(vk.id, 20, 50).await;
@@ -834,7 +904,7 @@ mod tests {
     async fn reconcile_spend_noop_when_equal() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![])
+            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
             .await;
         store.reserve_spend(vk.id, 30).await;
         store.reconcile_spend(vk.id, 30, 30).await;
@@ -846,7 +916,7 @@ mod tests {
     async fn reconcile_spend_refunds_full_on_failure() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![])
+            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
             .await;
         store.reserve_spend(vk.id, 40).await;
         store.reconcile_spend(vk.id, 40, 0).await;
@@ -861,7 +931,7 @@ mod tests {
         // Simulate two concurrent requests reserving against the same budget
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("test".to_string(), Some(100), Some(1000), None, vec![])
+            .create("test".to_string(), Some(100), Some(1000), None, vec![], vec![])
             .await;
         // First request reserves 30
         store.reserve_spend(vk.id, 30).await;
@@ -884,7 +954,7 @@ mod tests {
         let store = VirtualKeyStore::new();
         assert!(!store.has_keys().await);
         let _ = store
-            .create("a".to_string(), None, None, None, vec![])
+            .create("a".to_string(), None, None, None, vec![], vec![])
             .await;
         assert!(store.has_keys().await);
     }
@@ -893,7 +963,7 @@ mod tests {
     async fn delete_removes_key() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store
-            .create("a".to_string(), None, None, None, vec![])
+            .create("a".to_string(), None, None, None, vec![], vec![])
             .await;
         assert!(store.delete(vk.id).await);
         assert!(store.get(vk.id).await.is_none());
@@ -911,7 +981,7 @@ mod tests {
 
         let store = VirtualKeyStore::with_store_path(path.clone());
         let (vk, plaintext) = store
-            .create("persisted".to_string(), Some(10), Some(100), None, vec![])
+            .create("persisted".to_string(), Some(10), Some(100), None, vec![], vec![])
             .await;
         store.accumulate_spend(vk.id, 5).await;
         store.persist().await.unwrap();
@@ -945,6 +1015,7 @@ mod tests {
             spend: VirtualKeySpend::default(),
             allowed_models: None,
             denied_models: vec![],
+            allowed_ips: vec![],
         };
         assert!(vk.is_model_allowed("gpt-4"));
         assert!(vk.is_model_allowed("claude-3"));
@@ -964,6 +1035,7 @@ mod tests {
             spend: VirtualKeySpend::default(),
             allowed_models: Some(vec!["gpt-4".to_string(), "claude-3".to_string()]),
             denied_models: vec![],
+            allowed_ips: vec![],
         };
         assert!(vk.is_model_allowed("gpt-4"));
         assert!(vk.is_model_allowed("gpt-4o"));
@@ -988,6 +1060,7 @@ mod tests {
             spend: VirtualKeySpend::default(),
             allowed_models: None,
             denied_models: vec!["gpt-4".to_string()],
+            allowed_ips: vec![],
         };
         assert!(vk.is_model_denied("gpt-4"));
         // Prefix matching must NOT apply to denylist — only glob
@@ -1009,6 +1082,7 @@ mod tests {
             spend: VirtualKeySpend::default(),
             allowed_models: None,
             denied_models: vec!["gpt-4*".to_string()],
+            allowed_ips: vec![],
         };
         assert!(vk.is_model_denied("gpt-4"));
         assert!(vk.is_model_denied("gpt-4o"));
@@ -1030,6 +1104,7 @@ mod tests {
             spend: VirtualKeySpend::default(),
             allowed_models: None,
             denied_models: vec![],
+            allowed_ips: vec![],
         };
         assert!(!vk.is_model_denied("gpt-4"));
         assert!(!vk.is_model_denied("claude-3"));
@@ -1039,7 +1114,7 @@ mod tests {
     async fn prefix_index_finds_match() {
         let store = VirtualKeyStore::new();
         let (vk, plaintext) = store
-            .create("test".to_string(), None, None, None, vec![])
+            .create("test".to_string(), None, None, None, vec![], vec![])
             .await;
         let found = store.find_by_prefix(&plaintext).await;
         assert_eq!(found, Some(vk.id));
@@ -1049,7 +1124,7 @@ mod tests {
     async fn prefix_index_returns_none_for_unknown() {
         let store = VirtualKeyStore::new();
         let _ = store
-            .create("test".to_string(), None, None, None, vec![])
+            .create("test".to_string(), None, None, None, vec![], vec![])
             .await;
         // Different prefix — should not match
         let found = store.find_by_prefix("ms-vk-unknownkey").await;
@@ -1060,7 +1135,7 @@ mod tests {
     async fn prefix_index_removes_on_delete() {
         let store = VirtualKeyStore::new();
         let (vk, plaintext) = store
-            .create("test".to_string(), None, None, None, vec![])
+            .create("test".to_string(), None, None, None, vec![], vec![])
             .await;
         assert!(store.delete(vk.id).await);
         let found = store.find_by_prefix(&plaintext).await;
@@ -1078,7 +1153,7 @@ mod tests {
         // Create and persist a key with one store
         let store = VirtualKeyStore::with_store_path(path.clone());
         let (vk, plaintext) = store
-            .create("persisted".to_string(), None, None, None, vec![])
+            .create("persisted".to_string(), None, None, None, vec![], vec![])
             .await;
         store.persist().await.unwrap();
 
@@ -1089,5 +1164,110 @@ mod tests {
         assert_eq!(found, Some(vk.id));
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn ip_allowed_when_no_restriction() {
+        let vk = VirtualKey {
+            id: Uuid::new_v4(),
+            key_hash: "deadbeef".to_string(),
+            key_prefix: "ms-vk-abcdef".to_string(),
+            name: "t".to_string(),
+            daily_budget_cents: None,
+            monthly_budget_cents: None,
+            enabled: true,
+            created_at: Utc::now(),
+            spend: VirtualKeySpend::default(),
+            allowed_models: None,
+            denied_models: vec![],
+            allowed_ips: vec![],
+        };
+        assert!(vk.check_ip_allowed("192.168.1.1"));
+        assert!(vk.check_ip_allowed("10.0.0.1"));
+        assert!(vk.check_ip_allowed("127.0.0.1"));
+    }
+
+    #[test]
+    fn ip_allowed_when_exact_match() {
+        let vk = VirtualKey {
+            id: Uuid::new_v4(),
+            key_hash: "deadbeef".to_string(),
+            key_prefix: "ms-vk-abcdef".to_string(),
+            name: "t".to_string(),
+            daily_budget_cents: None,
+            monthly_budget_cents: None,
+            enabled: true,
+            created_at: Utc::now(),
+            spend: VirtualKeySpend::default(),
+            allowed_models: None,
+            denied_models: vec![],
+            allowed_ips: vec!["192.168.1.5".to_string(), "10.0.0.3".to_string()],
+        };
+        assert!(vk.check_ip_allowed("192.168.1.5"));
+        assert!(vk.check_ip_allowed("10.0.0.3"));
+    }
+
+    #[test]
+    fn ip_denied_when_not_in_list() {
+        let vk = VirtualKey {
+            id: Uuid::new_v4(),
+            key_hash: "deadbeef".to_string(),
+            key_prefix: "ms-vk-abcdef".to_string(),
+            name: "t".to_string(),
+            daily_budget_cents: None,
+            monthly_budget_cents: None,
+            enabled: true,
+            created_at: Utc::now(),
+            spend: VirtualKeySpend::default(),
+            allowed_models: None,
+            denied_models: vec![],
+            allowed_ips: vec!["192.168.1.5".to_string(), "10.0.0.3".to_string()],
+        };
+        assert!(!vk.check_ip_allowed("192.168.1.6"));
+        assert!(!vk.check_ip_allowed("10.0.0.4"));
+        assert!(!vk.check_ip_allowed("172.16.0.1"));
+    }
+
+    #[test]
+    fn ip_allowed_within_cidr() {
+        let vk = VirtualKey {
+            id: Uuid::new_v4(),
+            key_hash: "deadbeef".to_string(),
+            key_prefix: "ms-vk-abcdef".to_string(),
+            name: "t".to_string(),
+            daily_budget_cents: None,
+            monthly_budget_cents: None,
+            enabled: true,
+            created_at: Utc::now(),
+            spend: VirtualKeySpend::default(),
+            allowed_models: None,
+            denied_models: vec![],
+            allowed_ips: vec!["192.168.1.0/24".to_string()],
+        };
+        assert!(vk.check_ip_allowed("192.168.1.0"));
+        assert!(vk.check_ip_allowed("192.168.1.1"));
+        assert!(vk.check_ip_allowed("192.168.1.127"));
+        assert!(vk.check_ip_allowed("192.168.1.255"));
+    }
+
+    #[test]
+    fn ip_denied_outside_cidr() {
+        let vk = VirtualKey {
+            id: Uuid::new_v4(),
+            key_hash: "deadbeef".to_string(),
+            key_prefix: "ms-vk-abcdef".to_string(),
+            name: "t".to_string(),
+            daily_budget_cents: None,
+            monthly_budget_cents: None,
+            enabled: true,
+            created_at: Utc::now(),
+            spend: VirtualKeySpend::default(),
+            allowed_models: None,
+            denied_models: vec![],
+            allowed_ips: vec!["192.168.1.0/24".to_string()],
+        };
+        assert!(!vk.check_ip_allowed("192.168.2.1"));
+        assert!(!vk.check_ip_allowed("10.0.0.1"));
+        assert!(!vk.check_ip_allowed("192.169.1.1"));
     }
 }

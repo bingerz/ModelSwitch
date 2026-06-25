@@ -123,6 +123,7 @@ pub async fn create_virtual_key(
             req.monthly_budget_cents,
             req.allowed_models,
             req.denied_models,
+            vec![],
         )
         .await;
     persist_virtual_keys(&state).await;
