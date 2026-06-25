@@ -32,6 +32,15 @@ export function VirtualKeyForm({
   const [monthlyBudget, setMonthlyBudget] = useState(
     centsToDollars(existingKey?.monthly_budget_cents ?? null),
   );
+  const [allowedIps, setAllowedIps] = useState(
+    (existingKey?.allowed_ips ?? []).join(", "),
+  );
+  const [allowedModels, setAllowedModels] = useState(
+    (existingKey?.allowed_models ?? []).join(", "),
+  );
+  const [deniedModels, setDeniedModels] = useState(
+    (existingKey?.denied_models ?? []).join(", "),
+  );
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -63,6 +72,11 @@ export function VirtualKeyForm({
           name: name.trim(),
           daily_budget_cents: dailyCents,
           monthly_budget_cents: monthlyCents,
+          allowed_ips: allowedIps.split(",").map((s) => s.trim()).filter(Boolean),
+          allowed_models: allowedModels.trim()
+            ? allowedModels.split(",").map((s) => s.trim()).filter(Boolean)
+            : null,
+          denied_models: deniedModels.split(",").map((s) => s.trim()).filter(Boolean),
         };
         const response = await api.virtualKeys.create(payload);
         toast.success(t("virtualKeys.createdToast"));
@@ -72,6 +86,11 @@ export function VirtualKeyForm({
           name: name.trim(),
           daily_budget_cents: dailyCents,
           monthly_budget_cents: monthlyCents,
+          allowed_ips: allowedIps.split(",").map((s) => s.trim()).filter(Boolean),
+          allowed_models: allowedModels.trim()
+            ? allowedModels.split(",").map((s) => s.trim()).filter(Boolean)
+            : null,
+          denied_models: deniedModels.split(",").map((s) => s.trim()).filter(Boolean),
         };
         await api.virtualKeys.update(existingKey.id, payload);
         toast.success(t("virtualKeys.updatedToast"));
@@ -118,6 +137,32 @@ export function VirtualKeyForm({
             onChange={(e) => setMonthlyBudget(e.target.value)}
             placeholder={t("virtualKeys.monthlyBudgetPlaceholder")}
             inputMode="decimal"
+          />
+        </label>
+      </div>
+      <div className="form-grid">
+        <label className="form-field">
+          <span>{t("virtualKeys.allowedIps")}</span>
+          <input
+            value={allowedIps}
+            onChange={(e) => setAllowedIps(e.target.value)}
+            placeholder={t("virtualKeys.allowedIpsHint")}
+          />
+        </label>
+        <label className="form-field">
+          <span>{t("virtualKeys.allowedModels")}</span>
+          <input
+            value={allowedModels}
+            onChange={(e) => setAllowedModels(e.target.value)}
+            placeholder={t("virtualKeys.allowedModelsHint")}
+          />
+        </label>
+        <label className="form-field">
+          <span>{t("virtualKeys.deniedModels")}</span>
+          <input
+            value={deniedModels}
+            onChange={(e) => setDeniedModels(e.target.value)}
+            placeholder={t("virtualKeys.deniedModelsHint")}
           />
         </label>
       </div>

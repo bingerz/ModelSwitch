@@ -137,6 +137,11 @@ impl NotificationService {
         notified.insert(key.to_string())
     }
 
+    /// Return the current notification configuration.
+    pub async fn get_config(&self) -> NotificationConfig {
+        self.config.read().await.clone()
+    }
+
     /// Replace the live notification configuration (e.g., from a config reload).
     pub async fn update_config(&self, config: NotificationConfig) {
         *self.config.write().await = config;

@@ -122,6 +122,14 @@ impl GuardrailsChecker {
         self.check(&combined)
     }
 
+    /// Return the current configuration.
+    pub fn get_config(&self) -> GuardrailsConfig {
+        self.config
+            .read()
+            .expect("guardrails config lock poisoned")
+            .clone()
+    }
+
     /// Update configuration at runtime.
     ///
     /// Uses interior mutability so the checker can be shared (e.g. behind an

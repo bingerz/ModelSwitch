@@ -6,11 +6,13 @@ use crate::channel::manager::ChannelManager;
 use crate::config;
 use crate::config::AppConfig;
 use crate::credential::create_credential_store;
+use crate::guardrails::GuardrailsChecker;
 use crate::health;
 use crate::log::DispatchLogger;
 use crate::mcp::McpManager;
 use crate::middleware;
 use crate::model_registry::{refresh_from_endpoint, ModelRegistry};
+use crate::notification::NotificationService;
 use crate::provider_budget::ProviderBudgetStore;
 use crate::proxy;
 use crate::proxy::cache::{CacheMode, InFlightRequests, RequestCache};
@@ -22,7 +24,7 @@ use crate::proxy::{
 };
 use crate::quota;
 use crate::quota::registry::QuotaProviderRegistry;
-use crate::quota::QuotaStore;
+use crate::quota::{QuotaStore, RedemptionCodeStore};
 use crate::router::active_requests::ActiveRequests;
 use crate::router::affinity::SessionAffinity;
 use crate::shutdown::shutdown_signal;
@@ -301,6 +303,14 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             sanitizer_config: config.gateway.sanitizer.clone(),
             allowed_origins: config.gateway.allowed_origins.clone(),
         },
+        guardrails: Arc::new(GuardrailsChecker::new(
+            crate::guardrails::GuardrailsConfig::default(),
+        )),
+        redemption_codes: Arc::new(RedemptionCodeStore::new()),
+        notifications: Arc::new(NotificationService::new(config.gateway.notification.clone())),
+        completion_ratios: Arc::new(parking_lot::RwLock::new(
+            config.gateway.completion_ratios.clone(),
+        )),
         started_at: std::time::Instant::now(),
     });
 
@@ -756,6 +766,70 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
         )
         .route(&format!("{prefix}/gateway/info"), get(admin::gateway_info))
         .route(&format!("{prefix}/audit-log"), get(admin::get_audit_log))
+        // ── Feature module routes ────────────────────────────
+        // Guardrails config
+        .route(
+            &format!("{prefix}/guardrails"),
+            get(admin::get_guardrails_config),
+        )
+        .route(
+            &format!("{prefix}/guardrails"),
+            put(admin::update_guardrails_config),
+        )
+        // Redemption codes
+        .route(
+            &format!("{prefix}/redemption-codes"),
+            get(admin::list_redemption_codes),
+        )
+        .route(
+            &format!("{prefix}/redemption-codes"),
+            post(admin::create_redemption_code),
+        )
+        .route(
+            &format!("{prefix}/redemption-codes/redeem"),
+            post(admin::redeem_code),
+        )
+        .route(
+            &format!("{prefix}/redemption-codes/{{code}}"),
+            delete(admin::delete_redemption_code),
+        )
+        // Notifications
+        .route(
+            &format!("{prefix}/notifications"),
+            get(admin::get_notification_config),
+        )
+        .route(
+            &format!("{prefix}/notifications"),
+            put(admin::update_notification_config),
+        )
+        // Channel auto-test
+        .route(
+            &format!("{prefix}/channels/{{id}}/test"),
+            post(admin::test_channel),
+        )
+        .route(
+            &format!("{prefix}/channels/test-all"),
+            post(admin::test_all_channels),
+        )
+        // Channel cooldown status
+        .route(
+            &format!("{prefix}/channels/{{id}}/cooldown"),
+            get(admin::get_channel_cooldown),
+        )
+        // MCP health
+        .route(
+            &format!("{prefix}/mcp/health"),
+            get(admin::get_mcp_health),
+        )
+        // Completion ratios
+        .route(
+            &format!("{prefix}/completion-ratios"),
+            get(admin::get_completion_ratios),
+        )
+        .route(
+            &format!("{prefix}/completion-ratios"),
+            put(admin::update_completion_ratios),
+        )
 }
 
 /// Build the Axum Router with all proxy and admin routes.

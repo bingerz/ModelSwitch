@@ -5,7 +5,7 @@ pub mod translator;
 
 pub use aggregator::AggregatedTool;
 pub use gateway::McpGatewayHandler;
-pub use manager::{McpManager, McpServerStatus};
+pub use manager::{McpManager, McpServerHealth, McpServerStatus};
 
 // `McpToolInfo` remains accessible via `crate::mcp::manager::McpToolInfo` for
 // callers that need the lightweight tool-listing shape returned by

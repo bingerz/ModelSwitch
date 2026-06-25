@@ -25,6 +25,9 @@ export interface ChannelCardProps {
   onCancelDelete: () => void;
   onDragStart: () => void;
   onDragEnd: () => void;
+  selected?: boolean;
+  onToggleSelect?: () => void;
+  onTest?: () => void;
 }
 
 export function ChannelCard({
@@ -41,6 +44,9 @@ export function ChannelCard({
   onCancelDelete,
   onDragStart,
   onDragEnd,
+  selected,
+  onToggleSelect,
+  onTest,
 }: ChannelCardProps) {
   const { t } = useTranslation();
   const statusKey = (ch.status as ChannelStatus) ?? "disabled";
@@ -55,6 +61,15 @@ export function ChannelCard({
     >
       <div className="channel-card-header">
         <div className="channel-card-title">
+          {onToggleSelect && (
+            <input
+              type="checkbox"
+              checked={selected ?? false}
+              onChange={onToggleSelect}
+              onClick={(e) => e.stopPropagation()}
+              style={{ width: 16, height: 16, cursor: "pointer", marginRight: "var(--space-1)" }}
+            />
+          )}
           <span
             className={`status-dot ${ch.status === "healthy" ? "healthy" : ""}`}
             style={{ background: STATUS_DOT[statusKey] }}
@@ -99,6 +114,19 @@ export function ChannelCard({
         )}
         <QuotaBadge quota={quota} />
       </div>
+      {ch.tags && ch.tags.length > 0 && (
+        <div className="channel-card-tags" style={{ display: "flex", gap: "var(--space-1)", flexWrap: "wrap", marginBottom: "var(--space-1)" }}>
+          {ch.tags.map((tag) => (
+            <span
+              key={tag}
+              className="meta-tag"
+              style={{ fontSize: "var(--text-xs)", background: "var(--color-bg-secondary)" }}
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="channel-card-actions">
         <button className="btn btn-sm" onClick={onEdit}>
           {t("common.edit")}
@@ -130,6 +158,17 @@ export function ChannelCard({
                 >
                   {t("channels.ping")}
                 </button>
+                {onTest && (
+                  <button
+                    className="channel-overflow-item"
+                    onClick={() => {
+                      onCloseOverflow();
+                      onTest();
+                    }}
+                  >
+                    {t("channels.testAll")}
+                  </button>
+                )}
                 <button
                   className={`channel-overflow-item ${confirmDelete ? "danger-confirm" : "danger"}`}
                   onClick={onDelete}

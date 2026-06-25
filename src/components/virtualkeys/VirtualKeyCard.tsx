@@ -116,6 +116,40 @@ export function VirtualKeyCard({
         </div>
       </div>
 
+      {(vk.allowed_ips.length > 0 || (vk.allowed_models && vk.allowed_models.length > 0) || vk.denied_models.length > 0) && (
+        <div className="vk-card-restrictions" style={{ display: "flex", gap: "var(--space-1)", flexWrap: "wrap", marginBottom: "var(--space-2)" }}>
+          {vk.allowed_ips.length > 0 && (
+            <span
+              className="meta-tag"
+              title={vk.allowed_ips.join(", ")}
+              style={{ fontSize: "var(--text-xs)", background: "var(--color-bg-secondary)" }}
+            >
+              IP: {vk.allowed_ips.length > 2
+                ? `${vk.allowed_ips[0]} +${vk.allowed_ips.length - 1}`
+                : vk.allowed_ips.join(", ")}
+            </span>
+          )}
+          {vk.allowed_models && vk.allowed_models.length > 0 && (
+            <span
+              className="meta-tag"
+              title={vk.allowed_models.join(", ")}
+              style={{ fontSize: "var(--text-xs)", background: "var(--color-success-bg, rgba(34,197,94,0.1))" }}
+            >
+              {t("common.modelsCount", { count: vk.allowed_models.length })} ✓
+            </span>
+          )}
+          {vk.denied_models.length > 0 && (
+            <span
+              className="meta-tag"
+              title={vk.denied_models.join(", ")}
+              style={{ fontSize: "var(--text-xs)", background: "var(--color-danger-bg, rgba(239,68,68,0.1))" }}
+            >
+              {t("common.modelsCount", { count: vk.denied_models.length })} ✕
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="vk-card-footer">
         <span className="meta-tag">{t("virtualKeys.totalSpent", { amount: formatCents(vk.spend.total_cents) })}</span>
         <span className="meta-tag">{t("virtualKeys.createdDate", { date: formatDate(vk.created_at) })}</span>

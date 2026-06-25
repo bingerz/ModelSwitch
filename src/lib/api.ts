@@ -23,6 +23,14 @@ export interface Channel {
   cooldown_minutes: number | null;
   rpm_limit: number | null;
   tpm_limit: number | null;
+  tags: string[];
+  account_group: string | null;
+  max_concurrent: number | null;
+  excluded_models: string[];
+  api_keys: string[];
+  proxy_url: string | null;
+  headers: Record<string, string>;
+  max_retries: number | null;
 }
 
 export interface DispatchLog {
@@ -180,6 +188,13 @@ export interface UpdateChannelData {
   output_cost_per_mtok?: number | null;
   rpm_limit?: number | null;
   tpm_limit?: number | null;
+  tags?: string[];
+  account_group?: string | null;
+  max_concurrent?: number | null;
+  excluded_models?: string[];
+  proxy_url?: string | null;
+  headers?: Record<string, string>;
+  max_retries?: number | null;
 }
 
 export interface GwStatus {
@@ -279,6 +294,9 @@ export interface VirtualKey {
   enabled: boolean;
   spend: VirtualKeySpend;
   created_at: string;
+  allowed_ips: string[];
+  allowed_models: string[] | null;
+  denied_models: string[];
 }
 
 export interface CreateVirtualKeyResponse {
@@ -290,6 +308,9 @@ export interface CreateVirtualKeyData {
   name: string;
   daily_budget_cents?: number | null;
   monthly_budget_cents?: number | null;
+  allowed_ips?: string[];
+  allowed_models?: string[] | null;
+  denied_models?: string[];
 }
 
 export interface UpdateVirtualKeyData {
@@ -297,6 +318,9 @@ export interface UpdateVirtualKeyData {
   daily_budget_cents?: number | null;
   monthly_budget_cents?: number | null;
   enabled?: boolean;
+  allowed_ips?: string[];
+  allowed_models?: string[] | null;
+  denied_models?: string[];
 }
 
 export interface CacheStats {
@@ -329,6 +353,42 @@ export interface ProviderBudgetEntry {
     today: { date: string; cents: number };
     this_month: { month: string; cents: number };
     total_cents: number;
+  };
+}
+
+export interface GuardrailsConfig {
+  enabled: boolean;
+  blocked_patterns: string[];
+  allowed_patterns: string[];
+  max_request_chars: number | null;
+  block_message: string;
+}
+
+export interface RedemptionCode {
+  code: string;
+  credits_cents: number;
+  used: boolean;
+  used_by: string | null;
+  used_at: string | null;
+  created_at: string;
+  expires_at: string | null;
+}
+
+export interface NotificationConfig {
+  webhook: {
+    enabled: boolean;
+    url: string | null;
+    secret: string | null;
+  };
+  bark: {
+    enabled: boolean;
+    url: string | null;
+    key: string | null;
+  };
+  events: {
+    channel_failure: boolean;
+    quota_warning: boolean;
+    cooldown_triggered: boolean;
   };
 }
 
@@ -422,6 +482,112 @@ export const api = {
     }),
   gatewayInfo: () => request<GatewayInfo>("/api/gateway/info"),
   providerBudgets: () => request<ProviderBudgetEntry[]>("/api/provider-budgets"),
+
+  // Batch channel operations
+  batchEnableChannels: (ids: string[]) =>
+    request<{ updated: number }>("/api/channels/batch/enable", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
+  batchDisableChannels: (ids: string[]) =>
+    request<{ updated: number }>("/api/channels/batch/disable", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
+  batchDeleteChannels: (ids: string[]) =>
+    request<{ deleted: number }>("/api/channels/batch/delete", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
+  batchUpdateTags: (ids: string[], tags: string[]) =>
+    request<{ updated: number }>("/api/channels/batch/tags", {
+      method: "PUT",
+      body: JSON.stringify({ ids, tags }),
+    }),
+
+  // Reset circuit breaker
+  resetCircuit: (id: string) =>
+    request<{ ok: boolean }>(`/api/channels/${id}/reset-circuit`, {
+      method: "POST",
+    }),
+
+  // Audit log
+  auditLog: (limit = 100) =>
+    request<Array<{ timestamp: string; action: string; actor: string; target: string; details: string | null }>>(
+      `/api/audit-log?limit=${limit}`
+    ),
+
+  // Metrics (Prometheus text format)
+  metrics: async (): Promise<string> => {
+    const token = localStorage.getItem("admin_token");
+    const res = await fetch(`${API_BASE}/metrics`, {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    return res.text();
+  },
+
+  // Guardrails config
+  guardrailsConfig: () => request<GuardrailsConfig>("/api/guardrails"),
+  updateGuardrails: (config: Partial<GuardrailsConfig>) =>
+    request<GuardrailsConfig>("/api/guardrails", {
+      method: "PUT",
+      body: JSON.stringify(config),
+    }),
+
+  // Redemption codes
+  redemptionCodes: {
+    list: () => request<RedemptionCode[]>("/api/redemption-codes"),
+    create: (data: { credits_cents: number; expires_at?: string | null }) =>
+      request<RedemptionCode>("/api/redemption-codes", {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    redeem: (code: string, userId?: string) =>
+      request<{ credits_cents: number }>("/api/redemption-codes/redeem", {
+        method: "POST",
+        body: JSON.stringify({ code, user_id: userId }),
+      }),
+    delete: (code: string) =>
+      request<void>(`/api/redemption-codes/${code}`, { method: "DELETE" }),
+  },
+
+  // Notification config
+  notificationConfig: () => request<NotificationConfig>("/api/notifications"),
+  updateNotification: (config: Partial<NotificationConfig>) =>
+    request<NotificationConfig>("/api/notifications", {
+      method: "PUT",
+      body: JSON.stringify(config),
+    }),
+
+  // Channel auto-test
+  testChannel: (id: string) =>
+    request<{ healthy: boolean; latency_ms: number | null; error: string | null }>(
+      `/api/channels/${id}/test`,
+      { method: "POST" }
+    ),
+  testAllChannels: () =>
+    request<Array<{ channel_id: string; channel_name: string; healthy: boolean; latency_ms: number | null; error: string | null }>>(
+      "/api/channels/test-all",
+      { method: "POST" }
+    ),
+
+  // MCP health
+  mcpHealth: () =>
+    request<Array<{ name: string; healthy: boolean; last_check: string | null; last_error: string | null; consecutive_failures: number }>>(
+      "/api/mcp/health"
+    ),
+
+  // Completion ratios
+  completionRatios: () =>
+    request<Record<string, number>>("/api/completion-ratios"),
+  updateCompletionRatios: (ratios: Record<string, number>) =>
+    request<Record<string, number>>("/api/completion-ratios", {
+      method: "PUT",
+      body: JSON.stringify(ratios),
+    }),
 };
 
 // ─── Mock mode ──────────────────────────────────────────

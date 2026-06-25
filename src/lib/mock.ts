@@ -10,6 +10,9 @@ import type {
   CreateVirtualKeyData,
   CreateVirtualKeyResponse,
   UpdateVirtualKeyData,
+  GuardrailsConfig,
+  RedemptionCode,
+  NotificationConfig,
 } from "./api";
 import * as mockData from "./mock-data";
 
@@ -98,6 +101,14 @@ export const mockApi: typeof api = {
       cooldown_minutes: input.cooldown_minutes ?? null,
       rpm_limit: input.rpm_limit ?? null,
       tpm_limit: input.tpm_limit ?? null,
+      tags: input.tags ?? [],
+      account_group: input.account_group ?? null,
+      max_concurrent: input.max_concurrent ?? null,
+      excluded_models: input.excluded_models ?? [],
+      api_keys: input.api_keys ?? [],
+      proxy_url: input.proxy_url ?? null,
+      headers: input.headers ?? {},
+      max_retries: input.max_retries ?? null,
     };
     return channel;
   },
@@ -260,6 +271,9 @@ export const mockApi: typeof api = {
             total_cents: 0,
           },
           created_at: now.toISOString(),
+          allowed_ips: input.allowed_ips ?? [],
+          allowed_models: input.allowed_models ?? null,
+          denied_models: input.denied_models ?? [],
         },
         plaintext: `${prefix}${uuid().replace(/-/g, "").slice(0, 12)}`,
       };
@@ -307,5 +321,134 @@ export const mockApi: typeof api = {
   providerBudgets: async () => {
     await simDelay();
     return mockData.buildProviderBudgets(new Date());
+  },
+
+  // Batch channel operations
+  batchEnableChannels: async (ids: string[]) => {
+    await simDelay();
+    return { updated: ids.length };
+  },
+  batchDisableChannels: async (ids: string[]) => {
+    await simDelay();
+    return { updated: ids.length };
+  },
+  batchDeleteChannels: async (ids: string[]) => {
+    await simDelay();
+    return { deleted: ids.length };
+  },
+  batchUpdateTags: async (ids: string[], _tags: string[]) => {
+    await simDelay();
+    return { updated: ids.length };
+  },
+
+  // Reset circuit breaker
+  resetCircuit: async (_id: string) => {
+    await simDelay();
+    return { ok: true };
+  },
+
+  // Audit log
+  auditLog: async (_limit = 100) => {
+    await simDelay();
+    return [];
+  },
+
+  // Metrics (Prometheus text format)
+  metrics: async () => {
+    await simDelay();
+    return "# HELP modelswitch_requests_total Total requests\n# TYPE modelswitch_requests_total counter\nmodelswitch_requests_total 0\n";
+  },
+
+  // Guardrails config
+  guardrailsConfig: async (): Promise<GuardrailsConfig> => {
+    await simDelay();
+    return {
+      enabled: false,
+      blocked_patterns: [],
+      allowed_patterns: [],
+      max_request_chars: null,
+      block_message: "Request blocked by guardrails",
+    };
+  },
+  updateGuardrails: async (config: Partial<GuardrailsConfig>): Promise<GuardrailsConfig> => {
+    await simDelay();
+    return {
+      enabled: config.enabled ?? false,
+      blocked_patterns: config.blocked_patterns ?? [],
+      allowed_patterns: config.allowed_patterns ?? [],
+      max_request_chars: config.max_request_chars ?? null,
+      block_message: config.block_message ?? "Request blocked by guardrails",
+    };
+  },
+
+  // Redemption codes
+  redemptionCodes: {
+    list: async (): Promise<RedemptionCode[]> => {
+      await simDelay();
+      return [];
+    },
+    create: async (data: { credits_cents: number; expires_at?: string | null }): Promise<RedemptionCode> => {
+      await simDelay();
+      return {
+        code: `RC-${uuid().slice(0, 8).toUpperCase()}`,
+        credits_cents: data.credits_cents,
+        used: false,
+        used_by: null,
+        used_at: null,
+        created_at: new Date().toISOString(),
+        expires_at: data.expires_at ?? null,
+      };
+    },
+    redeem: async (_code: string, _userId?: string) => {
+      await simDelay();
+      return { credits_cents: 1000 };
+    },
+    delete: async (_code: string) => {
+      await simDelay();
+    },
+  },
+
+  // Notification config
+  notificationConfig: async (): Promise<NotificationConfig> => {
+    await simDelay();
+    return {
+      webhook: { enabled: false, url: null, secret: null },
+      bark: { enabled: false, url: null, key: null },
+      events: { channel_failure: true, quota_warning: true, cooldown_triggered: true },
+    };
+  },
+  updateNotification: async (config: Partial<NotificationConfig>): Promise<NotificationConfig> => {
+    await simDelay();
+    return {
+      webhook: config.webhook ?? { enabled: false, url: null, secret: null },
+      bark: config.bark ?? { enabled: false, url: null, key: null },
+      events: config.events ?? { channel_failure: true, quota_warning: true, cooldown_triggered: true },
+    };
+  },
+
+  // Channel auto-test
+  testChannel: async (_id: string) => {
+    await simDelay();
+    return { healthy: true, latency_ms: 42, error: null };
+  },
+  testAllChannels: async () => {
+    await simDelay();
+    return [];
+  },
+
+  // MCP health
+  mcpHealth: async () => {
+    await simDelay();
+    return [];
+  },
+
+  // Completion ratios
+  completionRatios: async () => {
+    await simDelay();
+    return {};
+  },
+  updateCompletionRatios: async (ratios: Record<string, number>) => {
+    await simDelay();
+    return ratios;
   },
 };

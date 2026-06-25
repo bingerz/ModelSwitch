@@ -12,11 +12,16 @@ import { QuotaPanel } from "./components/quota/QuotaPanel";
 import { McpServersPanel } from "./components/mcp/McpServersPanel";
 import { VirtualKeysPanel } from "./components/virtualkeys/VirtualKeysPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { AuditLogPanel } from "./components/AuditLogPanel";
+import { GuardrailsPanel } from "./components/GuardrailsPanel";
+import { RedemptionCodesPanel } from "./components/RedemptionCodesPanel";
+import { MetricsPanel } from "./components/MetricsPanel";
+import { NotificationPanel } from "./components/NotificationPanel";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { MockBadge } from "./components/MockBadge";
 import { QuotaProvider } from "./hooks/useQuota";
 
-type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "logs" | "cost" | "quota" | "settings";
+type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "logs" | "cost" | "quota" | "settings" | "audit" | "redemption" | "metrics" | "guardrails" | "notifications";
 type Theme = "light" | "dark";
 
 function getTabGroups(t: (key: string) => string): { title: string; tabs: { id: TabId; label: string }[] }[] {
@@ -39,11 +44,18 @@ function getTabGroups(t: (key: string) => string): { title: string; tabs: { id: 
         { id: "cost", label: t("nav.cost") },
         { id: "quota", label: t("nav.quota") },
         { id: "logs", label: t("nav.logs") },
+        { id: "metrics", label: t("nav.metrics") },
+        { id: "audit", label: t("nav.audit") },
       ],
     },
     {
       title: t("nav.system"),
-      tabs: [{ id: "settings", label: t("nav.settings") }],
+      tabs: [
+        { id: "settings", label: t("nav.settings") },
+        { id: "guardrails", label: t("nav.guardrails") },
+        { id: "notifications", label: t("nav.notifications") },
+        { id: "redemption", label: t("nav.redemption") },
+      ],
     },
   ];
 }
@@ -91,9 +103,9 @@ function AppInner() {
   // Web mode keyboard shortcuts: Cmd/Ctrl+1..8 to switch tabs
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key >= "1" && e.key <= "8") {
+      if ((e.ctrlKey || e.metaKey) && e.key >= "1" && e.key <= "9") {
         e.preventDefault();
-        const tabs: TabId[] = ["dashboard", "channels", "virtualKeys", "mcp", "logs", "cost", "quota", "settings"];
+        const tabs: TabId[] = ["dashboard", "channels", "virtualKeys", "mcp", "logs", "cost", "quota", "settings", "audit", "redemption", "metrics", "guardrails", "notifications"];
         const idx = parseInt(e.key, 10) - 1;
         if (tabs[idx]) {
           setActiveTab(tabs[idx]);
@@ -249,6 +261,11 @@ function AppInner() {
           {activeTab === "cost" && <CostDashboard />}
           {activeTab === "quota" && <QuotaPanel />}
           {activeTab === "settings" && <SettingsPanel />}
+          {activeTab === "audit" && <AuditLogPanel />}
+          {activeTab === "guardrails" && <GuardrailsPanel />}
+          {activeTab === "redemption" && <RedemptionCodesPanel />}
+          {activeTab === "metrics" && <MetricsPanel />}
+          {activeTab === "notifications" && <NotificationPanel />}
         </main>
       </div>
       <StatusBar />

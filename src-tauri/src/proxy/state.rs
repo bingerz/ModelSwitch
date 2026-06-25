@@ -1,13 +1,15 @@
 use crate::admin::audit::AuditLog;
 use crate::channel::manager::ChannelManager;
 use crate::credential::SharedCredentialStore;
+use crate::guardrails::GuardrailsChecker;
 use crate::log::DispatchLogger;
 use crate::mcp::McpManager;
 use crate::model_registry::ModelRegistry;
+use crate::notification::NotificationService;
 use crate::proxy::cache::{InFlightRequests, RequestCache};
 use crate::proxy::payload_rules::ChannelPayloadRules;
 use crate::proxy::rate_limiter::RateLimiter;
-use crate::quota::SharedQuotaStore;
+use crate::quota::{RedemptionCodeStore, SharedQuotaStore};
 use crate::router::active_requests::ActiveRequests;
 use crate::router::affinity::SessionAffinity;
 use crate::virtual_key::SharedVirtualKeyStore;
@@ -103,5 +105,14 @@ pub struct AppState {
     pub billing: BillingState,
     pub mcp: McpState,
     pub security: SecurityState,
+    /// Content moderation guardrails checker (runtime-updatable).
+    pub guardrails: Arc<GuardrailsChecker>,
+    /// Redemption code store for credit grants.
+    pub redemption_codes: Arc<RedemptionCodeStore>,
+    /// Notification service for budget and channel alerts.
+    pub notifications: Arc<NotificationService>,
+    /// Runtime-updatable completion ratios (mirrors the startup value from
+    /// [`ProxyParams::completion_ratios`] but mutable at runtime via admin API).
+    pub completion_ratios: Arc<parking_lot::RwLock<HashMap<String, f64>>>,
     pub started_at: std::time::Instant,
 }

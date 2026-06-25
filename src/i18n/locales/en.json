@@ -90,7 +90,12 @@
     "overview": "Overview",
     "configuration": "Configuration",
     "monitoring": "Monitoring",
-    "system": "System"
+    "system": "System",
+    "audit": "Audit Log",
+    "redemption": "Redemption Codes",
+    "metrics": "Metrics",
+    "guardrails": "Guardrails",
+    "notifications": "Notifications"
   },
   "login": {
     "brand": "ModelSwitch",
@@ -208,7 +213,23 @@
     "geminiFormat": "Gemini",
     "credentialApiKey": "API Key",
     "credentialWebSession": "Web Session",
-    "webSessionHint": "In web console mode, paste your session cookies directly into the field above."
+    "webSessionHint": "In web console mode, paste your session cookies directly into the field above.",
+    "selected": "Selected {{count}} channels",
+    "setTag": "Set Tags",
+    "tagCommaSeparated": "tag1, tag2, ...",
+    "batchEnabled": "Enabled {{count}} channels",
+    "batchDisabled": "Disabled {{count}} channels",
+    "batchDeleted": "Deleted {{count}} channels",
+    "batchTagsUpdated": "Updated tags on {{count}} channels",
+    "batchFailed": "Batch operation failed",
+    "testAll": "Test All",
+    "testAllResult": "{{healthy}}/{{total}} channels healthy",
+    "testAllFailed": "Failed to test channels",
+    "testOk": "Test OK ({{latency}}ms)",
+    "testFailed": "Test failed: {{error}}",
+    "testError": "Test error",
+    "resetCircuit": "Reset Circuit",
+    "circuitReset": "Circuit breaker reset"
   },
   "virtualKeys": {
     "title": "Virtual Keys",
@@ -250,7 +271,12 @@
     "keyDisabled": "Key disabled",
     "keyEnabled": "Key enabled",
     "createdToast": "Virtual key created",
-    "updatedToast": "Virtual key updated"
+    "updatedToast": "Virtual key updated",
+    "allowedIps": "Allowed IPs (CIDR supported)",
+    "allowedIpsHint": "192.168.1.0/24, 10.0.0.5 (empty = allow all)",
+    "allowedModelsHint": "gpt-4*, claude-* (empty = allow all)",
+    "deniedModels": "Denied Models",
+    "deniedModelsHint": "gpt-3.5* (always blocked)"
   },
   "mcp": {
     "title": "MCP Servers",
@@ -513,7 +539,13 @@
     "dailyBudget": "Daily Budget",
     "thisMonthColumn": "This Month",
     "monthlyBudget": "Monthly Budget",
-    "total": "Total"
+    "total": "Total",
+    "completionRatios": "Completion Ratios (Output Token Cost Multiplier)",
+    "completionRatiosHint": "Set per-model output token cost multipliers. A ratio of 2.0 means output tokens cost 2x the base rate.",
+    "completionRatiosSaved": "Completion ratios saved",
+    "completionRatiosSaveFailed": "Failed to save completion ratios",
+    "advancedFeatures": "Advanced Features",
+    "advancedFeaturesHint": "Additional features are available in the sidebar: Guardrails, Notifications, Redemption Codes, and Metrics."
   },
   "toast": {
     "gatewayStarted": "Gateway started",
@@ -540,5 +572,79 @@
     "aggregator": "Aggregators",
     "cloud_provider": "Cloud Providers",
     "third_party": "Third-party Relay"
+  },
+  "audit": {
+    "title": "Audit Log",
+    "empty": "No audit entries yet",
+    "emptyHint": "Admin actions will be logged here as they occur.",
+    "timestamp": "Timestamp",
+    "action": "Action",
+    "actor": "Actor",
+    "target": "Target",
+    "details": "Details"
+  },
+  "guardrails": {
+    "title": "Content Guardrails",
+    "status": "Status",
+    "enable": "Enable content filtering",
+    "blockedPatterns": "Blocked Patterns",
+    "blockedHint": "One pattern per line. Requests matching these regex patterns will be blocked.",
+    "allowedPatterns": "Allowed Patterns",
+    "allowedHint": "One pattern per line. Overrides blocked patterns for trusted flows.",
+    "advanced": "Advanced",
+    "maxRequestChars": "Max Request Characters",
+    "blockMessage": "Block Response Message",
+    "saved": "Guardrails configuration saved",
+    "saveFailed": "Failed to save guardrails configuration"
+  },
+  "redemption": {
+    "title": "Redemption Codes",
+    "create": "+ Add Code",
+    "createNew": "Create New Code",
+    "redeemCode": "Redeem a Code",
+    "code": "Code",
+    "credits": "Credits",
+    "creditsAmount": "Amount (USD)",
+    "expires": "Expires",
+    "expiresAt": "Expires At (optional)",
+    "redeem": "Redeem",
+    "used": "Used",
+    "available": "Available",
+    "usedBy": "Used By",
+    "usedAt": "Used At",
+    "userOptional": "User (optional)",
+    "codePlaceholder": "Enter redemption code",
+    "empty": "No redemption codes",
+    "emptyHint": "Create codes to allow quota top-ups.",
+    "invalidCredits": "Invalid credit amount",
+    "created": "Redemption code created",
+    "createFailed": "Failed to create code",
+    "redeemed": "Redeemed {{credits}} in credits",
+    "redeemFailed": "Failed to redeem code",
+    "deleted": "Code deleted",
+    "deleteFailed": "Failed to delete code"
+  },
+  "metrics": {
+    "title": "Prometheus Metrics",
+    "summary": "Key Metrics",
+    "rawData": "Raw Metrics Data",
+    "rawHint": "Full Prometheus text-format metrics exported at"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "webhook": "Webhook",
+    "enableWebhook": "Enable webhook notifications",
+    "webhookUrl": "Webhook URL",
+    "webhookSecret": "HMAC Secret",
+    "bark": "Bark Push",
+    "enableBark": "Enable Bark push notifications",
+    "barkUrl": "Bark Server URL",
+    "barkKey": "Bark Device Key",
+    "events": "Notification Events",
+    "eventChannelFailure": "Channel failure",
+    "eventQuotaWarning": "Quota warning",
+    "eventCooldown": "Cooldown triggered",
+    "saved": "Notification configuration saved",
+    "saveFailed": "Failed to save notification configuration"
   }
 }

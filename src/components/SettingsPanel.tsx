@@ -17,6 +17,10 @@ export function SettingsPanel() {
   const [loading, setLoading] = useState(true);
   const [flushing, setFlushing] = useState(false);
   const [reloading, setReloading] = useState(false);
+  const [completionRatios, setCompletionRatios] = useState<Record<string, number>>({});
+  const [newRatioModel, setNewRatioModel] = useState("");
+  const [newRatioValue, setNewRatioValue] = useState("");
+  const [savingRatios, setSavingRatios] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -28,6 +32,12 @@ export function SettingsPanel() {
       setCacheStats(cache);
       setGatewayInfo(info);
       setBudgets(budgetData);
+      try {
+        const ratios = await api.completionRatios();
+        setCompletionRatios(ratios);
+      } catch {
+        // ratios not available yet
+      }
     } catch {
       // Silently fail — StatusBar shows gateway status
     } finally {
@@ -274,6 +284,110 @@ export function SettingsPanel() {
           </div>
         </div>
       )}
+      {/* Completion Ratios */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">
+          {t("settings.completionRatios")}
+        </h3>
+        <p className="settings-hint">{t("settings.completionRatiosHint")}</p>
+        {Object.keys(completionRatios).length > 0 && (
+          <div className="settings-table-wrapper" style={{ marginBottom: "var(--space-2)" }}>
+            <table className="settings-table">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>Ratio</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(completionRatios).map(([model, ratio]) => (
+                  <tr key={model}>
+                    <td className="mono">{model}</td>
+                    <td className="mono">{ratio.toFixed(2)}x</td>
+                    <td>
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => {
+                          const next = { ...completionRatios };
+                          delete next[model];
+                          setCompletionRatios(next);
+                        }}
+                      >
+                        {t("common.remove")}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "flex-end" }}>
+          <div>
+            <label className="settings-stat-label">Model</label>
+            <input
+              type="text"
+              className="settings-input"
+              value={newRatioModel}
+              onChange={(e) => setNewRatioModel(e.target.value)}
+              placeholder="e.g. gpt-4o"
+              style={{ width: "150px" }}
+            />
+          </div>
+          <div>
+            <label className="settings-stat-label">Ratio</label>
+            <input
+              type="number"
+              className="settings-input"
+              value={newRatioValue}
+              onChange={(e) => setNewRatioValue(e.target.value)}
+              placeholder="e.g. 2.0"
+              step="0.1"
+              min="0.1"
+              style={{ width: "100px" }}
+            />
+          </div>
+          <button
+            className="btn btn-sm"
+            onClick={() => {
+              const model = newRatioModel.trim();
+              const ratio = parseFloat(newRatioValue);
+              if (model && !isNaN(ratio) && ratio > 0) {
+                setCompletionRatios({ ...completionRatios, [model]: ratio });
+                setNewRatioModel("");
+                setNewRatioValue("");
+              }
+            }}
+          >
+            {t("common.add")}
+          </button>
+          <button
+            className="btn btn-sm btn-primary"
+            disabled={savingRatios}
+            onClick={async () => {
+              setSavingRatios(true);
+              try {
+                const updated = await api.updateCompletionRatios(completionRatios);
+                setCompletionRatios(updated);
+                toast.success(t("settings.completionRatiosSaved"));
+              } catch {
+                toast.error(t("settings.completionRatiosSaveFailed"));
+              } finally {
+                setSavingRatios(false);
+              }
+            }}
+          >
+            {savingRatios ? t("common.saving") : t("common.save")}
+          </button>
+        </div>
+      </div>
+
+      {/* Quick Links to Feature Panels */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">{t("settings.advancedFeatures")}</h3>
+        <p className="settings-hint">{t("settings.advancedFeaturesHint")}</p>
+      </div>
     </section>
   );
 }

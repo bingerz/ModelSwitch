@@ -243,6 +243,14 @@ fn build_test_state_with_opts(
             sanitizer_config: SanitizerConfig::default(),
             allowed_origins: None,
         },
+        guardrails: Arc::new(crate::guardrails::GuardrailsChecker::new(
+            crate::guardrails::GuardrailsConfig::default(),
+        )),
+        redemption_codes: Arc::new(crate::quota::RedemptionCodeStore::new()),
+        notifications: Arc::new(crate::notification::NotificationService::new(
+            crate::notification::NotificationConfig::default(),
+        )),
+        completion_ratios: Arc::new(parking_lot::RwLock::new(HashMap::new())),
         model_registry,
         started_at: std::time::Instant::now(),
     })

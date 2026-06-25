@@ -7,6 +7,7 @@ import { useToast } from "../Toast";
 import { ChannelCard } from "./ChannelCard";
 import { ChannelForm } from "./ChannelForm";
 import { EditChannelForm } from "./EditChannelForm";
+import { BatchOperationsBar } from "./BatchOperationsBar";
 
 export function ChannelPanel() {
   const { t } = useTranslation();
@@ -19,6 +20,7 @@ export function ChannelPanel() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [overflowOpenId, setOverflowOpenId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<
     "all" | "healthy" | "circuit_open" | "disabled"
   >("all");
@@ -45,6 +47,38 @@ export function ChannelPanel() {
       toast.success(result.success ? t("channels.pingOk", { latency: result.latency_ms }) : t("channels.pingFailed"));
     } catch {
       toast.error(t("channels.pingError"));
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleTestAll = async () => {
+    try {
+      const results = await api.testAllChannels();
+      const healthy = results.filter((r) => r.healthy).length;
+      toast.success(t("channels.testAllResult", { healthy, total: results.length }));
+    } catch {
+      toast.error(t("channels.testAllFailed"));
+    }
+  };
+
+  const handleTest = async (id: string) => {
+    try {
+      const result = await api.testChannel(id);
+      if (result.healthy) {
+        toast.success(t("channels.testOk", { latency: result.latency_ms }));
+      } else {
+        toast.error(t("channels.testFailed", { error: result.error }));
+      }
+    } catch {
+      toast.error(t("channels.testError"));
     }
   };
 
@@ -134,6 +168,9 @@ export function ChannelPanel() {
     <section>
       <div className="panel-header">
         <h2 className="panel-title">{t("channels.title")}</h2>
+        <button className="btn btn-sm" onClick={handleTestAll} title={t("channels.testAll")}>
+          {t("channels.testAll")}
+        </button>
         <button className="btn btn-primary" onClick={() => setShowAddForm(!showAddForm)}>
           {showAddForm ? t("common.cancel") : t("channels.create")}
         </button>
@@ -184,7 +221,15 @@ export function ChannelPanel() {
         </p>
       )}
 
-      <div className="tiers-container">
+      <BatchOperationsBar
+          selectedIds={Array.from(selectedIds)}
+          onClear={() => setSelectedIds(new Set())}
+          onDone={() => {
+            refresh();
+            setSelectedIds(new Set());
+          }}
+        />
+        <div className="tiers-container">
         {allPriorities.map((priority) => {
           const tierLabel = t(`channels.priority${priority}Label`);
           const tierDesc = t(`channels.priority${priority}Desc`);
@@ -228,6 +273,9 @@ export function ChannelPanel() {
                         key={ch.id}
                         channel={ch}
                         quota={quotaMap.get(ch.id)}
+                        selected={selectedIds.has(ch.id)}
+                        onToggleSelect={() => toggleSelect(ch.id)}
+                        onTest={() => handleTest(ch.id)}
                         confirmDelete={confirmDeleteId === ch.id}
                         overflowOpen={overflowOpenId === ch.id}
                         onEdit={() => setEditingId(ch.id)}

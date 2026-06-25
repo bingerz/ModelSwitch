@@ -90,7 +90,12 @@
     "overview": "概览",
     "configuration": "配置",
     "monitoring": "监控",
-    "system": "系统"
+    "system": "系统",
+    "audit": "审计日志",
+    "redemption": "兑换码",
+    "metrics": "指标",
+    "guardrails": "内容护栏",
+    "notifications": "通知"
   },
   "login": {
     "brand": "ModelSwitch",
@@ -208,7 +213,23 @@
     "geminiFormat": "Gemini",
     "credentialApiKey": "API 密钥",
     "credentialWebSession": "Web 会话",
-    "webSessionHint": "在 Web 控制台模式下，请直接将您的会话 Cookie 粘贴到上方输入框中。"
+    "webSessionHint": "在 Web 控制台模式下，请直接将您的会话 Cookie 粘贴到上方输入框中。",
+    "selected": "已选 {{count}} 个通道",
+    "setTag": "设置标签",
+    "tagCommaSeparated": "标签1, 标签2, ...",
+    "batchEnabled": "已启用 {{count}} 个通道",
+    "batchDisabled": "已禁用 {{count}} 个通道",
+    "batchDeleted": "已删除 {{count}} 个通道",
+    "batchTagsUpdated": "已更新 {{count}} 个通道的标签",
+    "batchFailed": "批量操作失败",
+    "testAll": "全部测试",
+    "testAllResult": "{{healthy}}/{{total}} 个通道正常",
+    "testAllFailed": "测试通道失败",
+    "testOk": "测试正常 ({{latency}}ms)",
+    "testFailed": "测试失败: {{error}}",
+    "testError": "测试错误",
+    "resetCircuit": "重置熔断器",
+    "circuitReset": "熔断器已重置"
   },
   "virtualKeys": {
     "title": "虚拟密钥",
@@ -250,7 +271,12 @@
     "keyDisabled": "密钥已禁用",
     "keyEnabled": "密钥已启用",
     "createdToast": "虚拟密钥已创建",
-    "updatedToast": "虚拟密钥已更新"
+    "updatedToast": "虚拟密钥已更新",
+    "allowedIps": "允许的 IP (支持 CIDR)",
+    "allowedIpsHint": "192.168.1.0/24, 10.0.0.5 (留空 = 允许所有)",
+    "allowedModelsHint": "gpt-4*, claude-* (留空 = 允许所有)",
+    "deniedModels": "禁止的模型",
+    "deniedModelsHint": "gpt-3.5* (始终禁止)"
   },
   "mcp": {
     "title": "MCP 服务器",
@@ -513,7 +539,13 @@
     "dailyBudget": "每日预算",
     "thisMonthColumn": "本月",
     "monthlyBudget": "每月预算",
-    "total": "总计"
+    "total": "总计",
+    "completionRatios": "补全比率 (输出 Token 成本倍数)",
+    "completionRatiosHint": "设置每个模型的输出 Token 成本倍数。比率为 2.0 表示输出 Token 成本为基础费率的 2 倍。",
+    "completionRatiosSaved": "补全比率已保存",
+    "completionRatiosSaveFailed": "保存补全比率失败",
+    "advancedFeatures": "高级功能",
+    "advancedFeaturesHint": "侧边栏提供更多功能：内容护栏、通知、兑换码和指标。"
   },
   "toast": {
     "gatewayStarted": "网关已启动",
@@ -540,5 +572,79 @@
     "aggregator": "聚合平台",
     "cloud_provider": "云服务商",
     "third_party": "第三方中转"
+  },
+  "audit": {
+    "title": "审计日志",
+    "empty": "暂无审计记录",
+    "emptyHint": "管理员操作将自动记录在此处。",
+    "timestamp": "时间",
+    "action": "操作",
+    "actor": "操作者",
+    "target": "目标",
+    "details": "详情"
+  },
+  "guardrails": {
+    "title": "内容护栏",
+    "status": "状态",
+    "enable": "启用内容过滤",
+    "blockedPatterns": "阻止模式",
+    "blockedHint": "每行一个模式。匹配这些正则表达式的请求将被阻止。",
+    "allowedPatterns": "允许模式",
+    "allowedHint": "每行一个模式。覆盖阻止模式用于可信流量。",
+    "advanced": "高级",
+    "maxRequestChars": "最大请求字符数",
+    "blockMessage": "阻止响应消息",
+    "saved": "护栏配置已保存",
+    "saveFailed": "保存护栏配置失败"
+  },
+  "redemption": {
+    "title": "兑换码",
+    "create": "+ 添加兑换码",
+    "createNew": "创建新兑换码",
+    "redeemCode": "兑换码",
+    "code": "兑换码",
+    "credits": "额度",
+    "creditsAmount": "金额 (USD)",
+    "expires": "过期时间",
+    "expiresAt": "过期时间 (可选)",
+    "redeem": "兑换",
+    "used": "已使用",
+    "available": "可用",
+    "usedBy": "使用者",
+    "usedAt": "使用时间",
+    "userOptional": "用户 (可选)",
+    "codePlaceholder": "输入兑换码",
+    "empty": "暂无兑换码",
+    "emptyHint": "创建兑换码以支持额度充值。",
+    "invalidCredits": "无效的金额",
+    "created": "兑换码已创建",
+    "createFailed": "创建兑换码失败",
+    "redeemed": "已兑换 {{credits}} 额度",
+    "redeemFailed": "兑换失败",
+    "deleted": "兑换码已删除",
+    "deleteFailed": "删除兑换码失败"
+  },
+  "metrics": {
+    "title": "Prometheus 指标",
+    "summary": "关键指标",
+    "rawData": "原始指标数据",
+    "rawHint": "完整的 Prometheus 文本格式指标导出自"
+  },
+  "notifications": {
+    "title": "通知",
+    "webhook": "Webhook",
+    "enableWebhook": "启用 Webhook 通知",
+    "webhookUrl": "Webhook URL",
+    "webhookSecret": "HMAC 密钥",
+    "bark": "Bark 推送",
+    "enableBark": "启用 Bark 推送通知",
+    "barkUrl": "Bark 服务器 URL",
+    "barkKey": "Bark 设备密钥",
+    "events": "通知事件",
+    "eventChannelFailure": "通道故障",
+    "eventQuotaWarning": "配额警告",
+    "eventCooldown": "冷却触发",
+    "saved": "通知配置已保存",
+    "saveFailed": "保存通知配置失败"
   }
 }
