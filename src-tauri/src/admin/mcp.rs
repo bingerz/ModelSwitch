@@ -327,3 +327,194 @@ pub async fn list_all_mcp_tools(
         crate::mcp::aggregator::aggregate_all_tools(&state.mcp.mcp_manager).await,
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::McpServerConfig;
+    use crate::test_helpers::{build_test_state, response_status};
+    use std::collections::HashMap;
+
+    fn make_config(id: &str, name: &str) -> McpServerConfig {
+        McpServerConfig {
+            id: id.to_string(),
+            name: name.to_string(),
+            command: "echo".to_string(),
+            args: vec![],
+            env: HashMap::new(),
+            cwd: None,
+            enabled: true,
+            expose_tools: true,
+        }
+    }
+
+    fn make_create_request(id: &str, name: &str, command: &str) -> CreateMcpServerRequest {
+        CreateMcpServerRequest {
+            id: id.to_string(),
+            name: name.to_string(),
+            command: command.to_string(),
+            args: vec![],
+            env: HashMap::new(),
+            cwd: None,
+            enabled: true,
+            expose_tools: true,
+        }
+    }
+
+    // ─── P0: error mapping helper ─────────────────────────
+
+    #[test]
+    fn mcp_error_to_response_maps_unknown_to_404() {
+        let err = anyhow::anyhow!("Unknown server id");
+        let resp = mcp_error_to_response(err);
+        assert_eq!(response_status(&resp), 404);
+    }
+
+    #[test]
+    fn mcp_error_to_response_maps_already_running_to_409() {
+        let err = anyhow::anyhow!("Server already running");
+        let resp = mcp_error_to_response(err);
+        assert_eq!(response_status(&resp), 409);
+    }
+
+    #[test]
+    fn mcp_error_to_response_maps_not_running_to_409() {
+        let err = anyhow::anyhow!("Server not running");
+        let resp = mcp_error_to_response(err);
+        assert_eq!(response_status(&resp), 409);
+    }
+
+    #[test]
+    fn mcp_error_to_response_maps_other_to_500() {
+        let err = anyhow::anyhow!("spawn failed: EACCES");
+        let resp = mcp_error_to_response(err);
+        assert_eq!(response_status(&resp), 500);
+    }
+
+    // ─── P1: read-only handlers ──────────────────────────
+
+    #[tokio::test]
+    async fn list_mcp_servers_returns_empty_initially() {
+        let state = build_test_state(vec![]);
+        let result = list_mcp_servers(State(state)).await;
+        assert!(result.data.is_empty());
+        assert!(result.ok);
+    }
+
+    #[tokio::test]
+    async fn list_all_mcp_tools_returns_empty_when_no_servers() {
+        let state = build_test_state(vec![]);
+        let result = list_all_mcp_tools(State(state)).await;
+        assert!(result.data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_mcp_servers_reflects_loaded_configs() {
+        let state = build_test_state(vec![]);
+        state
+            .mcp
+            .mcp_manager
+            .load_configs(&[make_config("srv1", "My Server")])
+            .await;
+
+        let result = list_mcp_servers(State(state)).await;
+        assert_eq!(result.data.len(), 1);
+        assert_eq!(result.data[0].id, "srv1");
+        assert_eq!(result.data[0].name, "My Server");
+    }
+
+    // ─── P2: error paths for action handlers ─────────────
+    //
+    // `ApiResponse<T>` is not Debug, so we cannot use `expect_err`. Match on
+    // the `Err` variant to pull out the error Response directly.
+
+    #[tokio::test]
+    async fn start_mcp_server_returns_404_for_unknown_id() {
+        let state = build_test_state(vec![]);
+        let result = start_mcp_server(State(state), Path("no-such".to_string())).await;
+        match result {
+            Ok(_) => panic!("expected error for unknown id"),
+            Err(resp) => assert_eq!(response_status(&resp), 404),
+        }
+    }
+
+    #[tokio::test]
+    async fn stop_mcp_server_returns_404_for_unknown_id() {
+        let state = build_test_state(vec![]);
+        let result = stop_mcp_server(State(state), Path("no-such".to_string())).await;
+        match result {
+            Ok(_) => panic!("expected error for unknown id"),
+            Err(resp) => assert_eq!(response_status(&resp), 404),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_mcp_server_tools_returns_error_for_unknown_id() {
+        let state = build_test_state(vec![]);
+        let result = list_mcp_server_tools(State(state), Path("no-such".to_string())).await;
+        match result {
+            Ok(_) => panic!("expected error for unknown id"),
+            Err(resp) => assert_eq!(response_status(&resp), 404),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_mcp_server_tools_returns_error_for_stopped_server() {
+        let state = build_test_state(vec![]);
+        state
+            .mcp
+            .mcp_manager
+            .load_configs(&[make_config("srv1", "Server One")])
+            .await;
+
+        let result = list_mcp_server_tools(State(state), Path("srv1".to_string())).await;
+        match result {
+            Ok(_) => panic!("expected error for stopped server"),
+            Err(resp) => {
+                // "MCP server srv1 is not running" maps to CONFLICT (409)
+                // because the error mapping treats "not running" as a state
+                // conflict.
+                assert_eq!(response_status(&resp), 409);
+            }
+        }
+    }
+
+    // ─── P3: create validation branches (pre-disk-I/O) ───
+    //
+    // These branches return BEFORE any AppConfig::load() / config.save() disk
+    // I/O, so they are safe to exercise without corrupting the developer's
+    // config file.
+
+    #[tokio::test]
+    async fn create_mcp_server_rejects_empty_id() {
+        let state = build_test_state(vec![]);
+        let req = make_create_request("", "test", "echo");
+        let result = create_mcp_server(State(state), Json(req)).await;
+        match result {
+            Ok(_) => panic!("expected BAD_REQUEST for empty id"),
+            Err(resp) => assert_eq!(response_status(&resp), 400),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_mcp_server_rejects_empty_name() {
+        let state = build_test_state(vec![]);
+        let req = make_create_request("srv1", "", "echo");
+        let result = create_mcp_server(State(state), Json(req)).await;
+        match result {
+            Ok(_) => panic!("expected BAD_REQUEST for empty name"),
+            Err(resp) => assert_eq!(response_status(&resp), 400),
+        }
+    }
+
+    #[tokio::test]
+    async fn create_mcp_server_rejects_whitespace_only_fields() {
+        let state = build_test_state(vec![]);
+        let req = make_create_request("   ", "test", "echo");
+        let result = create_mcp_server(State(state), Json(req)).await;
+        match result {
+            Ok(_) => panic!("expected BAD_REQUEST for whitespace-only id"),
+            Err(resp) => assert_eq!(response_status(&resp), 400),
+        }
+    }
+}
