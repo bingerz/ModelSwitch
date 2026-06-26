@@ -907,8 +907,18 @@ fn portal_routes() -> Router<Arc<AppState>> {
 
 /// Public authentication routes — NOT protected by admin_auth_middleware.
 /// These endpoints handle their own authentication internally (e.g. LDAP bind).
-fn auth_routes() -> Router<Arc<AppState>> {
-    Router::new().route("/api/auth/ldap/login", post(admin::auth::ldap_login))
+///
+/// Rate-limiting middleware is applied to prevent brute-force attacks on
+/// publicly accessible auth endpoints (e.g. LDAP credential stuffing).
+fn auth_routes(state: Arc<AppState>) -> Router {
+    let auth_rate_limit_state = Arc::clone(&state);
+    Router::new()
+        .route("/api/auth/ldap/login", post(admin::auth::ldap_login))
+        .layer(axum::middleware::from_fn_with_state(
+            auth_rate_limit_state,
+            middleware::auth::auth_rate_limit_middleware,
+        ))
+        .with_state(state)
 }
 
 /// Build the Axum Router with all proxy and admin routes.
@@ -998,7 +1008,7 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
         .merge(proxy_router)
         .merge(admin_router)
         .merge(portal_routes().with_state(Arc::clone(&state)))
-        .merge(auth_routes().with_state(Arc::clone(&state)))
+        .merge(auth_routes(Arc::clone(&state)))
         .route("/metrics", get(metrics_handler))
         .route("/v1/metrics", get(metrics_handler))
         .route("/healthz", get(healthz_handler));

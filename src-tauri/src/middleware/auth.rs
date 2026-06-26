@@ -87,7 +87,7 @@ pub(crate) fn extract_client_ip(req: &Request<Body>, trust_forwarded: bool) -> S
 }
 
 /// Returns `true` if the IP is currently blocked due to too many failures.
-fn is_rate_limited(ip: &str) -> bool {
+pub(crate) fn is_rate_limited(ip: &str) -> bool {
     let Ok(map) = attempts().lock() else {
         return false; // poisoned lock — fail open
     };
@@ -101,7 +101,7 @@ fn is_rate_limited(ip: &str) -> bool {
 
 /// Record a failed authentication attempt, blocking the IP when the threshold
 /// is reached. Stale entries are cleaned up to bound memory usage.
-fn record_auth_failure(ip: &str) {
+pub(crate) fn record_auth_failure(ip: &str) {
     let Ok(mut map) = attempts().lock() else {
         return;
     };
@@ -131,7 +131,7 @@ fn record_auth_failure(ip: &str) {
 }
 
 /// Clear the rate-limit state for an IP on successful authentication.
-fn record_auth_success(ip: &str) {
+pub(crate) fn record_auth_success(ip: &str) {
     let Ok(mut map) = attempts().lock() else {
         return;
     };
@@ -205,6 +205,36 @@ pub async fn admin_auth_middleware(
             Err((StatusCode::UNAUTHORIZED, "Unauthorized"))
         }
     }
+}
+
+/// Rate-limiting middleware for public authentication endpoints (e.g., LDAP login).
+/// Uses the same brute-force protection as admin auth: after [`MAX_ATTEMPTS`]
+/// failures within [`WINDOW_SECS`], the IP is blocked for [`BLOCK_SECS`].
+///
+/// This middleware must be applied with `from_fn_with_state` since it needs
+/// `AppState` for `extract_client_ip` and the `trust_forwarded_headers` flag.
+pub async fn auth_rate_limit_middleware(
+    State(state): State<Arc<AppState>>,
+    req: Request<Body>,
+    next: Next,
+) -> Result<Response, (StatusCode, &'static str)> {
+    let ip = extract_client_ip(&req, state.security.trust_forwarded_headers);
+
+    // Reject early if the IP is already blocked.
+    if is_rate_limited(&ip) {
+        return Err((StatusCode::TOO_MANY_REQUESTS, "Too many failed attempts"));
+    }
+
+    let response = next.run(req).await;
+
+    // Record success or failure based on response status.
+    if response.status() == StatusCode::UNAUTHORIZED {
+        record_auth_failure(&ip);
+    } else if response.status().is_success() {
+        record_auth_success(&ip);
+    }
+
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -337,5 +367,29 @@ mod tests {
         let req = Request::builder().body(Body::empty()).unwrap();
         let ip = extract_client_ip(&req, true);
         assert_eq!(ip, "unknown");
+    }
+
+    /// Auth endpoint rate limiting uses the same brute-force protection as
+    /// admin auth — verify it blocks after three failures.
+    #[test]
+    fn auth_rate_limiting_blocks_after_three_failures() {
+        let ip = "10.0.0.42"; // unique per test
+
+        {
+            if let Ok(mut map) = attempts().lock() {
+                map.remove(ip);
+            }
+        }
+
+        assert!(!is_rate_limited(ip));
+
+        record_auth_failure(ip);
+        record_auth_failure(ip);
+        record_auth_failure(ip);
+
+        assert!(is_rate_limited(ip));
+
+        // Clean up
+        record_auth_success(ip);
     }
 }
