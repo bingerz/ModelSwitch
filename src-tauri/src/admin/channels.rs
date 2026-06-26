@@ -1027,6 +1027,221 @@ mod tests {
         assert_eq!(result.data.success, 0);
         assert_eq!(result.data.failed, 0);
     }
+
+    // ─── update_channel tests ──────────────────────────────
+
+    /// Build a minimal `UpdateChannelRequest` matching the values used by
+    /// `create_test_channels`. Tests mutate specific fields as needed.
+    fn make_update_req() -> UpdateChannelRequest {
+        UpdateChannelRequest {
+            name: "test-channel".to_string(),
+            provider: "openai".to_string(),
+            priority: 1,
+            weight: 100,
+            cost_per_token: None,
+            base_url: "https://api.openai.com".to_string(),
+            enabled: true,
+            model_mapping: HashMap::new(),
+            cooldown_minutes: None,
+            credential_value: None,
+            input_cost_per_mtok: None,
+            output_cost_per_mtok: None,
+            rpm_limit: None,
+            tpm_limit: None,
+            account_group: None,
+            max_concurrent: None,
+            excluded_models: vec![],
+            api_keys: vec![],
+            proxy_url: None,
+            headers: HashMap::new(),
+            max_retries: None,
+            models_endpoint: None,
+            models_refresh_interval_secs: None,
+            tags: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn update_channel_changes_name() {
+        let state = build_test_state(vec![]);
+        let ids = create_test_channels(&state, 1).await;
+        let channel_id = ids[0];
+
+        let mut req = make_update_req();
+        req.name = "renamed-channel".to_string();
+
+        let result = update_channel(State(state.clone()), Path(channel_id), Json(req))
+            .await
+            .expect("update_channel should succeed");
+        assert_eq!(result.0.data.name, "renamed-channel");
+
+        // Verify persistence via channel_mgr
+        let stored = state.channel_mgr.get(channel_id).await.unwrap();
+        assert_eq!(stored.name, "renamed-channel");
+    }
+
+    #[tokio::test]
+    async fn update_channel_disables_channel() {
+        let state = build_test_state(vec![]);
+        let ids = create_test_channels(&state, 1).await;
+        let channel_id = ids[0];
+
+        let mut req = make_update_req();
+        req.enabled = false;
+
+        let result = update_channel(State(state.clone()), Path(channel_id), Json(req))
+            .await
+            .expect("update_channel should succeed");
+        assert!(!result.0.data.enabled);
+        assert_eq!(result.0.data.status, ChannelStatus::Disabled);
+
+        let stored = state.channel_mgr.get(channel_id).await.unwrap();
+        assert!(!stored.enabled);
+        assert_eq!(stored.status, ChannelStatus::Disabled);
+    }
+
+    #[tokio::test]
+    async fn update_channel_reenables_channel() {
+        let state = build_test_state(vec![]);
+        let ids = create_test_channels(&state, 1).await;
+        let channel_id = ids[0];
+
+        // First disable the channel
+        let mut disable_req = make_update_req();
+        disable_req.enabled = false;
+        update_channel(State(state.clone()), Path(channel_id), Json(disable_req))
+            .await
+            .expect("disable should succeed");
+
+        // Now re-enable it
+        let mut enable_req = make_update_req();
+        enable_req.enabled = true;
+        let result =
+            update_channel(State(state.clone()), Path(channel_id), Json(enable_req))
+                .await
+                .expect("reenable should succeed");
+
+        assert!(result.0.data.enabled);
+        assert_eq!(result.0.data.status, ChannelStatus::Healthy);
+    }
+
+    #[tokio::test]
+    async fn update_channel_returns_404_for_nonexistent_id() {
+        let state = build_test_state(vec![]);
+        let req = make_update_req();
+        let result = update_channel(State(state), Path(Uuid::new_v4()), Json(req)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn update_channel_updates_model_mapping() {
+        let state = build_test_state(vec![]);
+        let ids = create_test_channels(&state, 1).await;
+        let channel_id = ids[0];
+
+        let mut req = make_update_req();
+        req.model_mapping
+            .insert("gpt-4".to_string(), "gpt-4".to_string());
+
+        let result = update_channel(State(state.clone()), Path(channel_id), Json(req))
+            .await
+            .expect("update_channel should succeed");
+        assert_eq!(
+            result.0.data.model_mapping.get("gpt-4"),
+            Some(&"gpt-4".to_string())
+        );
+
+        let stored = state.channel_mgr.get(channel_id).await.unwrap();
+        assert_eq!(
+            stored.model_mapping.get("gpt-4"),
+            Some(&"gpt-4".to_string())
+        );
+    }
+
+    // ─── channel_status tests ──────────────────────────────
+
+    #[tokio::test]
+    async fn channel_status_returns_status_for_existing() {
+        let state = build_test_state(vec![]);
+        let ids = create_test_channels(&state, 1).await;
+        let channel_id = ids[0];
+
+        let result = channel_status(State(state.clone()), Path(channel_id))
+            .await
+            .expect("channel_status should succeed for existing channel");
+
+        let data = &result.0.data;
+        assert_eq!(data["id"], serde_json::json!(channel_id));
+        assert!(data["name"].is_string());
+        assert!(data["status"].is_string());
+        assert_eq!(data["enabled"], serde_json::json!(true));
+    }
+
+    #[tokio::test]
+    async fn channel_status_returns_404_for_nonexistent() {
+        let state = build_test_state(vec![]);
+        let result = channel_status(State(state), Path(Uuid::new_v4())).await;
+        assert!(result.is_err());
+    }
+
+    // ─── payload rules tests ───────────────────────────────
+
+    #[tokio::test]
+    async fn set_payload_rules_stores_and_get_retrieves() {
+        let state = build_test_state(vec![]);
+        let ids = create_test_channels(&state, 1).await;
+        let channel_id = ids[0];
+
+        let mut defaults = HashMap::new();
+        defaults.insert("temperature".to_string(), serde_json::json!(0.7));
+        let mut overrides = HashMap::new();
+        overrides.insert("max_tokens".to_string(), serde_json::json!(1024));
+
+        let rules = crate::config::PayloadRulesConfig {
+            defaults,
+            overrides,
+            strip: vec!["user.metadata".to_string()],
+            model_rules: vec![],
+        };
+
+        let set_result =
+            set_payload_rules(State(state.clone()), Path(channel_id), Json(rules))
+                .await
+                .expect("set_payload_rules should succeed");
+        assert_eq!(set_result.0.data["channel_id"], serde_json::json!(channel_id));
+        assert_eq!(set_result.0.data["updated"], serde_json::json!(true));
+
+        let get_result = get_payload_rules(State(state), Path(channel_id))
+            .await
+            .expect("get_payload_rules should succeed");
+        let fetched = get_result.0.data;
+        assert_eq!(
+            fetched.defaults.get("temperature"),
+            Some(&serde_json::json!(0.7))
+        );
+        assert_eq!(
+            fetched.overrides.get("max_tokens"),
+            Some(&serde_json::json!(1024))
+        );
+        assert!(fetched.strip.contains(&"user.metadata".to_string()));
+    }
+
+    #[tokio::test]
+    async fn get_payload_rules_returns_empty_for_no_rules() {
+        let state = build_test_state(vec![]);
+        let ids = create_test_channels(&state, 1).await;
+        let channel_id = ids[0];
+
+        let result = get_payload_rules(State(state), Path(channel_id))
+            .await
+            .expect("get_payload_rules should succeed for channel without rules");
+
+        let rules = result.0.data;
+        assert!(rules.defaults.is_empty());
+        assert!(rules.overrides.is_empty());
+        assert!(rules.strip.is_empty());
+        assert!(rules.model_rules.is_empty());
+    }
 }
 
 /// Set payload rules for a channel at runtime.
