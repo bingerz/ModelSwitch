@@ -36,7 +36,7 @@ BACKUP_DEST="$1"
 # 数据目录 (默认: ~/.config/modelswitch)
 DATA_DIR="${MODELSWITCH_DATA_DIR:-$HOME/.config/modelswitch}"
 # 备份保留天数
-RETENTION_DAYS=30
+RETENTION_DAYS=${RETENTION_DAYS:-30}
 # 日志文件路径
 LOG_FILE="${MODELSWITCH_BACKUP_LOG:-$BACKUP_DEST/backup.log}"
 

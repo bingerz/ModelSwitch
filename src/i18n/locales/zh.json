@@ -339,6 +339,27 @@
       "copiedAll": "所有密钥已复制到剪贴板",
       "resultsCount": "{{count}} 个密钥",
       "plaintextWarning": "明文密钥仅在创建后显示一次。请立即复制。"
+    },
+    "csv": {
+      "button": "CSV 导入",
+      "buttonHint": "从 CSV 文件导入虚拟密钥",
+      "title": "从 CSV 导入虚拟密钥",
+      "resultsTitle": "导入结果",
+      "dropHere": "拖放 CSV 文件到此处或点击选择",
+      "dropHint": "预期表头：name, group（group 为可选）",
+      "notCsv": "请选择 .csv 文件",
+      "readFailed": "读取文件失败",
+      "noDataRows": "CSV 中未找到数据行",
+      "rowsFound": "找到 {{count}} 行",
+      "showingFirst": "显示前 {{shown}} 行，共 {{total}} 行",
+      "chooseAnother": "选择其他文件",
+      "sharedSettings": "共享设置（应用于所有密钥）",
+      "createButton": "创建密钥",
+      "creating": "创建中 {{done}}/{{total}}...",
+      "createFailed": "创建密钥失败",
+      "createdCount": "从 CSV 创建了 {{count}} 个密钥",
+      "failedCount": "{{count}} 个密钥创建失败",
+      "resultsSummary": "{{success}} / {{total}} 成功"
     }
   },
   "mcp": {

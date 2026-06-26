@@ -340,6 +340,27 @@
       "copiedAll": "All keys copied to clipboard",
       "resultsCount": "{{count}} keys",
       "plaintextWarning": "Plaintext keys are shown only once after creation. Copy them now."
+    },
+    "csv": {
+      "button": "CSV Import",
+      "buttonHint": "Import virtual keys from a CSV file",
+      "title": "Import Virtual Keys from CSV",
+      "resultsTitle": "Import Results",
+      "dropHere": "Drop CSV file here or click to browse",
+      "dropHint": "Expected headers: name, group (group is optional)",
+      "notCsv": "Please select a .csv file",
+      "readFailed": "Failed to read file",
+      "noDataRows": "No data rows found in CSV",
+      "rowsFound": "{{count}} rows found",
+      "showingFirst": "Showing first {{shown}} of {{total}} rows",
+      "chooseAnother": "Choose another file",
+      "sharedSettings": "Shared Settings (applied to all keys)",
+      "createButton": "Create Keys",
+      "creating": "Creating {{done}}/{{total}}...",
+      "createFailed": "Failed to create key",
+      "createdCount": "Created {{count}} keys from CSV",
+      "failedCount": "{{count}} keys failed",
+      "resultsSummary": "{{success}} / {{total}} succeeded"
     }
   },
   "mcp": {

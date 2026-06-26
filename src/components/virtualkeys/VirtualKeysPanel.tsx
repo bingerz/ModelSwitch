@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { KeyRound, CheckCircle, DollarSign, Search, ChevronLeft, ChevronRight, Layers } from "lucide-react";
+import { KeyRound, CheckCircle, DollarSign, Search, ChevronLeft, ChevronRight, Layers, FileUp } from "lucide-react";
 import {
   api,
   type VirtualKey,
@@ -16,6 +16,7 @@ import { PlaintextBanner } from "./PlaintextBanner";
 import { VirtualKeyCard } from "./VirtualKeyCard";
 import { VirtualKeyForm } from "./VirtualKeyForm";
 import { BatchCreateModal } from "./BatchCreateModal";
+import { CsvImportModal } from "./CsvImportModal";
 
 const PAGE_SIZE = 20;
 
@@ -26,6 +27,7 @@ export function VirtualKeysPanel() {
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
   const [showBatchModal, setShowBatchModal] = useState(false);
+  const [showCsvModal, setShowCsvModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -164,6 +166,14 @@ export function VirtualKeysPanel() {
           <div style={{ display: "flex", gap: "var(--space-2)" }}>
             <button
               className="btn"
+              onClick={() => setShowCsvModal(true)}
+              title={t("virtualKeys.csv.buttonHint")}
+            >
+              <FileUp size={14} />
+              {t("virtualKeys.csv.button")}
+            </button>
+            <button
+              className="btn"
               onClick={() => setShowBatchModal(true)}
               title={t("virtualKeys.batch.buttonHint")}
             >
@@ -206,6 +216,13 @@ export function VirtualKeysPanel() {
         <BatchCreateModal
           onCreated={handleBatchCreated}
           onClose={() => setShowBatchModal(false)}
+        />
+      )}
+
+      {showCsvModal && (
+        <CsvImportModal
+          onCreated={handleBatchCreated}
+          onClose={() => setShowCsvModal(false)}
         />
       )}
 

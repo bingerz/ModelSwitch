@@ -266,11 +266,14 @@ impl AuditLog {
 
     async fn append_line(path: &PathBuf, line: &str) -> std::io::Result<()> {
         use tokio::io::AsyncWriteExt;
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .await?;
+        let mut opts = tokio::fs::OpenOptions::new();
+        opts.create(true).append(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut file = opts.open(path).await?;
         file.write_all(line.as_bytes()).await?;
         file.write_all(b"\n").await?;
         Ok(())
