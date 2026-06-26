@@ -14,20 +14,20 @@ pub mod model_registry;
 pub mod notification;
 pub mod persisted_store;
 mod provider_budget;
-mod proxy;
+pub mod proxy;
 mod quota;
 mod router;
 pub mod virtual_key;
 #[cfg(feature = "tauri")]
 mod webview_login;
 
-mod server;
+pub mod server;
 mod shutdown;
 #[cfg(feature = "tauri")]
 mod tauri_cmds;
 pub mod telemetry;
-#[cfg(test)]
-pub(crate) mod test_helpers;
+#[doc(hidden)]
+pub mod test_helpers;
 
 use crate::proxy::AppState;
 use std::sync::Arc;

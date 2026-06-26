@@ -1,11 +1,9 @@
 //! Shared test helpers for constructing `AppState` and related test fixtures.
 //!
-//! This module is only compiled under `#[cfg(test)]`. It extracts the
-//! `build_test_state()` pattern from `dispatch_tests.rs` so that every
-//! test module across the crate can construct a realistic `AppState`
-//! without duplicating boilerplate.
-
-#![cfg(test)]
+//! This module extracts the `build_test_state()` pattern from
+//! `dispatch_tests.rs` so that every test module across the crate —
+//! including integration tests in `tests/` — can construct a realistic
+//! `AppState` without duplicating boilerplate.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,7 +30,7 @@ use crate::router::affinity::SessionAffinity;
 use crate::virtual_key::VirtualKeyStore;
 
 /// Build a `ChannelConfig` pointing at the given base URL.
-pub(crate) fn channel_config(id: &str, name: &str, base_url: &str, priority: u8) -> ChannelConfig {
+pub fn channel_config(id: &str, name: &str, base_url: &str, priority: u8) -> ChannelConfig {
     ChannelConfig {
         id: id.to_string(),
         name: name.to_string(),
@@ -67,7 +65,7 @@ pub(crate) fn channel_config(id: &str, name: &str, base_url: &str, priority: u8)
 }
 
 /// Build a minimal `AppConfig` with the given channels.
-pub(crate) fn test_config(channels: Vec<ChannelConfig>) -> AppConfig {
+pub fn test_config(channels: Vec<ChannelConfig>) -> AppConfig {
     AppConfig {
         gateway: GatewayConfig {
             max_retries: 3,
@@ -82,7 +80,21 @@ pub(crate) fn test_config(channels: Vec<ChannelConfig>) -> AppConfig {
 /// Construct a minimal `AppState` whose channels point to the provided
 /// mock server URLs. All sub-structs use real implementations with
 /// permissive defaults so dispatch behaves naturally.
-pub(crate) fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
+pub fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
+    build_state(channel_configs, None)
+}
+
+/// Like [`build_test_state`] but also sets an admin Bearer token for
+/// testing admin-auth middleware paths.
+pub fn build_test_state_with_admin_token(
+    channel_configs: Vec<ChannelConfig>,
+    admin_token: &str,
+) -> Arc<AppState> {
+    build_state(channel_configs, Some(admin_token.to_string()))
+}
+
+/// Core builder shared by the two public constructors above.
+fn build_state(channel_configs: Vec<ChannelConfig>, admin_token: Option<String>) -> Arc<AppState> {
     let config = test_config(channel_configs);
     let credential_store: SharedCredentialStore = create_credential_store();
     let channel_mgr = Arc::new(ChannelManager::new(&config, Arc::clone(&credential_store)));
@@ -161,7 +173,7 @@ pub(crate) fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppSt
             mcp_gateway_enabled: false,
         },
         security: SecurityState {
-            admin_token: None,
+            admin_token,
             sanitizer_config: SanitizerConfig::default(),
             allowed_origins: None,
         },
@@ -178,12 +190,12 @@ pub(crate) fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppSt
 }
 
 /// Extract the HTTP status code from an axum Response.
-pub(crate) fn response_status(response: &axum::response::Response) -> u16 {
+pub fn response_status(response: &axum::response::Response) -> u16 {
     response.status().as_u16()
 }
 
 /// Buffer the axum Response body and parse as JSON.
-pub(crate) async fn response_json(response: axum::response::Response) -> Value {
+pub async fn response_json(response: axum::response::Response) -> Value {
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("failed to read response body");
