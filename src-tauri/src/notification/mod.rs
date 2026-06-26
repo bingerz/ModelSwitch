@@ -676,6 +676,20 @@ mod tests {
         );
     }
 
+    /// DNS resolution failure for a nonexistent host must return `Ok(())` —
+    /// SMTP host validation intentionally does not hard-block on DNS errors
+    /// because the SMTP connection itself will fail naturally if the host
+    /// is unreachable.
+    #[tokio::test]
+    async fn validate_smtp_host_dns_failure_returns_ok() {
+        let result =
+            validate_smtp_host("nonexistent-host-that-should-not-resolve-12345.invalid").await;
+        assert!(
+            result.is_ok(),
+            "DNS failure should not block SMTP host validation"
+        );
+    }
+
     #[tokio::test]
     async fn check_smtp_ip_rejects_cloud_metadata() {
         let ip: std::net::IpAddr = "169.254.169.254".parse().unwrap();

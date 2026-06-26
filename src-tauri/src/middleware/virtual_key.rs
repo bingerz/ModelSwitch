@@ -46,7 +46,8 @@ pub async fn virtual_key_middleware(
         Some(vk) => {
             // Enforce IP allowlist if configured for this key.
             if !vk.allowed_ips.is_empty() {
-                let client_ip = super::auth::extract_client_ip(&req, state.security.trust_forwarded_headers);
+                let client_ip =
+                    super::auth::extract_client_ip(&req, state.security.trust_forwarded_headers);
                 if !vk.check_ip_allowed(&client_ip) {
                     return Err((
                         StatusCode::FORBIDDEN,
@@ -322,6 +323,54 @@ mod tests {
             )
             .await
             .unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    /// A key with `tpm_limit: Some(100)` must reject a request once the
+    /// rolling TPM window has already reached or exceeded the limit.
+    #[tokio::test]
+    async fn rejects_request_when_tpm_exceeded() {
+        let state = build_test_state(vec![]);
+
+        let (vk, plaintext) = state
+            .billing
+            .virtual_key_store
+            .create(
+                "tpm-limited".to_string(),
+                None,
+                None,
+                None,
+                vec![],
+                vec![],
+                None,
+                Some(100),
+                None,
+                None,
+            )
+            .await;
+
+        // Record enough token usage to exceed the TPM limit.
+        state.billing.key_rate_limiter.record_tokens(vk.id, 101);
+
+        let app = axum::Router::new()
+            .route("/v1/test", axum::routing::any(|| async { "ok" }))
+            .layer(from_fn_with_state(
+                Arc::clone(&state),
+                virtual_key_middleware,
+            ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/test")
+                    .header("Authorization", format!("Bearer {plaintext}"))
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
