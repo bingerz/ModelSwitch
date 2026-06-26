@@ -1,3 +1,4 @@
+import { centsToUSD, formatTime, computeProgressState } from "./portal-utils";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { API_BASE } from "../lib/runtime";
@@ -34,14 +35,7 @@ interface PortalLog {
 
 // ─── Helpers ───────────────────────────────────────────
 
-function centsToUSD(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`;
-}
 
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  return d.toLocaleString();
-}
 
 async function portalFetch<T>(
   path: string,
@@ -76,15 +70,7 @@ interface ProgressBarProps {
 
 function ProgressBar({ label, spent, budget }: ProgressBarProps) {
   const { t } = useTranslation();
-  const pct = budget ? Math.min(100, (spent / budget) * 100) : 0;
-  const isOverBudget = budget !== null && spent >= budget;
-  const isWarning = budget !== null && pct >= 80 && !isOverBudget;
-
-  const barColor = isOverBudget
-    ? "var(--color-danger)"
-    : isWarning
-      ? "var(--color-warning)"
-      : "var(--color-success)";
+  const { pct, barColor } = computeProgressState(spent, budget);
 
   return (
     <div className="portal-progress-item">
