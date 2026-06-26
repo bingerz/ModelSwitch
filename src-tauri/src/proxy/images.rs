@@ -244,11 +244,240 @@ async fn find_image_channel(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channel::Provider;
+    use axum::http::{HeaderName, HeaderValue};
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    // ── apply_auth tests ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn apply_auth_openai_sets_bearer() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/test"))
+            .and(header("authorization", "Bearer sk-test"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let builder = client.post(format!("{}/test", server.uri()));
+        let builder = apply_auth(builder, &Provider::OpenAI, "sk-test");
+        let resp = builder.send().await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    /// Helper — wiremock matcher that succeeds when none of the named headers
+    /// are present on the incoming request.
+    fn headers_absent(names: &'static [&'static str]) -> impl wiremock::Match {
+        struct HeadersAbsent(&'static [&'static str]);
+        impl wiremock::Match for HeadersAbsent {
+            fn matches(&self, request: &wiremock::Request) -> bool {
+                self.0.iter().all(|h| !request.headers.contains_key(*h))
+            }
+        }
+        HeadersAbsent(names)
+    }
+
+    #[tokio::test]
+    async fn apply_auth_anthropic_sets_x_api_key() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/test"))
+            .and(header("x-api-key", "sk-ant-test"))
+            .and(headers_absent(&["authorization"]))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let builder = client.post(format!("{}/test", server.uri()));
+        let builder = apply_auth(builder, &Provider::Anthropic, "sk-ant-test");
+        let resp = builder.send().await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn apply_auth_gemini_sets_x_goog_api_key() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/test"))
+            .and(header("x-goog-api-key", "AIza-test"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let builder = client.post(format!("{}/test", server.uri()));
+        let builder = apply_auth(builder, &Provider::Gemini, "AIza-test");
+        let resp = builder.send().await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn apply_auth_custom_sets_bearer() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/test"))
+            .and(header("authorization", "Bearer test-key"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let builder = client.post(format!("{}/test", server.uri()));
+        let builder = apply_auth(builder, &Provider::Custom("acme".to_string()), "test-key");
+        let resp = builder.send().await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn apply_auth_deepseek_uses_bearer_default() {
+        // Any provider not specifically OpenAI/Anthropic/Gemini falls into the
+        // catch-all arm and should receive a Bearer token.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/test"))
+            .and(header("authorization", "Bearer dk-test"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let builder = client.post(format!("{}/test", server.uri()));
+        let builder = apply_auth(builder, &Provider::DeepSeek, "dk-test");
+        let resp = builder.send().await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn apply_auth_always_sets_content_type() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/test"))
+            .and(header("content-type", "application/json"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = reqwest::Client::new();
+        let builder = client.post(format!("{}/test", server.uri()));
+        let builder = apply_auth(builder, &Provider::OpenAI, "sk-test");
+        let resp = builder.send().await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    // ── forward_headers tests ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn forward_headers_includes_custom_headers() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/test"))
+            .and(header("x-custom-header", "custom-value"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("x-custom-header"),
+            HeaderValue::from_static("custom-value"),
+        );
+
+        let client = reqwest::Client::new();
+        let builder = client.post(format!("{}/test", server.uri()));
+        let builder = forward_headers(builder, &headers);
+        let resp = builder.send().await.unwrap();
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn forward_headers_skips_hop_by_hop() {
+        // Verify via received_requests that hop-by-hop / managed headers from
+        // the input HeaderMap are NOT forwarded to the upstream, while custom
+        // headers are. We cannot assert absence at the mock-matcher level
+        // because reqwest injects its own `host` and `content-type` headers
+        // based on the URL and body — we only check the headers we explicitly
+        // placed in the input HeaderMap.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/test"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let mut headers = HeaderMap::new();
+        // Headers that must be stripped by forward_headers
+        headers.insert(
+            HeaderName::from_static("connection"),
+            HeaderValue::from_static("keep-alive"),
+        );
+        headers.insert(
+            HeaderName::from_static("content-length"),
+            HeaderValue::from_static("42"),
+        );
+        headers.insert(
+            HeaderName::from_static("authorization"),
+            HeaderValue::from_static("Bearer secret"),
+        );
+        headers.insert(
+            HeaderName::from_static("x-api-key"),
+            HeaderValue::from_static("sk-secret"),
+        );
+        headers.insert(
+            HeaderName::from_static("anthropic-version"),
+            HeaderValue::from_static("2023-06-01"),
+        );
+        // A benign custom header that SHOULD be forwarded
+        headers.insert(
+            HeaderName::from_static("x-trace-id"),
+            HeaderValue::from_static("abc"),
+        );
+
+        let client = reqwest::Client::new();
+        let builder = client.post(format!("{}/test", server.uri()));
+        let builder = forward_headers(builder, &headers);
+        let resp = builder.send().await.unwrap();
+        assert_eq!(resp.status(), 200);
+
+        let received = server.received_requests().await;
+        let received = received.expect("should have received requests");
+        assert_eq!(received.len(), 1, "exactly one request expected");
+        let req = &received[0];
+
+        // Custom header must be present
+        let trace = req.headers.get("x-trace-id").and_then(|v| v.to_str().ok());
+        assert_eq!(trace, Some("abc"), "custom headers should be forwarded");
+
+        // These managed/hop-by-hop headers from our input must NOT appear in
+        // the upstream request. (host/content-type may appear due to reqwest's
+        // own defaults, so we check only the ones we controlled.)
+        for blocked in &[
+            "connection",
+            "content-length",
+            "authorization",
+            "x-api-key",
+            "anthropic-version",
+        ] {
+            assert!(
+                !req.headers.contains_key(*blocked),
+                "header '{}' should have been stripped by forward_headers",
+                blocked
+            );
+        }
+    }
 
     #[test]
-    fn find_image_channel_returns_none_for_empty_state() {
-        // Test that find_image_channel gracefully handles no channels
-        // (integration-style test would need full AppState setup)
-        let _: Option<(crate::channel::Channel, String)> = None;
+    fn forward_headers_constant_covers_critical_set() {
+        // Sanity-check the SKIP_HEADERS list that forward_headers relies on.
+        // This guards against accidental removal of a critical filtered header.
+        assert!(SKIP_HEADERS.contains(&"host"));
+        assert!(SKIP_HEADERS.contains(&"connection"));
+        assert!(SKIP_HEADERS.contains(&"content-length"));
+        assert!(SKIP_HEADERS.contains(&"authorization"));
+        assert!(SKIP_HEADERS.contains(&"x-api-key"));
+        assert!(SKIP_HEADERS.contains(&"content-type"));
     }
 }

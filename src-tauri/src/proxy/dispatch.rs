@@ -985,4 +985,151 @@ mod tests {
         let cfg = resolve_model_retry_config("claude-3-opus-20240229", &overrides);
         assert_eq!(cfg.max_retries, Some(2));
     }
+
+    // ── is_model_allowed_with_groups edge cases ────────────────────────────
+
+    use crate::virtual_key::{VirtualKey, VirtualKeySpend};
+    use chrono::Utc;
+
+    /// Helper: build a VirtualKey with the given `allowed_models` and no deny list.
+    fn make_vk(allowed_models: Option<Vec<&str>>) -> VirtualKey {
+        VirtualKey {
+            id: Uuid::new_v4(),
+            key_hash: "deadbeef".to_string(),
+            key_prefix: "ms-vk-abcdef".to_string(),
+            name: "test".to_string(),
+            daily_budget_cents: None,
+            monthly_budget_cents: None,
+            enabled: true,
+            created_at: Utc::now(),
+            spend: VirtualKeySpend::default(),
+            allowed_models: allowed_models.map(|v| v.into_iter().map(String::from).collect()),
+            denied_models: vec![],
+            allowed_ips: vec![],
+            rpm_limit: None,
+            tpm_limit: None,
+            expires_at: None,
+            group: None,
+        }
+    }
+
+    #[test]
+    fn is_model_allowed_with_groups_none_allowed_returns_true() {
+        // allowed_models = None means all models are permitted.
+        let vk = make_vk(None);
+        let groups = HashMap::new();
+        assert!(is_model_allowed_with_groups(&vk, "gpt-4", &groups));
+        assert!(is_model_allowed_with_groups(&vk, "claude-3-opus", &groups));
+        assert!(is_model_allowed_with_groups(&vk, "anything", &groups));
+    }
+
+    #[test]
+    fn is_model_allowed_with_groups_empty_list_returns_false() {
+        // An explicit empty allow-list denies everything (no direct match, no
+        // group entries to iterate).
+        let vk = make_vk(Some(vec![]));
+        let groups = HashMap::new();
+        assert!(!is_model_allowed_with_groups(&vk, "gpt-4", &groups));
+        assert!(!is_model_allowed_with_groups(&vk, "claude-3", &groups));
+    }
+
+    #[test]
+    fn is_model_allowed_with_groups_direct_match_returns_true() {
+        // Exact model name in allowed_models short-circuits to true via
+        // VirtualKey::is_model_allowed before groups are consulted.
+        let vk = make_vk(Some(vec!["gpt-4"]));
+        let groups = HashMap::new();
+        assert!(is_model_allowed_with_groups(&vk, "gpt-4", &groups));
+    }
+
+    #[test]
+    fn is_model_allowed_with_groups_direct_no_match_returns_false() {
+        // When the model is not in allowed_models and no groups can expand it,
+        // the result must be false.
+        let vk = make_vk(Some(vec!["gpt-4"]));
+        let groups = HashMap::new();
+        assert!(!is_model_allowed_with_groups(&vk, "claude-3-opus", &groups));
+    }
+
+    #[test]
+    fn is_model_allowed_with_groups_group_match_returns_true() {
+        // allowed_models references a group name whose members include the
+        // requested model.
+        let vk = make_vk(Some(vec!["openai-models"]));
+        let mut groups = HashMap::new();
+        groups.insert(
+            "openai-models".to_string(),
+            vec!["gpt-4".to_string(), "gpt-3.5-turbo".to_string()],
+        );
+        assert!(is_model_allowed_with_groups(&vk, "gpt-4", &groups));
+        assert!(is_model_allowed_with_groups(&vk, "gpt-3.5-turbo", &groups));
+    }
+
+    #[test]
+    fn is_model_allowed_with_groups_group_no_match_returns_false() {
+        // allowed_models references a group, but the requested model is not
+        // a member of that group.
+        let vk = make_vk(Some(vec!["openai-models"]));
+        let mut groups = HashMap::new();
+        groups.insert(
+            "openai-models".to_string(),
+            vec!["gpt-4".to_string(), "gpt-3.5-turbo".to_string()],
+        );
+        assert!(!is_model_allowed_with_groups(&vk, "claude-3-opus", &groups));
+    }
+
+    #[test]
+    fn is_model_allowed_with_groups_group_not_in_map_returns_false() {
+        // allowed_models references a group name that does not exist in the
+        // model_groups map — should return false rather than panicking.
+        let vk = make_vk(Some(vec!["unknown-group"]));
+        let groups = HashMap::new();
+        assert!(!is_model_allowed_with_groups(&vk, "gpt-4", &groups));
+    }
+
+    #[test]
+    fn is_model_allowed_with_groups_multiple_groups_second_matches() {
+        // allowed_models lists multiple groups; the model is only in the
+        // second one.
+        let vk = make_vk(Some(vec!["group-a", "group-b"]));
+        let mut groups = HashMap::new();
+        groups.insert("group-a".to_string(), vec!["claude-3-opus".to_string()]);
+        groups.insert("group-b".to_string(), vec!["gpt-4".to_string()]);
+        assert!(is_model_allowed_with_groups(&vk, "gpt-4", &groups));
+    }
+
+    #[test]
+    fn is_model_allowed_with_groups_glob_in_group_matches() {
+        // A group member entry may itself be a glob pattern.
+        let vk = make_vk(Some(vec!["openai-models"]));
+        let mut groups = HashMap::new();
+        groups.insert("openai-models".to_string(), vec!["gpt-4*".to_string()]);
+        assert!(is_model_allowed_with_groups(&vk, "gpt-4o", &groups));
+        assert!(is_model_allowed_with_groups(&vk, "gpt-4-turbo", &groups));
+        assert!(!is_model_allowed_with_groups(&vk, "claude-3", &groups));
+    }
+
+    #[test]
+    fn is_model_allowed_with_groups_mix_direct_and_group() {
+        // allowed_models can mix a direct model name and a group; either path
+        // to a match should succeed.
+        let vk = make_vk(Some(vec!["claude-3-opus", "openai-models"]));
+        let mut groups = HashMap::new();
+        groups.insert("openai-models".to_string(), vec!["gpt-4".to_string()]);
+        // Direct match
+        assert!(is_model_allowed_with_groups(&vk, "claude-3-opus", &groups));
+        // Group match
+        assert!(is_model_allowed_with_groups(&vk, "gpt-4", &groups));
+        // Neither
+        assert!(!is_model_allowed_with_groups(&vk, "gemini-pro", &groups));
+    }
+
+    #[test]
+    fn is_model_allowed_with_groups_empty_group_returns_false() {
+        // A group that exists but has no members should not match anything.
+        let vk = make_vk(Some(vec!["empty-group"]));
+        let mut groups = HashMap::new();
+        groups.insert("empty-group".to_string(), vec![]);
+        assert!(!is_model_allowed_with_groups(&vk, "gpt-4", &groups));
+    }
 }
