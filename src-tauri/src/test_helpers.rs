@@ -29,6 +29,10 @@ use crate::router::active_requests::ActiveRequests;
 use crate::router::affinity::SessionAffinity;
 use crate::virtual_key::VirtualKeyStore;
 
+// Re-export Role so integration tests (which cannot name the private
+// `middleware` path) can construct `admin_roles` entries.
+pub use crate::middleware::rbac::Role;
+
 /// Build a `ChannelConfig` pointing at the given base URL.
 pub fn channel_config(id: &str, name: &str, base_url: &str, priority: u8) -> ChannelConfig {
     ChannelConfig {
@@ -81,7 +85,7 @@ pub fn test_config(channels: Vec<ChannelConfig>) -> AppConfig {
 /// mock server URLs. All sub-structs use real implementations with
 /// permissive defaults so dispatch behaves naturally.
 pub fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
-    build_state(channel_configs, None)
+    build_state(channel_configs, None, Vec::new())
 }
 
 /// Like [`build_test_state`] but also sets an admin Bearer token for
@@ -90,11 +94,30 @@ pub fn build_test_state_with_admin_token(
     channel_configs: Vec<ChannelConfig>,
     admin_token: &str,
 ) -> Arc<AppState> {
-    build_state(channel_configs, Some(admin_token.to_string()))
+    build_state(channel_configs, Some(admin_token.to_string()), Vec::new())
 }
 
-/// Core builder shared by the two public constructors above.
-fn build_state(channel_configs: Vec<ChannelConfig>, admin_token: Option<String>) -> Arc<AppState> {
+/// Like [`build_test_state`] but also accepts an optional legacy
+/// `admin_token` (always `SuperAdmin`) and a list of role-based tokens
+/// for RBAC integration tests.
+pub fn build_test_state_with_rbac(
+    channel_configs: Vec<ChannelConfig>,
+    admin_token: Option<&str>,
+    admin_roles: Vec<(String, Role)>,
+) -> Arc<AppState> {
+    build_state(
+        channel_configs,
+        admin_token.map(|t| t.to_string()),
+        admin_roles,
+    )
+}
+
+/// Core builder shared by the public constructors above.
+fn build_state(
+    channel_configs: Vec<ChannelConfig>,
+    admin_token: Option<String>,
+    admin_roles: Vec<(String, Role)>,
+) -> Arc<AppState> {
     let config = test_config(channel_configs);
     let credential_store: SharedCredentialStore = create_credential_store();
     let channel_mgr = Arc::new(ChannelManager::new(&config, Arc::clone(&credential_store)));
@@ -174,7 +197,7 @@ fn build_state(channel_configs: Vec<ChannelConfig>, admin_token: Option<String>)
         },
         security: SecurityState {
             admin_token,
-            admin_roles: vec![],
+            admin_roles,
             sanitizer_config: SanitizerConfig::default(),
             allowed_origins: None,
             trust_forwarded_headers: true,

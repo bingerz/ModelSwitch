@@ -10,7 +10,9 @@ use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use model_switch_lib::proxy::AppState;
 use model_switch_lib::server::build_router;
-use model_switch_lib::test_helpers::{build_test_state, build_test_state_with_admin_token};
+use model_switch_lib::test_helpers::{
+    build_test_state, build_test_state_with_admin_token, build_test_state_with_rbac, Role,
+};
 use serde_json::Value;
 use tower::ServiceExt;
 
@@ -713,5 +715,361 @@ async fn virtual_key_ip_restriction_enforced() {
         response.status(),
         StatusCode::FORBIDDEN,
         "request from non-allowed IP must be rejected"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 14: RBAC — auditor role can read but cannot write
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn auditor_role_can_read_but_cannot_write() {
+    let state = build_test_state_with_rbac(
+        vec![],
+        None,
+        vec![("auditor-tok".to_string(), Role::Auditor)],
+    );
+    let app = build_router(state, None);
+
+    // GET /api/virtual-keys with auditor token -> 200 (read permitted).
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/virtual-keys")
+                .header("Authorization", "Bearer auditor-tok")
+                .header("X-Real-IP", "198.51.100.100")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "auditor should be able to read virtual keys"
+    );
+
+    // POST /api/virtual-keys with auditor token -> 403 (write denied by RBAC).
+    let create_body = serde_json::json!({"name": "auditor-should-fail"}).to_string();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/virtual-keys")
+                .header("Authorization", "Bearer auditor-tok")
+                .header("Content-Type", "application/json")
+                .header("X-Real-IP", "198.51.100.101")
+                .body(Body::from(create_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "auditor must not be able to create virtual keys"
+    );
+
+    // GET /api/channels with auditor token -> 200 (read permitted).
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/channels")
+                .header("Authorization", "Bearer auditor-tok")
+                .header("X-Real-IP", "198.51.100.102")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "auditor should be able to read channels"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 15: RBAC — key manager can manage virtual keys but not channels
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn key_manager_can_manage_virtual_keys_but_not_channels() {
+    let state =
+        build_test_state_with_rbac(vec![], None, vec![("km-tok".to_string(), Role::KeyManager)]);
+    let app = build_router(state, None);
+
+    // GET /api/virtual-keys -> 200 (read permitted).
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/virtual-keys")
+                .header("Authorization", "Bearer km-tok")
+                .header("X-Real-IP", "198.51.100.110")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "key_manager should be able to read virtual keys"
+    );
+
+    // POST /api/virtual-keys -> 200 (write to virtual-keys permitted).
+    let create_body = serde_json::json!({"name": "km-created-key"}).to_string();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/virtual-keys")
+                .header("Authorization", "Bearer km-tok")
+                .header("Content-Type", "application/json")
+                .header("X-Real-IP", "198.51.100.111")
+                .body(Body::from(create_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "key_manager should be able to create virtual keys"
+    );
+
+    // POST /api/channels -> 403 (write outside virtual-keys denied).
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/channels")
+                .header("Authorization", "Bearer km-tok")
+                .header("Content-Type", "application/json")
+                .header("X-Real-IP", "198.51.100.112")
+                .body(Body::from(serde_json::json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "key_manager must not be able to create channels"
+    );
+
+    // PUT /api/guardrails -> 403 (write outside virtual-keys denied).
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/guardrails")
+                .header("Authorization", "Bearer km-tok")
+                .header("Content-Type", "application/json")
+                .header("X-Real-IP", "198.51.100.113")
+                .body(Body::from(serde_json::json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "key_manager must not be able to update guardrails"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 16: RBAC — super admin token has full access
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn super_admin_token_has_full_access() {
+    // Configure both a legacy admin_token (SuperAdmin) and a role-based
+    // SuperAdmin token to verify neither is blocked by RBAC.
+    let state = build_test_state_with_rbac(
+        vec![],
+        Some("legacy-admin"),
+        vec![("sa-tok".to_string(), Role::SuperAdmin)],
+    );
+    let app = build_router(state, None);
+
+    // GET /api/channels with legacy admin_token -> 200.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/channels")
+                .header("Authorization", "Bearer legacy-admin")
+                .header("X-Real-IP", "198.51.100.120")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // POST /api/virtual-keys with role-based super_admin token -> 200.
+    let create_body = serde_json::json!({"name": "sa-created-key"}).to_string();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/virtual-keys")
+                .header("Authorization", "Bearer sa-tok")
+                .header("Content-Type", "application/json")
+                .header("X-Real-IP", "198.51.100.121")
+                .body(Body::from(create_body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "super_admin should be able to create virtual keys"
+    );
+    let json = body_json(response).await;
+    let key_id = json["data"]["id"].as_str().unwrap_or("").to_string();
+
+    // DELETE /api/virtual-keys/{id} with super_admin token -> 204.
+    let delete_uri = format!("/api/virtual-keys/{key_id}");
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(&delete_uri)
+                .header("Authorization", "Bearer sa-tok")
+                .header("X-Real-IP", "198.51.100.122")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::NO_CONTENT,
+        "super_admin should be able to delete virtual keys"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 17: RBAC — /api/auth/me returns the correct role
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn auth_me_returns_correct_role() {
+    let state = build_test_state_with_rbac(
+        vec![],
+        None,
+        vec![
+            ("auditor-tok".to_string(), Role::Auditor),
+            ("km-tok".to_string(), Role::KeyManager),
+        ],
+    );
+    let app = build_router(state, None);
+
+    // Auditor token -> role "auditor", authenticated true.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/auth/me")
+                .header("Authorization", "Bearer auditor-tok")
+                .header("X-Real-IP", "198.51.100.130")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = body_json(response).await;
+    assert_eq!(json["data"]["role"], "auditor");
+    assert_eq!(json["data"]["authenticated"], true);
+
+    // Key manager token -> role "key_manager", authenticated true.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/auth/me")
+                .header("Authorization", "Bearer km-tok")
+                .header("X-Real-IP", "198.51.100.131")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = body_json(response).await;
+    assert_eq!(json["data"]["role"], "key_manager");
+    assert_eq!(json["data"]["authenticated"], true);
+
+    // No auth header -> 401 (auth is configured, so it is enforced).
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/auth/me")
+                .header("X-Real-IP", "198.51.100.132")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "missing auth header should return 401 when auth is configured"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 18: RBAC — invalid role in config is ignored (token not authenticated)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn invalid_role_in_config_is_ignored() {
+    // Simulate the effect of config loading filtering out an invalid role
+    // string: the token is simply absent from admin_roles. A valid admin
+    // token ensures auth is enforced, so the "filtered" token gets 401.
+    let state = build_test_state_with_rbac(
+        vec![],
+        Some("real-admin"),
+        // "invalid-role-tok" would have been filtered out by Role::from_str
+        // returning None during config loading, so it is absent here.
+        vec![],
+    );
+    let app = build_router(state, None);
+
+    // The token that would have had an invalid role is rejected.
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/auth/me")
+                .header("Authorization", "Bearer invalid-role-tok")
+                .header("X-Real-IP", "198.51.100.140")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "token with invalid role string should not authenticate"
     );
 }
