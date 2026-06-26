@@ -99,6 +99,10 @@ pub struct GatewayConfig {
     /// Bearer token for /api/* endpoints. None = no auth. Env MODELSWITCH_ADMIN_TOKEN takes precedence.
     #[serde(default)]
     pub admin_token: Option<String>,
+    /// Additional admin tokens with role assignments for RBAC.
+    /// When non-empty, role-based permission checks are enforced.
+    #[serde(default)]
+    pub admin_tokens: Vec<AdminTokenConfig>,
     /// Directory containing web console static files (default None = disabled).
     /// When set, the gateway serves a web UI at `/` for browser-based management.
     #[serde(default)]
@@ -245,6 +249,13 @@ pub struct GatewayConfig {
     /// "token_bucket" uses a burst-capable token bucket.
     #[serde(default)]
     pub rate_limit_algorithm: crate::proxy::rate_limiter::RateLimitAlgorithm,
+}
+
+/// Config entry for a role-based admin token.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdminTokenConfig {
+    pub token: String,
+    pub role: String,
 }
 
 /// Per-model pricing overrides. When present, these rates override the
@@ -571,6 +582,7 @@ impl Default for GatewayConfig {
             health_check_interval_secs: default_health_check_interval_secs(),
             health_check_enabled: default_health_check_enabled(),
             admin_token: None,
+            admin_tokens: vec![],
             web_console_dir: None,
             drain_timeout_secs: default_drain_timeout_secs(),
             request_timeout_secs: None,

@@ -1116,10 +1116,9 @@ mod tests {
         // Now re-enable it
         let mut enable_req = make_update_req();
         enable_req.enabled = true;
-        let result =
-            update_channel(State(state.clone()), Path(channel_id), Json(enable_req))
-                .await
-                .expect("reenable should succeed");
+        let result = update_channel(State(state.clone()), Path(channel_id), Json(enable_req))
+            .await
+            .expect("reenable should succeed");
 
         assert!(result.0.data.enabled);
         assert_eq!(result.0.data.status, ChannelStatus::Healthy);
@@ -1204,11 +1203,13 @@ mod tests {
             model_rules: vec![],
         };
 
-        let set_result =
-            set_payload_rules(State(state.clone()), Path(channel_id), Json(rules))
-                .await
-                .expect("set_payload_rules should succeed");
-        assert_eq!(set_result.0.data["channel_id"], serde_json::json!(channel_id));
+        let set_result = set_payload_rules(State(state.clone()), Path(channel_id), Json(rules))
+            .await
+            .expect("set_payload_rules should succeed");
+        assert_eq!(
+            set_result.0.data["channel_id"],
+            serde_json::json!(channel_id)
+        );
         assert_eq!(set_result.0.data["updated"], serde_json::json!(true));
 
         let get_result = get_payload_rules(State(state), Path(channel_id))

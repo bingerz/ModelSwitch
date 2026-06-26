@@ -157,13 +157,14 @@ fn verify_bearer_token(header_value: &str, expected: &str) -> bool {
 /// [`WINDOW_SECS`] the IP is blocked for [`BLOCK_SECS`].
 pub async fn admin_auth_middleware(
     State(state): State<Arc<AppState>>,
-    req: Request<Body>,
+    mut req: Request<Body>,
     next: Next,
 ) -> Result<Response, (StatusCode, &'static str)> {
-    let token = match &state.security.admin_token {
-        Some(t) => t,
-        None => return Ok(next.run(req).await),
-    };
+    // Check if any auth is configured (legacy token or role-based tokens).
+    let has_auth = state.security.admin_token.is_some() || !state.security.admin_roles.is_empty();
+    if !has_auth {
+        return Ok(next.run(req).await);
+    }
 
     let ip = extract_client_ip(&req, state.security.trust_forwarded_headers);
 
@@ -178,9 +179,26 @@ pub async fn admin_auth_middleware(
         .and_then(|v| v.to_str().ok());
 
     match auth_header {
-        Some(h) if verify_bearer_token(h, token) => {
-            record_auth_success(&ip);
-            Ok(next.run(req).await)
+        Some(h) => {
+            // Try legacy admin_token first (always SuperAdmin).
+            if let Some(ref expected) = state.security.admin_token {
+                if verify_bearer_token(h, expected) {
+                    record_auth_success(&ip);
+                    req.extensions_mut()
+                        .insert(crate::middleware::rbac::Role::SuperAdmin);
+                    return Ok(next.run(req).await);
+                }
+            }
+            // Try role-based tokens.
+            for (ref expected, role) in &state.security.admin_roles {
+                if verify_bearer_token(h, expected) {
+                    record_auth_success(&ip);
+                    req.extensions_mut().insert(*role);
+                    return Ok(next.run(req).await);
+                }
+            }
+            record_auth_failure(&ip);
+            Err((StatusCode::UNAUTHORIZED, "Unauthorized"))
         }
         _ => {
             record_auth_failure(&ip);

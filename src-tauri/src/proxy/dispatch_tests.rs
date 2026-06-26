@@ -241,6 +241,7 @@ fn build_test_state_with_opts(
         },
         security: SecurityState {
             admin_token: None,
+            admin_roles: vec![],
             sanitizer_config: SanitizerConfig::default(),
             allowed_origins: None,
             trust_forwarded_headers: false,

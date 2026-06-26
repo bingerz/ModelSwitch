@@ -3,6 +3,37 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 
+/// Response payload for the `/api/auth/me` endpoint.
+#[derive(serde::Serialize)]
+pub struct AuthMeResponse {
+    pub role: String,
+    pub authenticated: bool,
+}
+
+/// Returns the caller's role and authentication status.
+///
+/// After `admin_auth_middleware` runs, the role is injected into request
+/// extensions. When no auth is configured (open-proxy mode), the role is
+/// absent and `authenticated` is `false`.
+pub async fn auth_me(req: axum::extract::Request) -> Json<super::ApiResponse<AuthMeResponse>> {
+    let role = req
+        .extensions()
+        .get::<crate::middleware::rbac::Role>()
+        .copied();
+
+    let (role_str, authenticated) = match role {
+        Some(crate::middleware::rbac::Role::SuperAdmin) => ("super_admin", true),
+        Some(crate::middleware::rbac::Role::KeyManager) => ("key_manager", true),
+        Some(crate::middleware::rbac::Role::Auditor) => ("auditor", true),
+        None => ("none", false),
+    };
+
+    Json(super::ApiResponse::ok(AuthMeResponse {
+        role: role_str.to_string(),
+        authenticated,
+    }))
+}
+
 /// Receive cookies from the WebView login flow.
 /// The WebView injects JS that POSTs cookies here after login succeeds.
 pub async fn receive_login_cookies(

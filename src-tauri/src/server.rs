@@ -214,6 +214,17 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         .ok()
         .or(config.gateway.admin_token.clone());
 
+    // Resolve role-based admin tokens for RBAC.
+    let admin_roles: Vec<(String, crate::middleware::rbac::Role)> = config
+        .gateway
+        .admin_tokens
+        .iter()
+        .filter_map(|entry| {
+            crate::middleware::rbac::Role::from_str(&entry.role)
+                .map(|role| (entry.token.clone(), role))
+        })
+        .collect();
+
     // Configure per-channel rate limits and payload rules from config
     for ch in &config.channels {
         let id = match uuid::Uuid::parse_str(&ch.id) {
@@ -319,6 +330,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         },
         security: SecurityState {
             admin_token,
+            admin_roles,
             sanitizer_config: config.gateway.sanitizer.clone(),
             allowed_origins: config.gateway.allowed_origins.clone(),
             trust_forwarded_headers: false,
@@ -880,6 +892,7 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
             &format!("{prefix}/reports/usage/csv"),
             get(admin::get_usage_report_csv),
         )
+        .route(&format!("{prefix}/auth/me"), get(admin::auth::auth_me))
 }
 
 /// Portal routes — employee self-service, authenticated by virtual key.
@@ -968,6 +981,7 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
     let admin_router = admin_routes("/api")
         .merge(admin_routes("/v1/api"))
         .with_state(admin_route_state)
+        .layer(axum::middleware::from_fn(middleware::rbac::rbac_middleware))
         .layer(axum::middleware::from_fn_with_state(
             admin_auth_state,
             middleware::auth::admin_auth_middleware,

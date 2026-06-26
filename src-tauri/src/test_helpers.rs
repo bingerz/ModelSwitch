@@ -174,6 +174,7 @@ fn build_state(channel_configs: Vec<ChannelConfig>, admin_token: Option<String>)
         },
         security: SecurityState {
             admin_token,
+            admin_roles: vec![],
             sanitizer_config: SanitizerConfig::default(),
             allowed_origins: None,
             trust_forwarded_headers: true,
