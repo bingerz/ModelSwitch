@@ -502,3 +502,92 @@ mod backend_tests {
         let _ = std::fs::remove_file(&path);
     }
 }
+
+#[cfg(test)]
+mod async_tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+    struct TestData {
+        name: String,
+        value: i32,
+    }
+
+    #[tokio::test]
+    async fn async_persist_and_load_roundtrip() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-persist-test-{}.json",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let store: PersistedStore<String, TestData> = PersistedStore::new(path.clone());
+        {
+            let mut w = store.write().await;
+            w.insert(
+                "key1".to_string(),
+                TestData {
+                    name: "test".to_string(),
+                    value: 42,
+                },
+            );
+        }
+        store.persist().await;
+        assert!(path.exists(), "persist file should exist");
+
+        let store2: PersistedStore<String, TestData> = PersistedStore::new(path.clone());
+        store2.load().await;
+        let r = store2.read().await;
+        assert_eq!(r.get("key1").unwrap().value, 42);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn async_load_corrupt_json_returns_empty() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-corrupt-test-{}.json",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::write(&path, b"{ this is not valid json }").unwrap();
+
+        let store: PersistedStore<String, TestData> = PersistedStore::new(path.clone());
+        store.load().await; // should not panic
+        let r = store.read().await;
+        assert!(r.is_empty(), "corrupt JSON should result in empty map");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn async_persist_cleans_up_temp_file() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-temp-test-{}.json",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let store: PersistedStore<String, TestData> = PersistedStore::new(path.clone());
+        {
+            let mut w = store.write().await;
+            w.insert(
+                "k".to_string(),
+                TestData {
+                    name: "v".to_string(),
+                    value: 1,
+                },
+            );
+        }
+        store.persist().await;
+
+        let temp_path = path.with_extension("json.tmp");
+        assert!(
+            !temp_path.exists(),
+            "temp file should be cleaned up after successful persist"
+        );
+        assert!(path.exists(), "main file should exist");
+
+        let _ = std::fs::remove_file(&path);
+    }
+}

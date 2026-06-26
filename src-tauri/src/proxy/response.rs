@@ -447,8 +447,7 @@ pub(super) async fn handle_streaming_success(
                     // window. This is the post-response complement to the
                     // pre-request `check_tpm` gate in the virtual-key
                     // middleware.
-                    let total_tokens =
-                        input_tokens.unwrap_or(0) + output_tokens.unwrap_or(0);
+                    let total_tokens = input_tokens.unwrap_or(0) + output_tokens.unwrap_or(0);
                     bg_key_rate_limiter.record_tokens(vk, total_tokens);
                 }
 
@@ -737,8 +736,7 @@ pub(super) async fn handle_json_success(
                 // Record actual token consumption against the key's TPM
                 // window. Post-response complement to the pre-request
                 // `check_tpm` gate in the virtual-key middleware.
-                let total_tokens =
-                    bg_input_tokens.unwrap_or(0) + bg_output_tokens.unwrap_or(0);
+                let total_tokens = bg_input_tokens.unwrap_or(0) + bg_output_tokens.unwrap_or(0);
                 bg_key_rate_limiter.record_tokens(vk, total_tokens);
             }
 

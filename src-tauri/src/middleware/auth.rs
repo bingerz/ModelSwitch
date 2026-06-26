@@ -65,9 +65,11 @@ pub(crate) fn extract_client_ip(req: &Request<Body>) -> String {
     }
 
     // 3. X-Forwarded-For header chain (least reliable, trust only behind proxy)
-    if let Some(xff) = req.headers()
-                          .get("x-forwarded-for")
-                          .and_then(|v| v.to_str().ok()) {
+    if let Some(xff) = req
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+    {
         if let Some(first) = xff.split(',').next() {
             let ip = first.trim();
             if !ip.is_empty() {
@@ -268,5 +270,50 @@ mod tests {
         // Third failure after reset triggers block.
         record_auth_failure(ip);
         assert!(is_rate_limited(ip));
+    }
+
+    // -----------------------------------------------------------------------
+    // IP extraction tests — verify priority order of IP resolution
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn extract_ip_prefers_connect_info_over_headers() {
+        use std::net::SocketAddr;
+        let mut req = Request::builder()
+            .header("x-forwarded-for", "1.2.3.4")
+            .header("x-real-ip", "5.6.7.8")
+            .body(Body::empty())
+            .unwrap();
+        let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        req.extensions_mut().insert(ConnectInfo(addr));
+        let ip = extract_client_ip(&req);
+        assert_eq!(ip, "127.0.0.1", "should prefer ConnectInfo over headers");
+    }
+
+    #[test]
+    fn extract_ip_uses_xreal_ip_when_no_connect_info() {
+        let req = Request::builder()
+            .header("x-real-ip", "10.0.0.5")
+            .body(Body::empty())
+            .unwrap();
+        let ip = extract_client_ip(&req);
+        assert_eq!(ip, "10.0.0.5");
+    }
+
+    #[test]
+    fn extract_ip_uses_x_forwarded_for_first_ip() {
+        let req = Request::builder()
+            .header("x-forwarded-for", "192.168.1.1, 10.0.0.1, 172.16.0.1")
+            .body(Body::empty())
+            .unwrap();
+        let ip = extract_client_ip(&req);
+        assert_eq!(ip, "192.168.1.1");
+    }
+
+    #[test]
+    fn extract_ip_returns_unknown_when_no_sources() {
+        let req = Request::builder().body(Body::empty()).unwrap();
+        let ip = extract_client_ip(&req);
+        assert_eq!(ip, "unknown");
     }
 }

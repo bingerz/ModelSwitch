@@ -1365,7 +1365,8 @@ pub async fn start_gateway(
         let server = axum::serve(
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),
-        ).with_graceful_shutdown(shutdown_fut);
+        )
+        .with_graceful_shutdown(shutdown_fut);
 
         match tokio::time::timeout(std::time::Duration::from_secs(drain_timeout_secs), server).await
         {

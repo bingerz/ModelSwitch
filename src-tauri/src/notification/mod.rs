@@ -277,7 +277,9 @@ async fn validate_smtp_host(host: &str) -> Result<(), String> {
 ///
 /// Returns `None`-like errors when mandatory SMTP fields are missing so
 /// the dispatcher can log a clear reason without panicking.
-async fn build_email_notifier(config: &NotificationConfig) -> Result<EmailNotifier, NotificationError> {
+async fn build_email_notifier(
+    config: &NotificationConfig,
+) -> Result<EmailNotifier, NotificationError> {
     let host = config
         .smtp_host
         .as_deref()
@@ -648,5 +650,39 @@ mod tests {
         assert!(validate_notification_url("ftp://example.com/")
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn validate_smtp_host_allows_localhost() {
+        // Localhost should be allowed for SMTP (unlike general URL validation)
+        let result = validate_smtp_host("localhost").await;
+        // DNS may or may not resolve localhost; either way it should be Ok
+        assert!(result.is_ok(), "localhost should pass SMTP host validation");
+    }
+
+    #[tokio::test]
+    async fn validate_smtp_host_allows_literal_loopback() {
+        let result = validate_smtp_host("127.0.0.1").await;
+        assert!(result.is_ok(), "127.0.0.1 should pass SMTP host validation");
+    }
+
+    #[tokio::test]
+    async fn check_smtp_ip_allows_private_range() {
+        let ip: std::net::IpAddr = "10.0.0.1".parse().unwrap();
+        let result = check_smtp_ip(&ip);
+        assert!(
+            result.is_ok(),
+            "private IP 10.0.0.1 should be allowed for SMTP"
+        );
+    }
+
+    #[tokio::test]
+    async fn check_smtp_ip_rejects_cloud_metadata() {
+        let ip: std::net::IpAddr = "169.254.169.254".parse().unwrap();
+        let result = check_smtp_ip(&ip);
+        assert!(
+            result.is_err(),
+            "cloud metadata IP should be rejected even for SMTP"
+        );
     }
 }

@@ -1716,4 +1716,236 @@ mod tests {
         assert!(!vk.check_ip_allowed("10.0.0.1"));
         assert!(!vk.check_ip_allowed("192.169.1.1"));
     }
+
+    #[tokio::test]
+    async fn validate_rejects_expired_key() {
+        let store = VirtualKeyStore::new();
+        let past = chrono::Utc::now() - chrono::Duration::hours(1);
+        let (vk, plaintext) = store
+            .create(
+                "expired".to_string(),
+                None,
+                None,
+                None,
+                vec![],
+                vec![],
+                None,
+                None,
+                Some(past),
+                None,
+            )
+            .await;
+        let _ = vk;
+        let result = store.validate(&plaintext).await;
+        assert!(result.is_none(), "expired key must not validate");
+    }
+
+    #[tokio::test]
+    async fn validate_rejects_budget_exceeded_key() {
+        let store = VirtualKeyStore::new();
+        let (vk, plaintext) = store
+            .create(
+                "budget".to_string(),
+                Some(10),
+                Some(100),
+                None,
+                vec![],
+                vec![],
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
+        store.accumulate_spend(vk.id, 20).await; // exceeds daily 10 cents
+        let result = store.validate(&plaintext).await;
+        assert!(result.is_none(), "key over daily budget must not validate");
+    }
+
+    #[tokio::test]
+    async fn validate_any_works_for_valid_key() {
+        let store = VirtualKeyStore::new();
+        let (_vk, plaintext) = store
+            .create(
+                "test".to_string(),
+                None,
+                None,
+                None,
+                vec![],
+                vec![],
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
+        let result = store.validate_any(&plaintext).await;
+        assert!(
+            result.is_some(),
+            "validate_any should return Some for valid key"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_changes_rpm_limit() {
+        let store = VirtualKeyStore::new();
+        let (vk, _) = store
+            .create(
+                "test".to_string(),
+                None,
+                None,
+                None,
+                vec![],
+                vec![],
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
+        store
+            .update(
+                vk.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(Some(100)),
+                None,
+                None,
+                None,
+            )
+            .await;
+        let fetched = store.get(vk.id).await.unwrap();
+        assert_eq!(fetched.rpm_limit, Some(100));
+    }
+
+    #[tokio::test]
+    async fn update_changes_expires_at() {
+        let store = VirtualKeyStore::new();
+        let (vk, _) = store
+            .create(
+                "test".to_string(),
+                None,
+                None,
+                None,
+                vec![],
+                vec![],
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
+        let future = chrono::Utc::now() + chrono::Duration::days(30);
+        store
+            .update(
+                vk.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(Some(future)),
+                None,
+            )
+            .await;
+        let fetched = store.get(vk.id).await.unwrap();
+        assert!(fetched.expires_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn update_changes_group() {
+        let store = VirtualKeyStore::new();
+        let (vk, _) = store
+            .create(
+                "test".to_string(),
+                None,
+                None,
+                None,
+                vec![],
+                vec![],
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
+        store
+            .update(
+                vk.id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(Some("engineering".to_string())),
+            )
+            .await;
+        let fetched = store.get(vk.id).await.unwrap();
+        assert_eq!(fetched.group.as_deref(), Some("engineering"));
+    }
+
+    #[tokio::test]
+    async fn create_with_all_fields_populated() {
+        let store = VirtualKeyStore::new();
+        let future = chrono::Utc::now() + chrono::Duration::days(365);
+        let (vk, plaintext) = store
+            .create(
+                "full".to_string(),
+                Some(100),
+                Some(1000),
+                Some(vec!["gpt-4".to_string()]),
+                vec!["gpt-3.5".to_string()],
+                vec!["10.0.0.0/8".to_string()],
+                Some(60),
+                Some(10000),
+                Some(future),
+                Some("dev-team".to_string()),
+            )
+            .await;
+        assert_eq!(vk.name, "full");
+        assert_eq!(vk.daily_budget_cents, Some(100));
+        assert_eq!(vk.rpm_limit, Some(60));
+        assert_eq!(vk.tpm_limit, Some(10000));
+        assert!(vk.expires_at.is_some());
+        assert_eq!(vk.group.as_deref(), Some("dev-team"));
+        // Verify the key validates
+        assert!(store.validate(&plaintext).await.is_some());
+    }
+
+    #[test]
+    fn is_expired_returns_false_when_none() {
+        let vk = VirtualKey {
+            id: Uuid::new_v4(),
+            key_hash: "x".to_string(),
+            key_prefix: "ms-vk-x".to_string(),
+            name: "t".to_string(),
+            daily_budget_cents: None,
+            monthly_budget_cents: None,
+            enabled: true,
+            created_at: Utc::now(),
+            spend: VirtualKeySpend::default(),
+            allowed_models: None,
+            denied_models: vec![],
+            allowed_ips: vec![],
+            rpm_limit: None,
+            tpm_limit: None,
+            expires_at: None,
+            group: None,
+        };
+        assert!(!vk.is_expired());
+    }
 }
