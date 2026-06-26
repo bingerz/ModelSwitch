@@ -1,5 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api, type Channel, type QuotaInfo, type UsageHistory } from "../lib/api";
+import {
+  computeTotalBalance,
+  countChannelsWithData,
+  countLowBalance,
+  countErrors,
+} from "./quota-utils";
 
 interface QuotaContextValue {
   quotas: QuotaInfo[];
@@ -86,38 +92,10 @@ export function QuotaProvider({ children }: { children: React.ReactNode }) {
     };
   }, [refresh, fetchUsageHistory]);
 
-  const totalBalance = useMemo(
-    () => quotas.reduce(
-      (sum, q) => sum + (q.error === null ? (q.balance ?? 0) : 0),
-      0,
-    ),
-    [quotas],
-  );
-
-  const channelsWithData = useMemo(
-    () => quotas.filter(
-      (q) => q.error === null && (
-        q.balance != null
-        || q.rate_limit_remaining_req != null
-        || q.total_input_tokens != null
-        || q.total_output_tokens != null
-      ),
-    ).length,
-    [quotas],
-  );
-
-  const lowBalanceCount = useMemo(
-    () => quotas.filter((q) => {
-      if (q.balance == null || q.limit == null || q.limit <= 0) return false;
-      return (q.balance / q.limit) < 0.2;
-    }).length,
-    [quotas],
-  );
-
-  const errorCount = useMemo(
-    () => quotas.filter((q) => q.error !== null).length,
-    [quotas],
-  );
+  const totalBalance = useMemo(() => computeTotalBalance(quotas), [quotas]);
+  const channelsWithData = useMemo(() => countChannelsWithData(quotas), [quotas]);
+  const lowBalanceCount = useMemo(() => countLowBalance(quotas), [quotas]);
+  const errorCount = useMemo(() => countErrors(quotas), [quotas]);
 
   const value = useMemo(
     () => ({
