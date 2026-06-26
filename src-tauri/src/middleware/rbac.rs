@@ -23,12 +23,13 @@ impl Role {
     }
 }
 
-/// Check if the path targets a virtual-keys endpoint by matching
-/// `virtual-keys` as a complete path segment (not a substring).
-/// Matches: `/api/virtual-keys`, `/api/virtual-keys/123`, `/v1/api/virtual-keys/batch`
-/// Rejects: `/api/channels/virtual-keys-foo`, `/api/virtual-keys-backdoor`
+/// Check if the path targets a virtual-keys endpoint.
+/// Anchored to known API prefixes to prevent any substring matching.
 fn is_virtual_keys_path(path: &str) -> bool {
-    path.ends_with("/virtual-keys") || path.contains("/virtual-keys/")
+    const VK_PREFIXES: [&str; 2] = ["/api/virtual-keys", "/v1/api/virtual-keys"];
+    VK_PREFIXES.iter().any(|prefix| {
+        path == *prefix || path.starts_with(&format!("{}/", prefix))
+    })
 }
 
 /// Check if a role is permitted to perform an operation.
