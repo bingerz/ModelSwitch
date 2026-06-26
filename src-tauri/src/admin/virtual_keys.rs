@@ -181,6 +181,9 @@ pub struct ListVirtualKeysParams {
     /// Optional case-insensitive name prefix filter.
     #[serde(default)]
     pub search: Option<String>,
+    /// Optional exact group filter (matches the `group` field on keys).
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 /// Paginated response payload for `GET /api/virtual-keys`.
@@ -213,6 +216,11 @@ pub async fn list_virtual_keys(
     if let Some(ref search) = params.search {
         let lower = search.to_lowercase();
         keys.retain(|k| k.name.to_lowercase().starts_with(&lower));
+    }
+
+    // Optional group filter: exact match on the group label.
+    if let Some(ref group) = params.group {
+        keys.retain(|k| k.group.as_deref() == Some(group.as_str()));
     }
 
     let total = keys.len();
@@ -479,6 +487,7 @@ mod tests {
             page: 1,
             limit: DEFAULT_PAGE_LIMIT,
             search: None,
+            group: None,
         }
     }
 
@@ -582,6 +591,7 @@ mod tests {
             page: 1,
             limit: 5,
             search: None,
+            group: None,
         };
         let result = list_virtual_keys(State(state.clone()), Query(params)).await;
         assert_eq!(result.data.data.len(), 5);
@@ -594,6 +604,7 @@ mod tests {
             page: 3,
             limit: 5,
             search: None,
+            group: None,
         };
         let result = list_virtual_keys(State(state.clone()), Query(params)).await;
         assert_eq!(result.data.data.len(), 2);
@@ -625,6 +636,7 @@ mod tests {
             page: 1,
             limit: 50,
             search: Some("alpha".to_string()),
+            group: None,
         };
         let result = list_virtual_keys(State(state.clone()), Query(params)).await;
         assert_eq!(result.data.data.len(), 2);
@@ -635,6 +647,7 @@ mod tests {
             page: 1,
             limit: 50,
             search: Some("ALPHA".to_string()),
+            group: None,
         };
         let result = list_virtual_keys(State(state), Query(params)).await;
         assert_eq!(result.data.data.len(), 2);
@@ -647,6 +660,7 @@ mod tests {
             page: 1,
             limit: 10_000,
             search: None,
+            group: None,
         };
         let result = list_virtual_keys(State(state), Query(params)).await;
         assert_eq!(result.data.limit, MAX_PAGE_LIMIT);
@@ -805,5 +819,147 @@ mod tests {
         assert!(result.is_ok());
         let data = result.unwrap().0.data;
         assert_eq!(data["group"].as_str().unwrap(), "marketing");
+    }
+
+    #[tokio::test]
+    async fn list_with_group_filter_returns_only_matching_keys() {
+        let state = build_test_state(vec![]);
+        for (name, group) in &[
+            ("eng-1", Some("engineering")),
+            ("eng-2", Some("engineering")),
+            ("sales-1", Some("sales")),
+        ] {
+            let req = CreateVirtualKeyRequest {
+                name: name.to_string(),
+                daily_budget_cents: None,
+                monthly_budget_cents: None,
+                allowed_models: None,
+                denied_models: vec![],
+                allowed_ips: None,
+                rpm_limit: None,
+                tpm_limit: None,
+                expires_at: None,
+                group: group.map(|s| s.to_string()),
+            };
+            create_virtual_key(State(state.clone()), Json(req))
+                .await
+                .unwrap();
+        }
+
+        let params = ListVirtualKeysParams {
+            page: 1,
+            limit: 50,
+            search: None,
+            group: Some("engineering".to_string()),
+        };
+        let result = list_virtual_keys(State(state), Query(params)).await;
+        assert_eq!(result.data.data.len(), 2);
+        assert_eq!(result.data.total, 2);
+        for key in &result.data.data {
+            assert_eq!(key.group.as_deref(), Some("engineering"));
+        }
+    }
+
+    #[tokio::test]
+    async fn list_with_group_filter_returns_empty_when_no_match() {
+        let state = build_test_state(vec![]);
+        let req = CreateVirtualKeyRequest {
+            name: "eng-1".to_string(),
+            daily_budget_cents: None,
+            monthly_budget_cents: None,
+            allowed_models: None,
+            denied_models: vec![],
+            allowed_ips: None,
+            rpm_limit: None,
+            tpm_limit: None,
+            expires_at: None,
+            group: Some("engineering".to_string()),
+        };
+        create_virtual_key(State(state.clone()), Json(req))
+            .await
+            .unwrap();
+
+        let params = ListVirtualKeysParams {
+            page: 1,
+            limit: 50,
+            search: None,
+            group: Some("nonexistent".to_string()),
+        };
+        let result = list_virtual_keys(State(state), Query(params)).await;
+        assert!(result.data.data.is_empty());
+        assert_eq!(result.data.total, 0);
+    }
+
+    #[tokio::test]
+    async fn list_with_group_filter_ignores_keys_with_no_group() {
+        let state = build_test_state(vec![]);
+        for (name, group) in &[
+            ("eng-1", Some("engineering")),
+            ("ungrouped-1", None),
+            ("ungrouped-2", None),
+        ] {
+            let req = CreateVirtualKeyRequest {
+                name: name.to_string(),
+                daily_budget_cents: None,
+                monthly_budget_cents: None,
+                allowed_models: None,
+                denied_models: vec![],
+                allowed_ips: None,
+                rpm_limit: None,
+                tpm_limit: None,
+                expires_at: None,
+                group: group.map(|s| s.to_string()),
+            };
+            create_virtual_key(State(state.clone()), Json(req))
+                .await
+                .unwrap();
+        }
+
+        let params = ListVirtualKeysParams {
+            page: 1,
+            limit: 50,
+            search: None,
+            group: Some("engineering".to_string()),
+        };
+        let result = list_virtual_keys(State(state), Query(params)).await;
+        assert_eq!(result.data.data.len(), 1);
+        assert_eq!(result.data.total, 1);
+        assert_eq!(result.data.data[0].group.as_deref(), Some("engineering"));
+    }
+
+    #[tokio::test]
+    async fn list_without_group_filter_returns_all() {
+        let state = build_test_state(vec![]);
+        for (name, group) in &[
+            ("eng-1", Some("engineering")),
+            ("sales-1", Some("sales")),
+            ("ungrouped-1", None),
+        ] {
+            let req = CreateVirtualKeyRequest {
+                name: name.to_string(),
+                daily_budget_cents: None,
+                monthly_budget_cents: None,
+                allowed_models: None,
+                denied_models: vec![],
+                allowed_ips: None,
+                rpm_limit: None,
+                tpm_limit: None,
+                expires_at: None,
+                group: group.map(|s| s.to_string()),
+            };
+            create_virtual_key(State(state.clone()), Json(req))
+                .await
+                .unwrap();
+        }
+
+        let params = ListVirtualKeysParams {
+            page: 1,
+            limit: 50,
+            search: None,
+            group: None,
+        };
+        let result = list_virtual_keys(State(state), Query(params)).await;
+        assert_eq!(result.data.data.len(), 3);
+        assert_eq!(result.data.total, 3);
     }
 }
