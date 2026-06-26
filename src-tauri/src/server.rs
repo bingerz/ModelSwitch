@@ -170,8 +170,12 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     // Run data migrations before loading stores — old data files from
     // previous versions are upgraded in-place with a `.bak` backup.
     let config_dir = config::app_config_dir();
-    let _ = crate::migration::migrate_data_file(&config_dir.join("virtual_keys.json"));
-    let _ = crate::migration::migrate_data_file(&config_dir.join("audit.ndjson"));
+    if let Err(e) = crate::migration::migrate_data_file(&config_dir.join("virtual_keys.json")) {
+        tracing::error!("Failed to migrate virtual_keys.json: {e}");
+    }
+    if let Err(e) = crate::migration::migrate_data_file(&config_dir.join("audit.ndjson")) {
+        tracing::error!("Failed to migrate audit.ndjson: {e}");
+    }
 
     let logger = Arc::new(DispatchLogger::with_persistence(
         config.gateway.log_max_entries,

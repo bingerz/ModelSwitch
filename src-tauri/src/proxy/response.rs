@@ -290,6 +290,7 @@ pub(super) async fn handle_streaming_success(
         let bg_quota_store = Arc::clone(&state.billing.quota_store);
         let bg_virtual_key_store = Arc::clone(&state.billing.virtual_key_store);
         let bg_provider_budgets = Arc::clone(&state.billing.provider_budgets);
+        let bg_key_rate_limiter = Arc::clone(&state.billing.key_rate_limiter);
         let bg_channel_id = channel.id;
         let bg_provider_name = channel.provider.as_str().to_string();
         let bg_input_cost = channel.input_cost_per_mtok;
@@ -441,6 +442,14 @@ pub(super) async fn handle_streaming_success(
                     } else {
                         bg_virtual_key_store.accumulate_spend(vk, cost_cents).await;
                     }
+
+                    // Record actual token consumption against the key's TPM
+                    // window. This is the post-response complement to the
+                    // pre-request `check_tpm` gate in the virtual-key
+                    // middleware.
+                    let total_tokens =
+                        input_tokens.unwrap_or(0) + output_tokens.unwrap_or(0);
+                    bg_key_rate_limiter.record_tokens(vk, total_tokens);
                 }
 
                 // Accumulate spend into per-provider budget tracker.
@@ -677,6 +686,7 @@ pub(super) async fn handle_json_success(
         let bg_quota_store = Arc::clone(&state.billing.quota_store);
         let bg_virtual_key_store = Arc::clone(&state.billing.virtual_key_store);
         let bg_provider_budgets = Arc::clone(&state.billing.provider_budgets);
+        let bg_key_rate_limiter = Arc::clone(&state.billing.key_rate_limiter);
         let bg_logger = Arc::clone(&state.logger);
         let bg_channel_mgr = Arc::clone(&state.channel_mgr);
         let bg_latency_tracker = Arc::clone(&state.router.latency_tracker);
@@ -723,6 +733,13 @@ pub(super) async fn handle_json_success(
                 } else {
                     bg_virtual_key_store.accumulate_spend(vk, cost_cents).await;
                 }
+
+                // Record actual token consumption against the key's TPM
+                // window. Post-response complement to the pre-request
+                // `check_tpm` gate in the virtual-key middleware.
+                let total_tokens =
+                    bg_input_tokens.unwrap_or(0) + bg_output_tokens.unwrap_or(0);
+                bg_key_rate_limiter.record_tokens(vk, total_tokens);
             }
 
             // Accumulate spend into per-provider budget tracker.

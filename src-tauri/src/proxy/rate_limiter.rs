@@ -343,30 +343,44 @@ impl RateLimiter {
     }
 }
 
-/// Per-virtual-key rate limiter for RPM enforcement.
+/// Per-virtual-key rate limiter for RPM and TPM enforcement.
 ///
-/// Uses a `BucketedWindow` per key ID to track request counts over a
-/// rolling 60-second window. Each key gets its own `Mutex<BucketedWindow>`
-/// so contention is minimal.
+/// Uses independent `BucketedWindow`s per key ID to track request counts
+/// (RPM) and token counts (TPM) over a rolling 60-second window. Each key
+/// gets its own `Mutex<BucketedWindow>` per dimension, so RPM and TPM
+/// tracking never contend with each other.
+///
+/// TPM differs from RPM in that actual token counts are only known after
+/// the upstream response completes. The expected usage is:
+/// 1. Pre-request: call `check_tpm` to reject requests once the rolling
+///    TPM window is already at or above the configured limit.
+/// 2. Post-response: call `record_tokens` with the real input + output
+///    token counts so subsequent requests see accurate usage.
 pub struct KeyRateLimiter {
-    windows: RwLock<HashMap<Uuid, Arc<Mutex<BucketedWindow>>>>,
+    rpm_windows: RwLock<HashMap<Uuid, Arc<Mutex<BucketedWindow>>>>,
+    tpm_windows: RwLock<HashMap<Uuid, Arc<Mutex<BucketedWindow>>>>,
 }
 
 impl KeyRateLimiter {
     pub fn new() -> Self {
         Self {
-            windows: RwLock::new(HashMap::new()),
+            rpm_windows: RwLock::new(HashMap::new()),
+            tpm_windows: RwLock::new(HashMap::new()),
         }
     }
 
-    fn get_or_create(&self, key_id: Uuid) -> Arc<Mutex<BucketedWindow>> {
+    fn get_or_create(
+        &self,
+        key_id: Uuid,
+        map: &RwLock<HashMap<Uuid, Arc<Mutex<BucketedWindow>>>>,
+    ) -> Arc<Mutex<BucketedWindow>> {
         {
-            let map = self.windows.read();
+            let map = map.read();
             if let Some(arc) = map.get(&key_id) {
                 return Arc::clone(arc);
             }
         }
-        let mut map = self.windows.write();
+        let mut map = map.write();
         map.entry(key_id)
             .or_insert_with(|| Arc::new(Mutex::new(BucketedWindow::new(WINDOW_MS))))
             .clone()
@@ -376,16 +390,46 @@ impl KeyRateLimiter {
     /// Does NOT increment the counter — call `record` after the request succeeds.
     /// Returns `true` if allowed, `false` if RPM limit exceeded.
     pub fn check(&self, key_id: Uuid, rpm_limit: u32) -> bool {
-        let arc = self.get_or_create(key_id);
+        let arc = self.get_or_create(key_id, &self.rpm_windows);
         let window = arc.lock();
         window.current_total() < rpm_limit as u64
     }
 
     /// Record a request for a key (increment RPM counter).
     pub fn record(&self, key_id: Uuid) {
-        let arc = self.get_or_create(key_id);
+        let arc = self.get_or_create(key_id, &self.rpm_windows);
         let mut window = arc.lock();
         window.add(1);
+    }
+
+    /// Check if a request is allowed under the TPM limit.
+    ///
+    /// This is a pre-request gate: it compares the current rolling TPM
+    /// usage against `tpm_limit` and returns `false` when the limit is
+    /// already reached or exceeded. It does NOT add any tokens — call
+    /// `record_tokens` after the response completes to account for the
+    /// tokens actually consumed.
+    ///
+    /// Returns `true` when the request may proceed, `false` when the key
+    /// is already at or above its per-minute token cap.
+    pub fn check_tpm(&self, key_id: Uuid, tpm_limit: u32) -> bool {
+        let arc = self.get_or_create(key_id, &self.tpm_windows);
+        let window = arc.lock();
+        window.current_total() < tpm_limit as u64
+    }
+
+    /// Record actual token consumption for a key after a response completes.
+    ///
+    /// `tokens` should be the sum of input and output tokens (use 0 for
+    /// any unknown component). Safe to call with `0` — it simply records
+    /// nothing meaningful for the window.
+    pub fn record_tokens(&self, key_id: Uuid, tokens: u64) {
+        if tokens == 0 {
+            return;
+        }
+        let arc = self.get_or_create(key_id, &self.tpm_windows);
+        let mut window = arc.lock();
+        window.add(tokens);
     }
 }
 
@@ -595,5 +639,76 @@ mod tests {
             RateLimitAlgorithm::default(),
             RateLimitAlgorithm::SlidingWindow
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // KeyRateLimiter tests (RPM + TPM)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn key_rate_limiter_rpm_check_and_record() {
+        let limiter = KeyRateLimiter::new();
+        let key = Uuid::new_v4();
+
+        // Limit of 2 RPM: first two requests are allowed.
+        assert!(limiter.check(key, 2));
+        limiter.record(key);
+        assert!(limiter.check(key, 2));
+        limiter.record(key);
+        // Third request within the window should be rejected.
+        assert!(!limiter.check(key, 2));
+    }
+
+    #[test]
+    fn key_rate_limiter_tpm_check_allows_below_limit() {
+        let limiter = KeyRateLimiter::new();
+        let key = Uuid::new_v4();
+
+        // No tokens recorded yet — should always be allowed.
+        assert!(limiter.check_tpm(key, 1000));
+
+        // Record some tokens and stay under the limit.
+        limiter.record_tokens(key, 500);
+        assert!(limiter.check_tpm(key, 1000));
+    }
+
+    #[test]
+    fn key_rate_limiter_tpm_check_blocks_at_or_above_limit() {
+        let limiter = KeyRateLimiter::new();
+        let key = Uuid::new_v4();
+
+        // Reach the limit exactly — further requests must be blocked.
+        limiter.record_tokens(key, 1000);
+        assert!(!limiter.check_tpm(key, 1000));
+        assert!(!limiter.check_tpm(key, 999));
+    }
+
+    #[test]
+    fn key_rate_limiter_tpm_is_independent_of_rpm() {
+        let limiter = KeyRateLimiter::new();
+        let key = Uuid::new_v4();
+
+        // Saturate RPM — TPM check must remain unaffected.
+        limiter.record(key);
+        limiter.record(key);
+        assert!(!limiter.check(key, 2));
+        // TPM check should still pass since no tokens recorded.
+        assert!(limiter.check_tpm(key, 100));
+
+        // Conversely, saturate TPM — RPM check should still pass
+        // (fresh window since only one RPM entry recorded above).
+        limiter.record_tokens(key, 200);
+        assert!(!limiter.check_tpm(key, 200));
+        // RPM window has two entries; with limit 3 the next request is allowed.
+        assert!(limiter.check(key, 3));
+    }
+
+    #[test]
+    fn key_rate_limiter_record_tokens_zero_is_noop() {
+        let limiter = KeyRateLimiter::new();
+        let key = Uuid::new_v4();
+        limiter.record_tokens(key, 0);
+        // Window should still be empty.
+        assert!(limiter.check_tpm(key, 1));
     }
 }

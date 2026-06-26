@@ -62,29 +62,57 @@ where
                 return;
             }
         }
+        // Atomic write: serialize to a temp file in the same directory, fsync,
+        // then rename over the real path. A crash mid-write leaves the temp
+        // file (or the previous real file) in place rather than a truncated
+        // store, which would cause `serde_json::from_str` to fail on the next
+        // startup and silently wipe all virtual keys/budgets.
+        let tmp_path = self.store_path.with_extension("json.tmp");
         #[cfg(unix)]
         {
             use tokio::io::AsyncWriteExt;
-            match tokio::fs::OpenOptions::new()
+            let open_result = tokio::fs::OpenOptions::new()
                 .create(true)
                 .write(true)
                 .truncate(true)
                 .mode(0o600)
-                .open(&self.store_path)
-                .await
-            {
+                .open(&tmp_path)
+                .await;
+            match open_result {
                 Ok(mut f) => {
                     if let Err(e) = f.write_all(json.as_bytes()).await {
-                        tracing::error!("Failed to write store: {e}");
+                        tracing::error!("Failed to write store (temp): {e}");
+                        let _ = tokio::fs::remove_file(&tmp_path).await;
+                        return;
+                    }
+                    // Flush OS buffer so the bytes hit disk before rename.
+                    if let Err(e) = f.sync_all().await {
+                        tracing::error!("Failed to fsync store (temp): {e}");
+                        let _ = tokio::fs::remove_file(&tmp_path).await;
+                        return;
                     }
                 }
-                Err(e) => tracing::error!("Failed to create store file: {e}"),
+                Err(e) => {
+                    tracing::error!("Failed to create store file (temp): {e}");
+                    return;
+                }
+            }
+            // Atomic on POSIX when src and dst are on the same filesystem
+            // (they are — same directory).
+            if let Err(e) = tokio::fs::rename(&tmp_path, &self.store_path).await {
+                tracing::error!("Failed to rename temp store into place: {e}");
+                let _ = tokio::fs::remove_file(&tmp_path).await;
             }
         }
         #[cfg(not(unix))]
         {
-            if let Err(e) = tokio::fs::write(&self.store_path, &json).await {
-                tracing::error!("Failed to write store: {e}");
+            if let Err(e) = tokio::fs::write(&tmp_path, &json).await {
+                tracing::error!("Failed to write store (temp): {e}");
+                return;
+            }
+            if let Err(e) = tokio::fs::rename(&tmp_path, &self.store_path).await {
+                tracing::error!("Failed to rename temp store into place: {e}");
+                let _ = tokio::fs::remove_file(&tmp_path).await;
             }
         }
     }
@@ -111,7 +139,11 @@ where
         let loaded: HashMap<K, V> = match serde_json::from_str(&cleaned_json) {
             Ok(m) => m,
             Err(e) => {
-                tracing::warn!("Failed to parse store: {e}");
+                tracing::error!(
+                    "CRITICAL: Failed to parse persisted store at {}: {e}. \
+                     Loading with empty data — existing keys/budgets may be lost!",
+                    self.store_path.display()
+                );
                 return;
             }
         };

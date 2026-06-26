@@ -64,6 +64,19 @@ pub async fn virtual_key_middleware(
                     ));
                 }
             }
+
+            // Pre-check TPM (block if already at/over limit — prevents runaway
+            // usage). Actual token consumption is recorded post-response in the
+            // dispatch path once the upstream returns real usage counts.
+            if let Some(tpm_limit) = vk.tpm_limit {
+                if !state.billing.key_rate_limiter.check_tpm(vk.id, tpm_limit) {
+                    return Err((
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "Virtual key TPM limit exceeded",
+                    ));
+                }
+            }
+
             // Record this request against the key's RPM window.
             state.billing.key_rate_limiter.record(vk.id);
 
