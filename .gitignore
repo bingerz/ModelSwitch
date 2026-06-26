@@ -65,3 +65,4 @@ src-tauri/.cargo/
 # Reference repos (cloned by reference/clone_repos.sh)
 reference/*/
 !reference/clone_repos.sh
+coverage/
