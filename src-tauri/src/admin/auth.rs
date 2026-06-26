@@ -159,9 +159,19 @@ pub async fn ldap_login(
     {
         Ok(user_info) => {
             let store = &state.billing.virtual_key_store;
+            let key_name = format!("ldap:{}", user_info.username);
+
+            // Dedupe: if a key for this user already exists, delete it so the
+            // user gets a fresh plaintext on re-login. Without this, every
+            // successful login accumulates a new key indefinitely.
+            let existing = store.list().await.into_iter().find(|k| k.name == key_name);
+            if let Some(old_key) = existing {
+                store.delete(old_key.id).await;
+            }
+
             let (new_key, plaintext) = store
                 .create(
-                    format!("ldap:{}", user_info.username),
+                    key_name,
                     None,   // daily_budget_cents
                     None,   // monthly_budget_cents
                     None,   // allowed_models
@@ -190,11 +200,23 @@ pub async fn ldap_login(
         }
         Err(e) => {
             tracing::warn!(username = %req.username, error = %e, "LDAP login failed");
-            let status = match &e {
-                crate::auth::ldap::LdapAuthError::BindFailed { .. } => StatusCode::UNAUTHORIZED,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            // Return generic messages to the client — never leak internal
+            // error details (LDAP URLs, connection diagnostics, etc.) to
+            // unauthenticated callers. The full error is logged above.
+            let (status, message) = match &e {
+                crate::auth::ldap::LdapAuthError::BindFailed { .. } => {
+                    (StatusCode::UNAUTHORIZED, "Invalid credentials")
+                }
+                crate::auth::ldap::LdapAuthError::InsecureConnection(_) => (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Authentication service configuration error",
+                ),
+                _ => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Authentication service temporarily unavailable",
+                ),
             };
-            ApiError::new(status, &e.to_string()).into_response()
+            ApiError::new(status, message).into_response()
         }
     }
 }
