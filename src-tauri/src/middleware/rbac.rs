@@ -23,6 +23,14 @@ impl Role {
     }
 }
 
+/// Check if the path targets a virtual-keys endpoint by matching
+/// `virtual-keys` as a complete path segment (not a substring).
+/// Matches: `/api/virtual-keys`, `/api/virtual-keys/123`, `/v1/api/virtual-keys/batch`
+/// Rejects: `/api/channels/virtual-keys-foo`, `/api/virtual-keys-backdoor`
+fn is_virtual_keys_path(path: &str) -> bool {
+    path.ends_with("/virtual-keys") || path.contains("/virtual-keys/")
+}
+
 /// Check if a role is permitted to perform an operation.
 /// `path` is the full request path (e.g., "/api/virtual-keys").
 pub fn is_permitted(method: &Method, path: &str, role: Role) -> bool {
@@ -33,7 +41,7 @@ pub fn is_permitted(method: &Method, path: &str, role: Role) -> bool {
                 return true;
             }
             // KeyManager can write to virtual-keys endpoints
-            path.contains("/virtual-keys")
+            is_virtual_keys_path(path)
         }
         Role::Auditor => method.is_safe(),
     }
@@ -153,6 +161,42 @@ mod tests {
         assert!(!is_permitted(
             &Method::PUT,
             "/api/guardrails",
+            Role::KeyManager
+        ));
+    }
+
+    #[test]
+    fn key_manager_substring_bypass_prevented() {
+        // These should NOT match — substring bypass attempt
+        assert!(!is_permitted(
+            &Method::POST,
+            "/api/channels/virtual-keys-foo",
+            Role::KeyManager
+        ));
+        assert!(!is_permitted(
+            &Method::DELETE,
+            "/api/channels/1/virtual-keys-backdoor",
+            Role::KeyManager
+        ));
+        assert!(!is_permitted(
+            &Method::PUT,
+            "/v1/api/not-virtual-keys/at-all",
+            Role::KeyManager
+        ));
+        // These SHOULD match — legitimate VK paths
+        assert!(is_permitted(
+            &Method::POST,
+            "/api/virtual-keys",
+            Role::KeyManager
+        ));
+        assert!(is_permitted(
+            &Method::PUT,
+            "/api/virtual-keys/123",
+            Role::KeyManager
+        ));
+        assert!(is_permitted(
+            &Method::POST,
+            "/v1/api/virtual-keys/batch",
             Role::KeyManager
         ));
     }
