@@ -441,6 +441,336 @@ pub fn keepalive_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    use futures::stream;
+
+    // ── P0: Pure Response Builders ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn all_channels_exhausted_response_returns_429() {
+        let resp = all_channels_exhausted_response();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["type"], "rate_limit_exhausted");
+        assert_eq!(json["error"]["code"], "all_channels_rate_limited");
+    }
+
+    #[tokio::test]
+    async fn json_response_sets_status_and_content_type() {
+        let resp = json_response(StatusCode::BAD_REQUEST, r#"{"x":1}"#.to_string());
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(resp.headers()["content-type"], "application/json");
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"{\"x\":1}");
+    }
+
+    #[tokio::test]
+    async fn sse_single_chunk_response_wraps_in_data_envelope() {
+        let resp = sse_single_chunk_response(StatusCode::OK, r#"{"choices":[]}"#);
+        assert_eq!(resp.headers()["content-type"], "text/event-stream");
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.contains(r#"data: {"choices":[]}"#));
+        assert!(text.contains("data: [DONE]"));
+    }
+
+    #[tokio::test]
+    async fn sse_stream_response_with_cached_preserves_body() {
+        let resp = sse_stream_response_with_cached("data: hello\n\n");
+        assert_eq!(resp.headers()["content-type"], "text/event-stream");
+        assert_eq!(resp.headers()["x-accel-buffering"], "no");
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"data: hello\n\n");
+    }
+
+    // ── P1: SSE Translators ───────────────────────────────────────────────────
+
+    #[test]
+    fn translate_gemini_done_marker_passes_through() {
+        let result = super::translate_gemini_sse_chunk(b"data: [DONE]\n\n", "gemini-pro");
+        assert!(String::from_utf8_lossy(&result).contains("data: [DONE]"));
+    }
+
+    #[test]
+    fn translate_gemini_comments_preserved() {
+        let result = super::translate_gemini_sse_chunk(b": ping\n\ndata: {}\n\n", "gemini-pro");
+        let text = String::from_utf8_lossy(&result);
+        assert!(text.contains(": ping"));
+    }
+
+    #[test]
+    fn translate_gemini_translates_json_chunk() {
+        let result = super::translate_gemini_sse_chunk(
+            b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}]}\n\n",
+            "gemini-pro",
+        );
+        let text = String::from_utf8_lossy(&result);
+        assert!(text.contains(r#""model":"gemini-pro""#));
+        assert!(text.contains("hello"));
+    }
+
+    #[test]
+    fn translate_gemini_non_json_passes_through() {
+        let result = super::translate_gemini_sse_chunk(b"data: not-json\n\n", "gemini-pro");
+        let text = String::from_utf8_lossy(&result);
+        assert!(text.contains("not-json"));
+    }
+
+    #[test]
+    fn translate_protocol_drops_event_type_lines() {
+        let result = super::translate_protocol_sse_chunk(
+            b"event: content_block_start\ndata: {\"type\":\"content_block_start\"}\n\n",
+            "claude",
+            RequestFormat::AnthropicMessages,
+            RequestFormat::OpenAIChat,
+        );
+        let text = String::from_utf8_lossy(&result);
+        assert!(!text.contains("event:"));
+    }
+
+    #[test]
+    fn translate_protocol_done_passes_through() {
+        let result = super::translate_protocol_sse_chunk(
+            b"data: [DONE]\n\n",
+            "claude",
+            RequestFormat::AnthropicMessages,
+            RequestFormat::OpenAIChat,
+        );
+        assert!(String::from_utf8_lossy(&result).contains("data: [DONE]"));
+    }
+
+    #[test]
+    fn translate_protocol_anthropic_to_openai() {
+        let result = super::translate_protocol_sse_chunk(
+            b"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
+            "claude-3",
+            RequestFormat::AnthropicMessages,
+            RequestFormat::OpenAIChat,
+        );
+        let text = String::from_utf8_lossy(&result);
+        assert!(text.contains("hi"));
+        assert!(text.contains("choices"));
+    }
+
+    #[test]
+    fn translate_protocol_drops_ping_events() {
+        let result = super::translate_protocol_sse_chunk(
+            b"data: {\"type\":\"ping\"}\n\n",
+            "claude",
+            RequestFormat::AnthropicMessages,
+            RequestFormat::OpenAIChat,
+        );
+        let text = String::from_utf8_lossy(&result);
+        assert!(!text.contains("ping"));
+    }
+
+    // ── P2: Telemetry integration ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn telemetry_sets_ttft_on_first_chunk() {
+        let chunks = vec![Bytes::from("data: {}\n\n")];
+        let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
+
+        let (_response, _output_buffer, stream_done, ttft) = sse_stream_response_with_telemetry(
+            upstream,
+            false,
+            "gpt-4".to_string(),
+            None,
+            None,
+            std::time::Instant::now(),
+        );
+
+        let body = _response.into_body();
+        let _ = axum::body::to_bytes(body, usize::MAX).await;
+        stream_done.notified().await;
+
+        assert!(ttft.lock().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn telemetry_ttft_none_when_empty_stream() {
+        let upstream = stream::iter(Vec::<Result<Bytes, reqwest::Error>>::new());
+
+        let (_response, _output_buffer, stream_done, ttft) = sse_stream_response_with_telemetry(
+            upstream,
+            false,
+            "gpt-4".to_string(),
+            None,
+            None,
+            std::time::Instant::now(),
+        );
+
+        let body = _response.into_body();
+        let _ = axum::body::to_bytes(body, usize::MAX).await;
+        stream_done.notified().await;
+
+        assert!(ttft.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn telemetry_first_byte_timeout_aborts() {
+        use std::task::Poll;
+
+        let pending_stream =
+            futures::stream::poll_fn(|_cx| -> Poll<Option<Result<Bytes, reqwest::Error>>> {
+                Poll::Pending
+            });
+
+        let (response, _output_buffer, stream_done, _ttft) = sse_stream_response_with_telemetry(
+            pending_stream,
+            false,
+            "gpt-4".to_string(),
+            Some(Duration::from_millis(50)),
+            None,
+            std::time::Instant::now(),
+        );
+
+        // Drop the body so the receiver is cleaned up
+        drop(response.into_body());
+
+        // Wait for the stream task to finish (should abort after ~50ms timeout)
+        let result = tokio::time::timeout(Duration::from_secs(5), stream_done.notified()).await;
+        assert!(
+            result.is_ok(),
+            "first-byte timeout should abort stream within 5s"
+        );
+    }
+
+    #[tokio::test]
+    async fn telemetry_gemini_translation_in_output_buffer() {
+        let chunks = vec![Bytes::from(
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}]}\n\n",
+        )];
+        let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
+
+        let (_response, output_buffer, stream_done, _ttft) = sse_stream_response_with_telemetry(
+            upstream,
+            true,
+            "gemini-pro".to_string(),
+            None,
+            None,
+            std::time::Instant::now(),
+        );
+
+        let body = _response.into_body();
+        let _ = axum::body::to_bytes(body, usize::MAX).await;
+        stream_done.notified().await;
+
+        let buf = output_buffer.lock();
+        let text = String::from_utf8_lossy(&buf);
+        assert!(
+            text.contains("choices"),
+            "output should be OpenAI shape: {}",
+            text
+        );
+        assert!(
+            !text.contains("candidates"),
+            "output should not contain Gemini shape: {}",
+            text
+        );
+    }
+
+    #[tokio::test]
+    async fn telemetry_protocol_translation_in_output_buffer() {
+        let chunks = vec![Bytes::from(
+            "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
+        )];
+        let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
+
+        let (_response, output_buffer, stream_done, _ttft) = sse_stream_response_with_telemetry(
+            upstream,
+            false,
+            "claude-3".to_string(),
+            None,
+            Some((RequestFormat::AnthropicMessages, RequestFormat::OpenAIChat)),
+            std::time::Instant::now(),
+        );
+
+        let body = _response.into_body();
+        let _ = axum::body::to_bytes(body, usize::MAX).await;
+        stream_done.notified().await;
+
+        let buf = output_buffer.lock();
+        let text = String::from_utf8_lossy(&buf);
+        assert!(
+            text.contains("choices"),
+            "output should be OpenAI shape: {}",
+            text
+        );
+    }
+
+    #[tokio::test]
+    async fn telemetry_truncates_buffer_over_512kb() {
+        let chunk = Bytes::from({
+            let s = format!("data: {}\n\n", "x".repeat(1018));
+            s
+        });
+        let chunks: Vec<_> = std::iter::repeat(chunk).take(600).collect();
+        let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
+
+        let (_response, output_buffer, stream_done, _ttft) = sse_stream_response_with_telemetry(
+            upstream,
+            false,
+            "gpt-4".to_string(),
+            None,
+            None,
+            std::time::Instant::now(),
+        );
+
+        let body = _response.into_body();
+        let _ = axum::body::to_bytes(body, usize::MAX).await;
+        stream_done.notified().await;
+
+        let len = output_buffer.lock().len();
+        assert!(
+            len < 540_000,
+            "buffer should be truncated (was {}KB)",
+            len / 1024
+        );
+    }
+
+    #[tokio::test]
+    async fn telemetry_drains_after_client_disconnect() {
+        let chunks = vec![
+            Bytes::from("data: chunk1\n\n"),
+            Bytes::from("data: chunk2\n\n"),
+            Bytes::from("data: chunk3\n\n"),
+        ];
+        let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
+
+        let (response, output_buffer, stream_done, _ttft) = sse_stream_response_with_telemetry(
+            upstream,
+            false,
+            "gpt-4".to_string(),
+            None,
+            None,
+            std::time::Instant::now(),
+        );
+
+        // Drop the body to simulate client disconnect
+        drop(response.into_body());
+
+        // Wait for the stream task to finish draining
+        stream_done.notified().await;
+
+        let len = output_buffer.lock().len();
+        assert!(
+            len > 0,
+            "output_buffer should have content after client disconnect"
+        );
+    }
+
+    // ── Existing test ──────────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn raw_sse_accumulates_all_chunks() {
