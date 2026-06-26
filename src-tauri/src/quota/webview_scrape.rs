@@ -406,3 +406,310 @@ pub async fn scrape_webview_quota(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ------------------------------------------------------------------
+    // value_as_f64
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn value_as_f64_parses_number() {
+        let v = serde_json::json!(42.5);
+        assert_eq!(value_as_f64(&v), Some(42.5));
+    }
+
+    #[test]
+    fn value_as_f64_parses_numeric_string() {
+        let v = serde_json::json!("42.5");
+        assert_eq!(value_as_f64(&v), Some(42.5));
+    }
+
+    #[test]
+    fn value_as_f64_rejects_non_numeric_string() {
+        assert_eq!(value_as_f64(&serde_json::json!("abc")), None);
+        assert_eq!(value_as_f64(&serde_json::json!("")), None);
+    }
+
+    #[test]
+    fn value_as_f64_rejects_null_and_bool() {
+        assert_eq!(value_as_f64(&serde_json::json!(null)), None);
+        assert_eq!(value_as_f64(&serde_json::json!(true)), None);
+        assert_eq!(value_as_f64(&serde_json::json!(false)), None);
+    }
+
+    // ------------------------------------------------------------------
+    // resolve_scrape_config
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn resolve_scrape_config_anthropic() {
+        let cfg = resolve_scrape_config("anthropic", "https://api.anthropic.com");
+        assert!(cfg.is_some());
+        let cfg = cfg.unwrap();
+        assert_eq!(cfg.provider_id, "anthropic");
+        assert!(cfg.target_url.contains("console.anthropic.com"));
+    }
+
+    #[test]
+    fn resolve_scrape_config_baidu_aliases() {
+        for provider in &["baidu", "qianfan"] {
+            let cfg = resolve_scrape_config(provider, "");
+            assert!(cfg.is_some(), "provider '{}' should resolve", provider);
+            assert_eq!(cfg.unwrap().provider_id, "baidu");
+        }
+    }
+
+    #[test]
+    fn resolve_scrape_config_aliyun_aliases() {
+        for provider in &["aliyun", "dashscope", "bailian"] {
+            let cfg = resolve_scrape_config(provider, "");
+            assert!(cfg.is_some(), "provider '{}' should resolve", provider);
+            assert_eq!(cfg.unwrap().provider_id, "aliyun");
+        }
+    }
+
+    #[test]
+    fn resolve_scrape_config_doubao_aliases() {
+        for provider in &["doubao", "volcengine", "bytedance"] {
+            let cfg = resolve_scrape_config(provider, "");
+            assert!(cfg.is_some(), "provider '{}' should resolve", provider);
+            assert_eq!(cfg.unwrap().provider_id, "doubao");
+        }
+    }
+
+    #[test]
+    fn resolve_scrape_config_unknown_returns_none() {
+        assert!(resolve_scrape_config("unknown", "https://example.com").is_none());
+    }
+
+    #[test]
+    fn resolve_scrape_config_url_substring_fallback() {
+        // URL containing "dashscope" → aliyun
+        let cfg = resolve_scrape_config("custom", "https://dashscope.example.com");
+        assert!(cfg.is_some());
+        assert_eq!(cfg.unwrap().provider_id, "aliyun");
+
+        // URL containing "aliyun" → aliyun
+        let cfg = resolve_scrape_config("custom", "https://aliyun.example.com");
+        assert!(cfg.is_some());
+        assert_eq!(cfg.unwrap().provider_id, "aliyun");
+
+        // "bigmodel" in URL → None (handled by HTTP collector, not WebView)
+        assert!(resolve_scrape_config("custom", "https://bigmodel.cn").is_none());
+    }
+
+    // ------------------------------------------------------------------
+    // parse_anthropic_result
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_anthropic_result_extracts_fields() {
+        let data = serde_json::json!({
+            "five_hour": { "utilization": 42.5, "resets_at": "2024-01-01T00:00:00Z" },
+            "seven_day": { "utilization": 75.0 }
+        });
+        let id = uuid::Uuid::new_v4();
+        let info = parse_anthropic_result(&data, id, "TestChannel").expect("should parse");
+
+        assert_eq!(info.channel_id, id);
+        assert_eq!(info.channel_name, "TestChannel");
+        assert_eq!(info.provider, "anthropic");
+        assert_eq!(info.source, "webview");
+        assert_eq!(info.groups.len(), 2);
+        assert_eq!(info.groups[0].window, "5h");
+        assert_eq!(info.groups[0].utilization_pct, Some(42.5));
+        assert_eq!(
+            info.groups[0].resets_at.as_deref(),
+            Some("2024-01-01T00:00:00Z")
+        );
+        assert_eq!(info.groups[1].window, "7d");
+        assert_eq!(info.groups[1].utilization_pct, Some(75.0));
+        assert!(info.groups[1].resets_at.is_none());
+        // compact_text should contain both windows
+        let compact = info.compact_text.expect("compact_text should be set");
+        assert!(compact.contains("5h"));
+        assert!(compact.contains("7d"));
+    }
+
+    #[test]
+    fn parse_anthropic_result_err_on_invalid_shape() {
+        // "five_hour" must be an object with "utilization"; a string fails deserialization
+        let data = serde_json::json!({"five_hour": "not-an-object"});
+        let id = uuid::Uuid::new_v4();
+        let result = parse_anthropic_result(&data, id, "ch");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("parse error"));
+    }
+
+    #[test]
+    fn parse_anthropic_result_empty_object_ok() {
+        // Empty object — all Option fields default to None, groups empty, no panic
+        let data = serde_json::json!({});
+        let id = uuid::Uuid::new_v4();
+        let info = parse_anthropic_result(&data, id, "ch").expect("should parse");
+        assert!(info.groups.is_empty());
+        assert!(info.compact_text.is_none());
+    }
+
+    // ------------------------------------------------------------------
+    // parse_baidu_result
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_baidu_result_sums_totals() {
+        let data = serde_json::json!({
+            "result": [
+                { "resourceName": "ERP_Coding", "totalAmount": 100, "remainAmount": 60, "usedAmount": 40 },
+                { "resourceName": "ERP_Inference", "totalAmount": 200, "remainAmount": 150, "usedAmount": 50 }
+            ]
+        });
+        let id = uuid::Uuid::new_v4();
+        let info = parse_baidu_result(&data, id, "BaiduChan").expect("should parse");
+
+        assert_eq!(info.provider, "baidu");
+        // Sums: remain = 60 + 150 = 210, total = 100 + 200 = 300
+        assert_eq!(info.balance, Some(210.0));
+        assert_eq!(info.limit, Some(300.0));
+        // usage = total - remain = 300 - 210 = 90
+        assert_eq!(info.usage, Some(90.0));
+        assert_eq!(info.items.len(), 2);
+        assert_eq!(info.items[0].label, "ERP_Coding");
+        assert!(info.items[0].value.contains("60.00"));
+    }
+
+    #[test]
+    fn parse_baidu_result_err_on_missing_array() {
+        let data = serde_json::json!({"foo": "bar"});
+        let id = uuid::Uuid::new_v4();
+        let result = parse_baidu_result(&data, id, "ch");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("no result/data array"));
+    }
+
+    #[test]
+    fn parse_baidu_result_accepts_data_key_and_numeric_strings() {
+        // Some Baidu responses use "data" instead of "result", and values may be strings
+        let data = serde_json::json!({
+            "data": [
+                { "resourceName": "Res1", "totalAmount": "50", "remainAmount": "30" }
+            ]
+        });
+        let id = uuid::Uuid::new_v4();
+        let info = parse_baidu_result(&data, id, "ch").expect("should parse");
+        assert_eq!(info.balance, Some(30.0));
+        assert_eq!(info.limit, Some(50.0));
+        assert_eq!(info.items.len(), 1);
+    }
+
+    // ------------------------------------------------------------------
+    // parse_aliyun_result
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_aliyun_result_extracts_numeric_fields() {
+        let data = serde_json::json!({
+            "data": {
+                "remainAmount": 123.45,
+                "totalAmount": 500.0,
+                "usedAmount": 376.55
+            }
+        });
+        let id = uuid::Uuid::new_v4();
+        let info = parse_aliyun_result(&data, id, "AliChan").expect("should parse");
+
+        assert_eq!(info.provider, "aliyun");
+        assert_eq!(info.balance, Some(123.45));
+        assert_eq!(info.limit, Some(500.0));
+        assert_eq!(info.usage, Some(376.55));
+    }
+
+    #[test]
+    fn parse_aliyun_result_extracts_items() {
+        let data = serde_json::json!({
+            "data": {
+                "items": [
+                    { "commodityCode": "MODEL_A", "deductQuantity": 12.5 },
+                    { "name": "Model B", "remainQuantity": 7.3 }
+                ]
+            }
+        });
+        let id = uuid::Uuid::new_v4();
+        let info = parse_aliyun_result(&data, id, "ch").expect("should parse");
+        assert_eq!(info.items.len(), 2);
+        assert_eq!(info.items[0].label, "MODEL_A");
+        assert_eq!(info.items[0].value, "12.50");
+        assert_eq!(info.items[1].label, "Model B");
+    }
+
+    #[test]
+    fn parse_aliyun_result_falls_back_to_page_text() {
+        // No structured "data" block — should fall back to page_text (truncated to 200 chars)
+        let long_text = "x".repeat(300);
+        let data = serde_json::json!({ "page_text": long_text });
+        let id = uuid::Uuid::new_v4();
+        let info = parse_aliyun_result(&data, id, "ch").expect("should parse");
+
+        assert!(info.balance.is_none());
+        assert!(info.limit.is_none());
+        let compact = info.compact_text.expect("compact_text should be set");
+        assert_eq!(compact.len(), 200);
+    }
+
+    // ------------------------------------------------------------------
+    // parse_doubao_result
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn parse_doubao_result_extracts_balance() {
+        let data = serde_json::json!({
+            "data": {
+                "balance": 42.5,
+                "totalQuota": 100.0,
+                "usedQuota": 57.5
+            }
+        });
+        let id = uuid::Uuid::new_v4();
+        let info = parse_doubao_result(&data, id, "DoubaoChan").expect("should parse");
+
+        assert_eq!(info.provider, "doubao");
+        assert_eq!(info.balance, Some(42.5));
+        assert_eq!(info.limit, Some(100.0));
+        assert_eq!(info.usage, Some(57.5));
+    }
+
+    #[test]
+    fn parse_doubao_result_extracts_items_and_alias_fields() {
+        // totalAmount/usedAmount should work as fallback field names alongside items
+        let data = serde_json::json!({
+            "data": {
+                "balance": 10.0,
+                "totalAmount": 200.0,
+                "usedAmount": 190.0,
+                "items": [
+                    { "name": "Rocket", "remainAmount": 10.0 },
+                    { "resourceName": "Doubao Pro", "remain": 5.5 }
+                ]
+            }
+        });
+        let id = uuid::Uuid::new_v4();
+        let info = parse_doubao_result(&data, id, "ch").expect("should parse");
+        assert_eq!(info.limit, Some(200.0));
+        assert_eq!(info.usage, Some(190.0));
+        assert_eq!(info.items.len(), 2);
+        assert_eq!(info.items[0].label, "Rocket");
+        assert_eq!(info.items[1].label, "Doubao Pro");
+    }
+
+    #[test]
+    fn parse_doubao_result_falls_back_to_page_text() {
+        let data = serde_json::json!({ "page_text": "remaining: 50 CNY" });
+        let id = uuid::Uuid::new_v4();
+        let info = parse_doubao_result(&data, id, "ch").expect("should parse");
+        assert!(info.balance.is_none());
+        assert!(info.limit.is_none());
+        assert_eq!(info.compact_text.as_deref(), Some("remaining: 50 CNY"));
+    }
+}
