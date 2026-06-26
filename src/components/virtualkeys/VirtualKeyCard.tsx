@@ -6,6 +6,17 @@ import {
   formatDate,
 } from "./types";
 
+/** Compact integer formatting for rate-limit badges (e.g. 100000 -> "100K"). */
+function formatCompactNumber(value: number): string {
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`;
+  }
+  if (value >= 1_000) {
+    return `${(value / 1_000).toFixed(value % 1_000 === 0 ? 0 : 1)}K`;
+  }
+  return String(value);
+}
+
 export interface VirtualKeyCardProps {
   vk: VirtualKey;
   confirmDelete: boolean;
@@ -145,6 +156,47 @@ export function VirtualKeyCard({
               style={{ fontSize: "var(--text-xs)", background: "var(--color-danger-bg, rgba(239,68,68,0.1))" }}
             >
               {t("common.modelsCount", { count: vk.denied_models.length })} ✕
+            </span>
+          )}
+        </div>
+      )}
+
+      {(vk.group || vk.rpm_limit !== null || vk.tpm_limit !== null || vk.expires_at) && (
+        <div className="vk-card-advanced" style={{ display: "flex", gap: "var(--space-1)", flexWrap: "wrap", marginBottom: "var(--space-2)" }}>
+          {vk.group && (
+            <span
+              className="meta-tag"
+              title={t("virtualKeys.groupLabel")}
+              style={{
+                fontSize: "var(--text-xs)",
+                background: "var(--color-bg-secondary)",
+                fontWeight: 600,
+              }}
+            >
+              {vk.group}
+            </span>
+          )}
+          {(vk.rpm_limit !== null || vk.tpm_limit !== null) && (
+            <span
+              className="meta-tag mono"
+              style={{ fontSize: "var(--text-xs)", background: "var(--color-bg-secondary)" }}
+            >
+              {[
+                vk.rpm_limit !== null && `${formatCompactNumber(vk.rpm_limit)} RPM`,
+                vk.tpm_limit !== null && `${formatCompactNumber(vk.tpm_limit)} TPM`,
+              ].filter(Boolean).join(" · ")}
+            </span>
+          )}
+          {vk.expires_at && (
+            <span
+              className="meta-tag"
+              title={vk.expires_at}
+              style={{
+                fontSize: "var(--text-xs)",
+                background: "var(--color-warning-bg, rgba(245,158,11,0.1))",
+              }}
+            >
+              {t("virtualKeys.expiresOn", { date: formatDate(vk.expires_at) })}
             </span>
           )}
         </div>

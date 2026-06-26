@@ -783,6 +783,10 @@ export function buildVirtualKeys(now: Date): VirtualKey[] {
       allowed_ips: [],
       allowed_models: null,
       denied_models: [],
+      rpm_limit: 600,
+      tpm_limit: 1_000_000,
+      expires_at: null,
+      group: "Engineering",
     },
     {
       id: "vk-dev-002",
@@ -800,6 +804,10 @@ export function buildVirtualKeys(now: Date): VirtualKey[] {
       allowed_ips: [],
       allowed_models: null,
       denied_models: [],
+      rpm_limit: null,
+      tpm_limit: null,
+      expires_at: null,
+      group: "Engineering",
     },
     {
       id: "vk-leg-003",
@@ -817,6 +825,10 @@ export function buildVirtualKeys(now: Date): VirtualKey[] {
       allowed_ips: [],
       allowed_models: null,
       denied_models: [],
+      rpm_limit: null,
+      tpm_limit: null,
+      expires_at: null,
+      group: "Legacy",
     },
   ];
 }

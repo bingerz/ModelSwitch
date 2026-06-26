@@ -99,7 +99,8 @@
     "metrics": "Metrics",
     "guardrails": "Guardrails",
     "notifications": "Notifications",
-    "registry": "Model Registry"
+    "registry": "Model Registry",
+    "reports": "Reports"
   },
   "login": {
     "brand": "ModelSwitch",
@@ -306,7 +307,40 @@
     "allowedModelsHint": "gpt-4*, claude-* (empty = allow all)",
     "deniedModels": "Denied Models",
     "deniedModelsHint": "gpt-3.5* (always blocked)",
-    "searchPlaceholder": "Search by name or prefix..."
+    "searchPlaceholder": "Search by name or prefix...",
+    "advancedSettings": "Advanced Settings",
+    "group": "Group / Department",
+    "groupPlaceholder": "e.g. Engineering",
+    "groupLabel": "Group / Department",
+    "rpmLimit": "RPM Limit",
+    "rpmLimitPlaceholder": "requests per minute, leave empty for unlimited",
+    "tpmLimit": "TPM Limit",
+    "tpmLimitPlaceholder": "tokens per minute, leave empty for unlimited",
+    "rpmLimitInvalid": "RPM limit must be a non-negative number",
+    "tpmLimitInvalid": "TPM limit must be a non-negative number",
+    "expiresAt": "Expiry Date",
+    "expiresOn": "Expires: {{date}}",
+    "plaintextKey": "Plaintext Key",
+    "groupFilterLabel": "Filter by group",
+    "groupFilterAll": "All groups",
+    "batch": {
+      "button": "Batch Create",
+      "buttonHint": "Create multiple virtual keys at once",
+      "title": "Batch Create Virtual Keys",
+      "resultsTitle": "Created Keys",
+      "count": "Count",
+      "namePrefix": "Name Prefix",
+      "namePrefixHint": "e.g. eng-team",
+      "namePrefixRequired": "Name prefix is required",
+      "countInvalid": "Count must be between 1 and {{max}}",
+      "createButton": "Create Keys",
+      "createFailed": "Failed to batch-create keys",
+      "createdCount": "Created {{count}} keys",
+      "copyAll": "Copy All",
+      "copiedAll": "All keys copied to clipboard",
+      "resultsCount": "{{count}} keys",
+      "plaintextWarning": "Plaintext keys are shown only once after creation. Copy them now."
+    }
   },
   "mcp": {
     "title": "MCP Servers",

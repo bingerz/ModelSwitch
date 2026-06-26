@@ -310,6 +310,10 @@ export const mockApi: typeof api = {
           allowed_ips: input.allowed_ips ?? [],
           allowed_models: input.allowed_models ?? null,
           denied_models: input.denied_models ?? [],
+          rpm_limit: input.rpm_limit ?? null,
+          tpm_limit: input.tpm_limit ?? null,
+          expires_at: input.expires_at ?? null,
+          group: input.group ?? null,
         },
         plaintext: `${prefix}${uuid().replace(/-/g, "").slice(0, 12)}`,
       };
@@ -356,11 +360,25 @@ export const mockApi: typeof api = {
         daily_budget_cents: input.daily_budget_cents ?? base.daily_budget_cents,
         monthly_budget_cents: input.monthly_budget_cents ?? base.monthly_budget_cents,
         enabled: input.enabled ?? base.enabled,
+        rpm_limit: input.rpm_limit ?? base.rpm_limit,
+        tpm_limit: input.tpm_limit ?? base.tpm_limit,
+        expires_at: input.expires_at ?? base.expires_at,
+        group: input.group ?? base.group,
       };
     },
 
     delete: async (_id) => {
       await simDelay();
+    },
+
+    groups: async (): Promise<string[]> => {
+      await simDelay();
+      const keys = mockData.buildVirtualKeys(new Date());
+      const set = new Set<string>();
+      for (const k of keys) {
+        if (k.group) set.add(k.group);
+      }
+      return Array.from(set).sort();
     },
   },
 
@@ -662,8 +680,27 @@ export const mockApi: typeof api = {
     await simDelay();
     return {};
   },
-  updatePayloadRules: async (channelId: string) => {
+  updatePayloadRules: async (channelId: string, _rules: unknown) => {
     await simDelay();
     return { channel_id: channelId, updated: true };
+  },
+
+  // Reports
+  reports: {
+    usage: async (_params = {}) => {
+      await simDelay();
+      return {
+        rows: [],
+        summary: {
+          total_requests: 0,
+          total_tokens: 0,
+          total_cost_cents: 0,
+          avg_daily_cost_cents: 0,
+        },
+      };
+    },
+    usageCsv: (_params = {}) => {
+      // Real implementation opens a download window; mock is a no-op.
+    },
   },
 };

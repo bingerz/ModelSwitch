@@ -329,6 +329,10 @@ export interface VirtualKey {
   allowed_ips: string[];
   allowed_models: string[] | null;
   denied_models: string[];
+  rpm_limit: number | null;
+  tpm_limit: number | null;
+  expires_at: string | null;
+  group: string | null;
 }
 
 export interface CreateVirtualKeyResponse {
@@ -347,6 +351,7 @@ export interface ListVirtualKeysParams {
   page?: number;
   limit?: number;
   search?: string;
+  group?: string;
 }
 
 export interface BatchCreateVirtualKeyData {
@@ -356,6 +361,10 @@ export interface BatchCreateVirtualKeyData {
   monthly_budget_cents?: number | null;
   allowed_models?: string[] | null;
   allowed_ips?: string[];
+  rpm_limit?: number | null;
+  tpm_limit?: number | null;
+  expires_at?: string | null;
+  group?: string | null;
 }
 
 export interface BatchCreateVirtualKeyItem {
@@ -380,6 +389,10 @@ export interface CreateVirtualKeyData {
   allowed_ips?: string[];
   allowed_models?: string[] | null;
   denied_models?: string[];
+  rpm_limit?: number | null;
+  tpm_limit?: number | null;
+  expires_at?: string | null;
+  group?: string | null;
 }
 
 export interface UpdateVirtualKeyData {
@@ -390,6 +403,10 @@ export interface UpdateVirtualKeyData {
   allowed_ips?: string[];
   allowed_models?: string[] | null;
   denied_models?: string[];
+  rpm_limit?: number | null;
+  tpm_limit?: number | null;
+  expires_at?: string | null;
+  group?: string | null;
 }
 
 export interface CacheStats {
@@ -486,6 +503,38 @@ export interface ModelRegistryResponse {
   total: number;
 }
 
+// ─── Reports Types ──────────────────────────────────────
+
+export interface UsageReportRow {
+  date: string;
+  key_id: string | null;
+  key_name: string | null;
+  group: string | null;
+  requests: number;
+  total_tokens: number;
+  estimated_cost_cents: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface UsageReport {
+  rows: UsageReportRow[];
+  summary: {
+    total_requests: number;
+    total_tokens: number;
+    total_cost_cents: number;
+    avg_daily_cost_cents: number;
+  };
+}
+
+export interface UsageReportParams {
+  key_id?: string;
+  group?: string;
+  from?: string;  // ISO date
+  to?: string;
+  group_by?: 'day' | 'week' | 'month';
+}
+
 export const api = {
   listChannels: () => request<Channel[]>("/api/channels"),
   createChannel: (data: Partial<Channel> & { credential_value: string; credential_type?: string }) =>
@@ -566,6 +615,7 @@ export const api = {
       if (params?.page) search.set("page", String(params.page));
       if (params?.limit) search.set("limit", String(params.limit));
       if (params?.search) search.set("search", params.search);
+      if (params?.group) search.set("group", params.group);
       const qs = search.toString();
       return request<PaginatedVirtualKeys>(
         qs ? `/api/virtual-keys?${qs}` : "/api/virtual-keys",
@@ -587,6 +637,7 @@ export const api = {
         body: JSON.stringify(data),
       }),
     delete: (id: string) => request<void>(`/api/virtual-keys/${id}`, { method: "DELETE" }),
+    groups: () => request<string[]>("/api/virtual-keys/groups"),
   },
   cacheStats: () => request<CacheStats>("/api/cache/stats"),
   flushCache: () =>
@@ -733,6 +784,29 @@ export const api = {
         body: JSON.stringify(rules),
       }
     ),
+
+  // Reports
+  reports: {
+    usage: (params: UsageReportParams = {}) => {
+      const qs = new URLSearchParams();
+      if (params.key_id) qs.set('key_id', params.key_id);
+      if (params.group) qs.set('group', params.group);
+      if (params.from) qs.set('from', params.from);
+      if (params.to) qs.set('to', params.to);
+      if (params.group_by) qs.set('group_by', params.group_by);
+      const query = qs.toString();
+      return request<UsageReport>(query ? `/api/reports/usage?${query}` : '/api/reports/usage');
+    },
+    usageCsv: (params: UsageReportParams = {}) => {
+      const qs = new URLSearchParams();
+      if (params.key_id) qs.set('key_id', params.key_id);
+      if (params.group) qs.set('group', params.group);
+      if (params.from) qs.set('from', params.from);
+      if (params.to) qs.set('to', params.to);
+      if (params.group_by) qs.set('group_by', params.group_by);
+      window.open(`${API_BASE}/api/reports/usage/csv?${qs}`, '_blank');
+    },
+  },
 };
 
 // ─── Mock mode ──────────────────────────────────────────

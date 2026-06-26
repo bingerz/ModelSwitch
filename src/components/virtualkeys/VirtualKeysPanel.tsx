@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { KeyRound, CheckCircle, DollarSign, Search, ChevronLeft, ChevronRight } from "lucide-react";
+import { KeyRound, CheckCircle, DollarSign, Search, ChevronLeft, ChevronRight, Layers } from "lucide-react";
 import {
   api,
   type VirtualKey,
@@ -15,6 +15,7 @@ import "../../styles/pages-enhanced.css";
 import { PlaintextBanner } from "./PlaintextBanner";
 import { VirtualKeyCard } from "./VirtualKeyCard";
 import { VirtualKeyForm } from "./VirtualKeyForm";
+import { BatchCreateModal } from "./BatchCreateModal";
 
 const PAGE_SIZE = 20;
 
@@ -24,6 +25,7 @@ export function VirtualKeysPanel() {
   const [keys, setKeys] = useState<VirtualKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showBatchModal, setShowBatchModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -38,6 +40,25 @@ export function VirtualKeysPanel() {
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const limit = PAGE_SIZE;
   const totalPages = Math.max(1, Math.ceil(total / limit));
+
+  // Group filter state
+  const [groups, setGroups] = useState<string[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState<string>("");
+
+  // Client-side filtered keys (group filter is applied locally to the current page)
+  const displayedKeys =
+    selectedGroup === ""
+      ? keys
+      : keys.filter((k) => (k.group ?? "") === selectedGroup);
+
+  const refreshGroups = useCallback(async () => {
+    try {
+      const result = await api.virtualKeys.groups();
+      setGroups(result);
+    } catch {
+      // Non-fatal — group filter just stays empty
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -76,12 +97,18 @@ export function VirtualKeysPanel() {
 
   useEffect(() => {
     refresh();
-  }, [refresh]);
+    refreshGroups();
+  }, [refresh, refreshGroups]);
 
   const handleCreated = (response: CreateVirtualKeyResponse) => {
     setCreatedResponse(response);
     setShowAddForm(false);
     refresh();
+  };
+
+  const handleBatchCreated = () => {
+    refresh();
+    refreshGroups();
   };
 
   const handleDelete = async (id: string) => {
@@ -134,12 +161,22 @@ export function VirtualKeysPanel() {
         title={t("virtualKeys.title")}
         icon={KeyRound}
         action={
-          <button
-            className="btn btn-primary"
-            onClick={() => setShowAddForm(!showAddForm)}
-          >
-            {showAddForm ? t("common.cancel") : t("virtualKeys.create")}
-          </button>
+          <div style={{ display: "flex", gap: "var(--space-2)" }}>
+            <button
+              className="btn"
+              onClick={() => setShowBatchModal(true)}
+              title={t("virtualKeys.batch.buttonHint")}
+            >
+              <Layers size={14} />
+              {t("virtualKeys.batch.button")}
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={() => setShowAddForm(!showAddForm)}
+            >
+              {showAddForm ? t("common.cancel") : t("virtualKeys.create")}
+            </button>
+          </div>
         }
       />
 
@@ -165,6 +202,13 @@ export function VirtualKeysPanel() {
         />
       )}
 
+      {showBatchModal && (
+        <BatchCreateModal
+          onCreated={handleBatchCreated}
+          onClose={() => setShowBatchModal(false)}
+        />
+      )}
+
       {/* Search + pagination toolbar */}
       <div className="vk-toolbar">
         <div className="vk-search">
@@ -186,6 +230,22 @@ export function VirtualKeysPanel() {
             </button>
           )}
         </div>
+        {groups.length > 0 && (
+          <select
+            className="vk-group-filter"
+            value={selectedGroup}
+            onChange={(e) => setSelectedGroup(e.target.value)}
+            aria-label={t("virtualKeys.groupFilterLabel")}
+            title={t("virtualKeys.groupFilterLabel")}
+          >
+            <option value="">{t("virtualKeys.groupFilterAll")}</option>
+            {groups.map((g) => (
+              <option key={g} value={g}>
+                {g}
+              </option>
+            ))}
+          </select>
+        )}
         {totalPages > 1 && (
           <div className="vk-pagination">
             <button
@@ -235,7 +295,7 @@ export function VirtualKeysPanel() {
         </div>
       )}
 
-      {keys.length === 0 && !showAddForm ? (
+      {displayedKeys.length === 0 && !showAddForm ? (
         <EmptyState
           icon={KeyRound}
           title={t("virtualKeys.empty")}
@@ -243,7 +303,7 @@ export function VirtualKeysPanel() {
         />
       ) : (
         <div className="vk-list">
-          {keys.map((vk) => {
+          {displayedKeys.map((vk) => {
             if (editingId === vk.id) {
               return (
                 <VirtualKeyForm

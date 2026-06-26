@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import {
   api,
   type VirtualKey,
@@ -41,6 +42,21 @@ export function VirtualKeyForm({
   const [deniedModels, setDeniedModels] = useState(
     (existingKey?.denied_models ?? []).join(", "),
   );
+
+  // Advanced settings (collapsible)
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [group, setGroup] = useState(existingKey?.group ?? "");
+  const [rpmLimit, setRpmLimit] = useState(
+    existingKey?.rpm_limit != null ? String(existingKey.rpm_limit) : "",
+  );
+  const [tpmLimit, setTpmLimit] = useState(
+    existingKey?.tpm_limit != null ? String(existingKey.tpm_limit) : "",
+  );
+  // datetime-local requires `YYYY-MM-DDTHH:mm` format. Strip seconds/zone from ISO.
+  const [expiresAt, setExpiresAt] = useState(
+    existingKey?.expires_at ? existingKey.expires_at.slice(0, 16) : "",
+  );
+
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -67,6 +83,21 @@ export function VirtualKeyForm({
 
     setSubmitting(true);
     try {
+      const parsedRpm = rpmLimit.trim() === "" ? null : Number(rpmLimit.trim());
+      const parsedTpm = tpmLimit.trim() === "" ? null : Number(tpmLimit.trim());
+      if (parsedRpm !== null && (!Number.isFinite(parsedRpm) || parsedRpm < 0)) {
+        setError(t("virtualKeys.rpmLimitInvalid"));
+        setSubmitting(false);
+        return;
+      }
+      if (parsedTpm !== null && (!Number.isFinite(parsedTpm) || parsedTpm < 0)) {
+        setError(t("virtualKeys.tpmLimitInvalid"));
+        setSubmitting(false);
+        return;
+      }
+      const trimmedGroup = group.trim();
+      const trimmedExpiry = expiresAt.trim();
+
       if (mode === "create") {
         const payload: CreateVirtualKeyData = {
           name: name.trim(),
@@ -77,6 +108,10 @@ export function VirtualKeyForm({
             ? allowedModels.split(",").map((s) => s.trim()).filter(Boolean)
             : null,
           denied_models: deniedModels.split(",").map((s) => s.trim()).filter(Boolean),
+          rpm_limit: parsedRpm,
+          tpm_limit: parsedTpm,
+          expires_at: trimmedExpiry ? new Date(trimmedExpiry).toISOString() : null,
+          group: trimmedGroup ? trimmedGroup : null,
         };
         const response = await api.virtualKeys.create(payload);
         toast.success(t("virtualKeys.createdToast"));
@@ -91,6 +126,10 @@ export function VirtualKeyForm({
             ? allowedModels.split(",").map((s) => s.trim()).filter(Boolean)
             : null,
           denied_models: deniedModels.split(",").map((s) => s.trim()).filter(Boolean),
+          rpm_limit: parsedRpm,
+          tpm_limit: parsedTpm,
+          expires_at: trimmedExpiry ? new Date(trimmedExpiry).toISOString() : null,
+          group: trimmedGroup ? trimmedGroup : null,
         };
         await api.virtualKeys.update(existingKey.id, payload);
         toast.success(t("virtualKeys.updatedToast"));
@@ -166,6 +205,58 @@ export function VirtualKeyForm({
           />
         </label>
       </div>
+
+      {/* Advanced settings (collapsible) */}
+      <div className="vk-advanced-section">
+        <button
+          type="button"
+          className="vk-advanced-toggle"
+          onClick={() => setShowAdvanced((v) => !v)}
+          aria-expanded={showAdvanced}
+        >
+          {showAdvanced ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <span>{t("virtualKeys.advancedSettings")}</span>
+        </button>
+        {showAdvanced && (
+          <div className="form-grid">
+            <label className="form-field">
+              <span>{t("virtualKeys.group")}</span>
+              <input
+                value={group}
+                onChange={(e) => setGroup(e.target.value)}
+                placeholder={t("virtualKeys.groupPlaceholder")}
+              />
+            </label>
+            <label className="form-field">
+              <span>{t("virtualKeys.rpmLimit")}</span>
+              <input
+                value={rpmLimit}
+                onChange={(e) => setRpmLimit(e.target.value)}
+                placeholder={t("virtualKeys.rpmLimitPlaceholder")}
+                inputMode="numeric"
+              />
+            </label>
+            <label className="form-field">
+              <span>{t("virtualKeys.tpmLimit")}</span>
+              <input
+                value={tpmLimit}
+                onChange={(e) => setTpmLimit(e.target.value)}
+                placeholder={t("virtualKeys.tpmLimitPlaceholder")}
+                inputMode="numeric"
+              />
+            </label>
+            <label className="form-field">
+              <span>{t("virtualKeys.expiresAt")}</span>
+              <input
+                type="datetime-local"
+                value={expiresAt}
+                onChange={(e) => setExpiresAt(e.target.value)}
+              />
+            </label>
+          </div>
+        )}
+      </div>
+
       {error && <div className="form-error">{error}</div>}
       <div style={{ display: "flex", gap: "var(--space-2)" }}>
         <button type="submit" className="btn btn-primary" disabled={submitting}>

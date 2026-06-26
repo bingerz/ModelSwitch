@@ -158,3 +158,158 @@
   user-select: all;
 }
 
+/* ─── Advanced Settings (collapsible) ─── */
+
+.vk-advanced-section {
+  margin-top: var(--space-3);
+  margin-bottom: var(--space-2);
+  border-top: 1px dashed var(--color-border);
+  padding-top: var(--space-2);
+}
+
+.vk-advanced-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: none;
+  border: none;
+  padding: var(--space-1) 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease);
+}
+
+.vk-advanced-toggle:hover {
+  color: var(--color-text);
+}
+
+/* ─── Group filter dropdown ─── */
+
+.vk-group-filter {
+  height: 32px;
+  padding: 0 var(--space-2);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: border-color var(--duration-fast) var(--ease);
+}
+
+.vk-group-filter:hover {
+  border-color: var(--color-border-hover);
+}
+
+.vk-group-filter:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+/* ─── Batch Create Modal ─── */
+
+.vk-batch-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: var(--space-6) var(--space-3);
+  z-index: 1000;
+  overflow-y: auto;
+}
+
+.vk-batch-modal {
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  width: 100%;
+  max-width: 720px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35), 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.vk-batch-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.vk-batch-results-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.vk-batch-results-table-wrapper {
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.vk-batch-results-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.vk-batch-results-table thead {
+  position: sticky;
+  top: 0;
+  background: var(--color-surface-hover);
+  z-index: 1;
+}
+
+.vk-batch-results-table th,
+.vk-batch-results-table td {
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+
+.vk-batch-results-table th {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.vk-batch-results-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.vk-batch-results-table tbody tr:hover {
+  background: var(--color-surface-hover);
+}
+
+.vk-batch-key-cell {
+  display: inline-block;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.vk-batch-key-cell:hover {
+  white-space: normal;
+  word-break: break-all;
+}
+
+/* ─── Virtual Key Card: Advanced badges row ─── */
+
+.vk-card-advanced .meta-tag {
+  border: 1px solid transparent;
+}
+

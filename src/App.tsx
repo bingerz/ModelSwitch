@@ -19,11 +19,12 @@ import { RedemptionCodesPanel } from "./components/RedemptionCodesPanel";
 import { MetricsPanel } from "./components/MetricsPanel";
 import { ModelRegistryPanel } from "./components/ModelRegistryPanel";
 import { NotificationPanel } from "./components/NotificationPanel";
+import { ReportsPanel } from "./components/ReportsPanel";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { MockBadge } from "./components/MockBadge";
 import { QuotaProvider } from "./hooks/useQuota";
 
-type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "logs" | "cost" | "quota" | "settings" | "audit" | "redemption" | "metrics" | "guardrails" | "notifications" | "registry";
+type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "logs" | "cost" | "quota" | "settings" | "audit" | "redemption" | "metrics" | "guardrails" | "notifications" | "registry" | "reports";
 type Theme = "light" | "dark";
 
 // Route check: if the URL path starts with /portal, render the employee
@@ -55,6 +56,7 @@ function getTabGroups(t: (key: string) => string): { title: string; tabs: { id: 
         { id: "metrics", label: t("nav.metrics") },
         { id: "audit", label: t("nav.audit") },
         { id: "registry", label: t("nav.registry") },
+        { id: "reports", label: t("nav.reports") },
       ],
     },
     {
@@ -114,7 +116,7 @@ function AppInner() {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key >= "1" && e.key <= "9") {
         e.preventDefault();
-        const tabs: TabId[] = ["dashboard", "channels", "virtualKeys", "mcp", "logs", "cost", "quota", "settings", "audit", "redemption", "metrics", "guardrails", "notifications", "registry"];
+        const tabs: TabId[] = ["dashboard", "channels", "virtualKeys", "mcp", "logs", "cost", "quota", "settings", "audit", "redemption", "metrics", "guardrails", "notifications", "registry", "reports"];
         const idx = parseInt(e.key, 10) - 1;
         if (tabs[idx]) {
           setActiveTab(tabs[idx]);
@@ -276,6 +278,7 @@ function AppInner() {
           {activeTab === "metrics" && <MetricsPanel />}
           {activeTab === "notifications" && <NotificationPanel />}
           {activeTab === "registry" && <ModelRegistryPanel />}
+          {activeTab === "reports" && <ReportsPanel />}
         </main>
       </div>
       <StatusBar />
