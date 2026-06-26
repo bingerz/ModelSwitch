@@ -47,10 +47,13 @@ impl LdapAuthenticator {
     /// StartTLS is enabled or the `ldaps://` scheme is used. This prevents
     /// credentials from being sent over the wire in cleartext.
     fn validate_tls_requirement(&self) -> Result<(), LdapAuthError> {
-        let is_localhost = self.config.url.contains("://localhost:")
-            || self.config.url.contains("://127.0.0.1:")
-            || self.config.url.contains("://[::1]:");
-        let is_encrypted = self.config.starttls || self.config.url.starts_with("ldaps://");
+        let parsed = url::Url::parse(&self.config.url)
+            .map_err(|_| LdapAuthError::InsecureConnection("Invalid LDAP URL".to_string()))?;
+        let is_localhost = matches!(
+            parsed.host_str(),
+            Some("localhost") | Some("127.0.0.1") | Some("::1")
+        );
+        let is_encrypted = self.config.starttls || parsed.scheme() == "ldaps";
         if !is_encrypted && !is_localhost {
             return Err(LdapAuthError::InsecureConnection(
                 "LDAP connection must use TLS (ldaps:// or starttls=true) for non-localhost hosts"
