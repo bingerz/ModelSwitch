@@ -3,29 +3,23 @@ import { useTranslation } from "react-i18next";
 import { Copy, CheckCheck, X } from "lucide-react";
 import {
   api,
-  type BatchCreateVirtualKeyData,
   type BatchCreateVirtualKeyItem,
 } from "../../lib/api";
 import { useToast } from "../Toast";
-import { dollarsToCents } from "./types";
+import {
+  validateBatchCreateInput,
+  buildBatchPayload,
+  MAX_BATCH_COUNT,
+  type BatchCreateSettings,
+  type BatchValidationError,
+} from "./batch-validate";
 
 export interface BatchCreateModalProps {
   onClose: () => void;
   onCreated: () => void;
 }
 
-interface SharedSettings {
-  count: string;
-  namePrefix: string;
-  dailyBudget: string;
-  monthlyBudget: string;
-  allowedModels: string;
-  allowedIps: string;
-  group: string;
-  rpmLimit: string;
-  tpmLimit: string;
-  expiresAt: string;
-}
+type SharedSettings = BatchCreateSettings;
 
 const INITIAL_SETTINGS: SharedSettings = {
   count: "10",
@@ -40,7 +34,17 @@ const INITIAL_SETTINGS: SharedSettings = {
   expiresAt: "",
 };
 
-const MAX_COUNT = 500;
+// Maps validator error codes to existing i18n keys. Note budget/limit errors
+// live directly under `virtualKeys.*` (not `virtualKeys.batch.*`), so we cannot
+// build the key by naive concatenation.
+const ERROR_I18N_KEYS: Record<BatchValidationError, string> = {
+  namePrefixRequired: "virtualKeys.batch.namePrefixRequired",
+  countInvalid: "virtualKeys.batch.countInvalid",
+  dailyBudgetInvalid: "virtualKeys.dailyBudgetInvalid",
+  monthlyBudgetInvalid: "virtualKeys.monthlyBudgetInvalid",
+  rpmLimitInvalid: "virtualKeys.rpmLimitInvalid",
+  tpmLimitInvalid: "virtualKeys.tpmLimitInvalid",
+};
 
 export function BatchCreateModal({ onClose, onCreated }: BatchCreateModalProps) {
   const { t } = useTranslation();
@@ -59,61 +63,15 @@ export function BatchCreateModal({ onClose, onCreated }: BatchCreateModalProps) 
   const handleCreate = async () => {
     setError(null);
 
-    const trimmedPrefix = settings.namePrefix.trim();
-    if (!trimmedPrefix) {
-      setError(t("virtualKeys.batch.namePrefixRequired"));
-      return;
-    }
-    const count = Math.floor(Number(settings.count));
-    if (!Number.isFinite(count) || count < 1 || count > MAX_COUNT) {
-      setError(t("virtualKeys.batch.countInvalid", { max: MAX_COUNT }));
+    const errorCode = validateBatchCreateInput(settings);
+    if (errorCode) {
+      setError(
+        t(ERROR_I18N_KEYS[errorCode], { max: MAX_BATCH_COUNT }),
+      );
       return;
     }
 
-    const dailyCents = dollarsToCents(settings.dailyBudget);
-    const monthlyCents = dollarsToCents(settings.monthlyBudget);
-    if (settings.dailyBudget.trim() !== "" && dailyCents === null) {
-      setError(t("virtualKeys.dailyBudgetInvalid"));
-      return;
-    }
-    if (settings.monthlyBudget.trim() !== "" && monthlyCents === null) {
-      setError(t("virtualKeys.monthlyBudgetInvalid"));
-      return;
-    }
-
-    const parsedRpm =
-      settings.rpmLimit.trim() === "" ? null : Number(settings.rpmLimit.trim());
-    const parsedTpm =
-      settings.tpmLimit.trim() === "" ? null : Number(settings.tpmLimit.trim());
-    if (parsedRpm !== null && (!Number.isFinite(parsedRpm) || parsedRpm < 0)) {
-      setError(t("virtualKeys.rpmLimitInvalid"));
-      return;
-    }
-    if (parsedTpm !== null && (!Number.isFinite(parsedTpm) || parsedTpm < 0)) {
-      setError(t("virtualKeys.tpmLimitInvalid"));
-      return;
-    }
-
-    const trimmedGroup = settings.group.trim();
-    const trimmedExpiry = settings.expiresAt.trim();
-
-    const payload: BatchCreateVirtualKeyData = {
-      count,
-      name_prefix: trimmedPrefix,
-      daily_budget_cents: dailyCents,
-      monthly_budget_cents: monthlyCents,
-      allowed_models: settings.allowedModels.trim()
-        ? settings.allowedModels.split(",").map((s) => s.trim()).filter(Boolean)
-        : null,
-      allowed_ips: settings.allowedIps
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-      rpm_limit: parsedRpm,
-      tpm_limit: parsedTpm,
-      expires_at: trimmedExpiry ? new Date(trimmedExpiry).toISOString() : null,
-      group: trimmedGroup ? trimmedGroup : null,
-    };
+    const payload = buildBatchPayload(settings);
 
     setSubmitting(true);
     try {
@@ -194,7 +152,7 @@ export function BatchCreateModal({ onClose, onCreated }: BatchCreateModalProps) 
                 <input
                   type="number"
                   min={1}
-                  max={MAX_COUNT}
+                  max={MAX_BATCH_COUNT}
                   value={settings.count}
                   onChange={(e) => update("count", e.target.value)}
                   required
