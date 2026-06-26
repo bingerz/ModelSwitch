@@ -755,6 +755,60 @@ pub(super) fn inject_passthrough_headers(
     resp
 }
 
+/// Effective per-token cost rates from a channel.
+/// Extracted into a standalone struct so background tasks can pass cloned
+/// rate fields without holding a reference to the full [`Channel`].
+#[derive(Clone, Copy, Default)]
+struct ChannelCostRates {
+    input_cost_per_mtok: Option<f64>,
+    output_cost_per_mtok: Option<f64>,
+    cost_per_token: Option<f64>,
+}
+
+impl ChannelCostRates {
+    fn from_channel(channel: &Channel) -> Self {
+        Self {
+            input_cost_per_mtok: channel.input_cost_per_mtok,
+            output_cost_per_mtok: channel.output_cost_per_mtok,
+            cost_per_token: channel.cost_per_token,
+        }
+    }
+}
+
+/// Compute the cost of a request based on model pricing overrides and channel rates.
+///
+/// When `model_pricing` has rates for this model, they override channel-level
+/// rates. The `completion_ratio` multiplier adjusts output token pricing for
+/// models with non-1:1 completion-to-prompt ratios.
+///
+/// Falls back to `cost_per_token` (legacy rate-per-1k-tokens) when no
+/// per-Mtoken rates are configured.
+fn compute_token_cost(
+    model_pricing: Option<&crate::config::ModelPricing>,
+    channel_rates: ChannelCostRates,
+    completion_ratio: f64,
+    input_tokens: u64,
+    output_tokens: u64,
+) -> Option<f64> {
+    let eff_in = model_pricing
+        .and_then(|p| p.input_cost_per_mtok)
+        .or(channel_rates.input_cost_per_mtok);
+    let eff_out = model_pricing
+        .and_then(|p| p.output_cost_per_mtok)
+        .or(channel_rates.output_cost_per_mtok);
+
+    if eff_in.is_some() || eff_out.is_some() {
+        Some(
+            input_tokens as f64 / 1_000_000.0 * eff_in.unwrap_or(0.0)
+                + output_tokens as f64 / 1_000_000.0 * eff_out.unwrap_or(0.0) * completion_ratio,
+        )
+    } else {
+        channel_rates
+            .cost_per_token
+            .map(|rate| (input_tokens + output_tokens) as f64 / 1000.0 * rate)
+    }
+}
+
 /// Handle a successful streaming (SSE) response from upstream.
 /// Logs the attempt, spawns a background task to extract real token usage,
 /// caches the SSE response for streaming cache hits, and applies keepalive if configured.
@@ -825,31 +879,18 @@ pub(super) async fn handle_streaming_success(
     );
 
     let est_tokens = estimate_tokens(body, true);
-    // Determine effective rates: model_pricing overrides channel rates.
-    let mp = state.gateway.model_pricing.get(current_model);
-    let eff_in = mp
-        .and_then(|p| p.input_cost_per_mtok)
-        .or(channel.input_cost_per_mtok);
-    let eff_out = mp
-        .and_then(|p| p.output_cost_per_mtok)
-        .or(channel.output_cost_per_mtok);
-    let estimated_cost = if eff_in.is_some() || eff_out.is_some() {
-        let half = (est_tokens / 2) as f64;
-        let completion_ratio = state
+    let estimated_cost = compute_token_cost(
+        state.gateway.model_pricing.get(current_model),
+        ChannelCostRates::from_channel(channel),
+        state
             .gateway
             .completion_ratios
             .get(current_model)
             .copied()
-            .unwrap_or(1.0);
-        Some(
-            half / 1_000_000.0 * eff_in.unwrap_or(0.0)
-                + half / 1_000_000.0 * eff_out.unwrap_or(0.0) * completion_ratio,
-        )
-    } else {
-        channel
-            .cost_per_token
-            .map(|rate| rate * est_tokens as f64 / 1000.0)
-    };
+            .unwrap_or(1.0),
+        est_tokens / 2,
+        est_tokens / 2,
+    );
     let log_id = Uuid::new_v4();
     let mut log_entry = make_log(
         current_model,
@@ -898,9 +939,7 @@ pub(super) async fn handle_streaming_success(
         let bg_key_rate_limiter = Arc::clone(&state.billing.key_rate_limiter);
         let bg_channel_id = channel.id;
         let bg_provider_name = channel.provider.as_str().to_string();
-        let bg_input_cost = channel.input_cost_per_mtok;
-        let bg_output_cost = channel.output_cost_per_mtok;
-        let bg_cost_per_token = channel.cost_per_token;
+        let bg_cost_rates = ChannelCostRates::from_channel(channel);
         let bg_model_pricing = state.gateway.model_pricing.get(current_model).cloned();
         let bg_completion_ratio = state
             .gateway
@@ -987,28 +1026,13 @@ pub(super) async fn handle_streaming_success(
             let output_tokens = token_usage.output_tokens;
             if input_tokens.is_some() || output_tokens.is_some() {
                 // Re-calculate cost using real tokens.
-                // Model-level pricing overrides channel rates when present.
-                let mp_in = bg_model_pricing
-                    .as_ref()
-                    .and_then(|p| p.input_cost_per_mtok);
-                let mp_out = bg_model_pricing
-                    .as_ref()
-                    .and_then(|p| p.output_cost_per_mtok);
-                let eff_in = mp_in.or(bg_input_cost);
-                let eff_out = mp_out.or(bg_output_cost);
-                let real_cost = if eff_in.is_some() || eff_out.is_some() {
-                    let in_tok = input_tokens.unwrap_or(0) as f64;
-                    let out_tok = output_tokens.unwrap_or(0) as f64;
-                    Some(
-                        in_tok / 1_000_000.0 * eff_in.unwrap_or(0.0)
-                            + out_tok / 1_000_000.0 * eff_out.unwrap_or(0.0) * bg_completion_ratio,
-                    )
-                } else {
-                    bg_cost_per_token.map(|rate_per_1k| {
-                        ((input_tokens.unwrap_or(0) + output_tokens.unwrap_or(0)) as f64 / 1000.0)
-                            * rate_per_1k
-                    })
-                };
+                let real_cost = compute_token_cost(
+                    bg_model_pricing.as_ref(),
+                    bg_cost_rates,
+                    bg_completion_ratio,
+                    input_tokens.unwrap_or(0),
+                    output_tokens.unwrap_or(0),
+                );
 
                 if let (Some(it), Some(ot)) = (input_tokens, output_tokens) {
                     bg_logger
@@ -1244,34 +1268,36 @@ pub(super) async fn handle_json_success(
     let token_usage = extract_usage(response_str);
     let input_tokens = token_usage.input_tokens;
     let output_tokens = token_usage.output_tokens;
-    // Determine effective rates: model_pricing overrides channel rates.
-    let mp = state.gateway.model_pricing.get(current_model);
-    let eff_in = mp
-        .and_then(|p| p.input_cost_per_mtok)
-        .or(channel.input_cost_per_mtok);
-    let eff_out = mp
-        .and_then(|p| p.output_cost_per_mtok)
-        .or(channel.output_cost_per_mtok);
-    let estimated_cost = if eff_in.is_some() || eff_out.is_some() {
-        let in_tok = input_tokens.unwrap_or(0) as f64;
-        let out_tok = output_tokens.unwrap_or(0) as f64;
-        let completion_ratio = state
-            .gateway
-            .completion_ratios
-            .get(current_model)
-            .copied()
-            .unwrap_or(1.0);
-        Some(
-            in_tok / 1_000_000.0 * eff_in.unwrap_or(0.0)
-                + out_tok / 1_000_000.0 * eff_out.unwrap_or(0.0) * completion_ratio,
+    let estimated_cost = if input_tokens.is_none() && output_tokens.is_none() {
+        // No usage extracted from upstream response — estimate from
+        // request body (preserves the legacy calculate_cost → estimate
+        // chain for responses that omit the usage block).
+        let est = estimate_tokens(body, false);
+        compute_token_cost(
+            state.gateway.model_pricing.get(current_model),
+            ChannelCostRates::from_channel(channel),
+            state
+                .gateway
+                .completion_ratios
+                .get(current_model)
+                .copied()
+                .unwrap_or(1.0),
+            est / 2,
+            est / 2,
         )
     } else {
-        channel
-            .calculate_cost(input_tokens, output_tokens)
-            .or_else(|| {
-                let est = estimate_tokens(body, false);
-                channel.calculate_cost(Some(est / 2), Some(est / 2))
-            })
+        compute_token_cost(
+            state.gateway.model_pricing.get(current_model),
+            ChannelCostRates::from_channel(channel),
+            state
+                .gateway
+                .completion_ratios
+                .get(current_model)
+                .copied()
+                .unwrap_or(1.0),
+            input_tokens.unwrap_or(0),
+            output_tokens.unwrap_or(0),
+        )
     };
     // Cache non-streaming responses (inline — coalesced waiters depend on
     // ordering: insert must precede complete()).
