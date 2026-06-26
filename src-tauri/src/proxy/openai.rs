@@ -380,3 +380,134 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> axum::response:
     });
     crate::proxy::stream::json_response(axum::http::StatusCode::OK, body.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model_registry::{ModelCapabilities, ThinkingFormat};
+    use crate::proxy::validate_chat_request;
+    use axum::http::StatusCode;
+    use serde_json::json;
+
+    // ----- infer_owner -----
+
+    #[test]
+    fn infer_owner_openai_gpt() {
+        assert_eq!(infer_owner("gpt-4"), "openai");
+        assert_eq!(infer_owner("gpt-3.5-turbo"), "openai");
+        assert_eq!(infer_owner("gpt-4o"), "openai");
+    }
+
+    #[test]
+    fn infer_owner_openai_o_series() {
+        assert_eq!(infer_owner("o1"), "openai");
+        assert_eq!(infer_owner("o1-preview"), "openai");
+        assert_eq!(infer_owner("o3-mini"), "openai");
+        assert_eq!(infer_owner("o4-mini"), "openai");
+    }
+
+    #[test]
+    fn infer_owner_anthropic() {
+        assert_eq!(infer_owner("claude-3-opus"), "anthropic");
+        assert_eq!(infer_owner("claude-sonnet-4-20250514"), "anthropic");
+    }
+
+    #[test]
+    fn infer_owner_google() {
+        assert_eq!(infer_owner("gemini-1.5-pro"), "google");
+        assert_eq!(infer_owner("gemini-2.0-flash"), "google");
+    }
+
+    #[test]
+    fn infer_owner_deepseek() {
+        assert_eq!(infer_owner("deepseek-chat"), "deepseek");
+        assert_eq!(infer_owner("deepseek-reasoner"), "deepseek");
+    }
+
+    #[test]
+    fn infer_owner_unknown() {
+        assert_eq!(infer_owner("llama-3"), "unknown");
+        assert_eq!(infer_owner("mistral-large"), "unknown");
+        assert_eq!(infer_owner(""), "unknown");
+    }
+
+    // ----- capabilities_to_json -----
+
+    #[test]
+    fn capabilities_to_json_full() {
+        let caps = ModelCapabilities {
+            supports_thinking: true,
+            supports_vision: true,
+            supports_tools: true,
+            max_context_tokens: Some(128000),
+            thinking_format: ThinkingFormat::Budget,
+            ..Default::default()
+        };
+        let out = capabilities_to_json(&caps);
+        assert_eq!(out["supports_thinking"], json!(true));
+        assert_eq!(out["supports_vision"], json!(true));
+        assert_eq!(out["supports_tools"], json!(true));
+        assert_eq!(out["max_context_tokens"], json!(128000));
+        assert_eq!(out["thinking_format"], json!("budget"));
+    }
+
+    #[test]
+    fn capabilities_to_json_defaults() {
+        let caps = ModelCapabilities::default();
+        let out = capabilities_to_json(&caps);
+        assert_eq!(out["supports_thinking"], json!(false));
+        assert_eq!(out["supports_vision"], json!(false));
+        assert_eq!(out["supports_tools"], json!(false));
+        assert_eq!(out["max_context_tokens"], json!(null));
+        assert_eq!(out["thinking_format"], json!("none"));
+    }
+
+    // ----- validate_chat_request -----
+
+    #[test]
+    fn validate_rejects_missing_model() {
+        let body = json!({
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let resp = validate_chat_request(&body).unwrap_err();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn validate_rejects_empty_model() {
+        let body = json!({
+            "model": "",
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let resp = validate_chat_request(&body).unwrap_err();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn validate_rejects_missing_messages() {
+        let body = json!({
+            "model": "gpt-4"
+        });
+        let resp = validate_chat_request(&body).unwrap_err();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn validate_rejects_empty_messages() {
+        let body = json!({
+            "model": "gpt-4",
+            "messages": []
+        });
+        let resp = validate_chat_request(&body).unwrap_err();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn validate_accepts_valid_request() {
+        let body = json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        assert!(validate_chat_request(&body).is_ok());
+    }
+}
