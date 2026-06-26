@@ -74,15 +74,9 @@ impl OidcAuthenticator {
         let scopes = if self.config.scopes.is_empty() {
             "openid"
         } else {
-            // Scopes are space-separated in the URL.
-            // Each scope value is URL-encoded individually.
-            &self
-                .config
-                .scopes
-                .iter()
-                .map(|s| urlencoding::encode(s).into_owned())
-                .collect::<Vec<_>>()
-                .join(" ")
+            // Scopes are space-separated and encoded once at the query-string level
+            // (the `urlencoding::encode(v)` call below handles all encoding).
+            &self.config.scopes.join(" ")
         };
 
         let params: Vec<(String, String)> = vec![
@@ -164,6 +158,29 @@ mod tests {
         assert!(url.contains("openid"));
         assert!(url.contains("email"));
         assert!(url.contains("profile"));
+    }
+
+    #[test]
+    fn authorization_url_does_not_double_encode_scopes() {
+        let cfg = OidcConfig {
+            issuer: "https://idp.example.com".to_string(),
+            client_id: "test-client".to_string(),
+            client_secret: None,
+            redirect_uri: "https://app.example.com/callback".to_string(),
+            scopes: vec!["openid".to_string(), "custom:read-write".to_string()],
+        };
+        let auth = OidcAuthenticator::new(cfg).unwrap();
+        let (url, _state) = auth.authorization_url();
+        // The colon in "custom:read-write" should be encoded once (as %3A),
+        // not double-encoded to %253A.
+        assert!(
+            !url.contains("%253A"),
+            "Scope value was double-encoded: {url}"
+        );
+        assert!(
+            url.contains("custom%3Aread-write") || url.contains("custom:read-write"),
+            "Expected scope to appear in URL: {url}"
+        );
     }
 
     #[test]

@@ -32,16 +32,55 @@ use crate::spawn_bg;
 use crate::virtual_key::VirtualKeyStore;
 use crate::GatewayHandles;
 
+use axum::extract::ConnectInfo;
 use axum::routing::{delete, get, post, put};
 use axum::Router;
 use std::fs::File;
 use std::io::BufReader;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use tokio::sync::{oneshot, Notify};
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
+
+/// Tower service wrapper that injects `ConnectInfo(peer_addr)` into each
+/// request's extensions.
+///
+/// On the non-TLS path, `axum::serve(...).into_make_service_with_connect_info()`
+/// handles this automatically. The TLS path uses `hyper::server::conn` directly,
+/// so we need this wrapper to make `ConnectInfo<SocketAddr>` available for
+/// `extract_client_ip()` in the middleware.
+#[derive(Clone)]
+struct ConnectInfoService<S> {
+    inner: S,
+    addr: SocketAddr,
+}
+
+impl<S> ConnectInfoService<S> {
+    fn new(inner: S, addr: SocketAddr) -> Self {
+        Self { inner, addr }
+    }
+}
+
+impl<S, ReqBody> tower::Service<axum::http::Request<ReqBody>> for ConnectInfoService<S>
+where
+    S: tower::Service<axum::http::Request<ReqBody>>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut req: axum::http::Request<ReqBody>) -> Self::Future {
+        req.extensions_mut().insert(ConnectInfo(self.addr));
+        self.inner.call(req)
+    }
+}
 
 /// Interval at which the TLS reload watcher polls cert/key files on disk.
 const TLS_RELOAD_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
@@ -1348,7 +1387,9 @@ pub async fn start_gateway(
                                     match acceptor.accept(stream).await {
                                         Ok(tls_stream) => {
                                             let io = hyper_util::rt::TokioIo::new(tls_stream);
-                                            let svc = hyper_util::service::TowerToHyperService::new(app_clone);
+                                            let svc = hyper_util::service::TowerToHyperService::new(
+                                                ConnectInfoService::new(app_clone, peer),
+                                            );
                                             if let Err(e) = hyper::server::conn::http1::Builder::new()
                                                 .serve_connection(io, svc)
                                                 .await
