@@ -46,7 +46,7 @@ pub async fn virtual_key_middleware(
         Some(vk) => {
             // Enforce IP allowlist if configured for this key.
             if !vk.allowed_ips.is_empty() {
-                let client_ip = super::auth::extract_client_ip(&req, false);
+                let client_ip = super::auth::extract_client_ip(&req, state.security.trust_forwarded_headers);
                 if !vk.check_ip_allowed(&client_ip) {
                     return Err((
                         StatusCode::FORBIDDEN,

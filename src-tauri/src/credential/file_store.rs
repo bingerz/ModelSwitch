@@ -101,6 +101,13 @@ impl CredentialStore for FileCredentialStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    /// Serialise all file_store tests — they share a single credentials.toml file.
+    static FILE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    fn lock() -> &'static Mutex<()> {
+        FILE_LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     fn credentials_path() -> std::path::PathBuf {
         crate::config::app_config_dir().join("credentials.toml")
@@ -112,6 +119,7 @@ mod tests {
 
     #[test]
     fn file_store_set_and_get() {
+        let _guard = lock().lock().unwrap();
         cleanup_file();
         let store = FileCredentialStore::new();
         store.set("test_service", "user1", "secret123").unwrap();
@@ -130,6 +138,7 @@ mod tests {
 
     #[test]
     fn file_store_delete_removes_credential() {
+        let _guard = lock().lock().unwrap();
         cleanup_file();
         let store = FileCredentialStore::new();
         store.set("svc_del_test", "user_del", "pass_del").unwrap();
@@ -144,6 +153,7 @@ mod tests {
 
     #[test]
     fn file_store_overwrite_on_set() {
+        let _guard = lock().lock().unwrap();
         cleanup_file();
         let store = FileCredentialStore::new();
         store.set("svc_overwrite_test", "user", "old").unwrap();
@@ -156,6 +166,7 @@ mod tests {
 
     #[test]
     fn file_store_key_isolation() {
+        let _guard = lock().lock().unwrap();
         cleanup_file();
         let store = FileCredentialStore::new();
         store.set("svc1_iso_test", "user", "a").unwrap();
@@ -175,6 +186,7 @@ mod tests {
 
     #[test]
     fn file_store_empty_username() {
+        let _guard = lock().lock().unwrap();
         cleanup_file();
         let store = FileCredentialStore::new();
         store.set("svc_empty_user_test", "", "pass").unwrap();
