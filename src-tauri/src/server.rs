@@ -894,10 +894,6 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
             get(admin::get_usage_report_csv),
         )
         .route(&format!("{prefix}/auth/me"), get(admin::auth::auth_me))
-        .route(
-            &format!("{prefix}/auth/ldap/login"),
-            post(admin::auth::ldap_login),
-        )
 }
 
 /// Portal routes — employee self-service, authenticated by virtual key.
@@ -907,6 +903,12 @@ fn portal_routes() -> Router<Arc<AppState>> {
         .route("/api/portal/usage", get(admin::portal::portal_usage))
         .route("/api/portal/logs", get(admin::portal::portal_logs))
         .route("/api/portal/test", get(admin::portal::portal_test))
+}
+
+/// Public authentication routes — NOT protected by admin_auth_middleware.
+/// These endpoints handle their own authentication internally (e.g. LDAP bind).
+fn auth_routes() -> Router<Arc<AppState>> {
+    Router::new().route("/api/auth/ldap/login", post(admin::auth::ldap_login))
 }
 
 /// Build the Axum Router with all proxy and admin routes.
@@ -996,6 +998,7 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
         .merge(proxy_router)
         .merge(admin_router)
         .merge(portal_routes().with_state(Arc::clone(&state)))
+        .merge(auth_routes().with_state(Arc::clone(&state)))
         .route("/metrics", get(metrics_handler))
         .route("/v1/metrics", get(metrics_handler))
         .route("/healthz", get(healthz_handler));

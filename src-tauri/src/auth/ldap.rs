@@ -110,6 +110,9 @@ impl LdapAuthenticator {
 
     /// Build the LDAP connection settings from configuration.
     fn build_settings(&self) -> LdapConnSettings {
+        // ldap3 uses native-tls/rustls under the hood, which verifies
+        // server certificates against the system CA bundle by default.
+        // No explicit set_no_tls_verify is needed — verification is ON.
         let mut settings = LdapConnSettings::new();
         if self.config.starttls {
             settings = settings.set_starttls(true);
