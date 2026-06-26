@@ -809,6 +809,88 @@ fn compute_token_cost(
     }
 }
 
+/// Record post-response telemetry: accumulate usage into quota/virtual-key/provider
+/// stores and emit token/cost Prometheus metrics.
+///
+/// Called from both the streaming background task (after extracting real token
+/// counts from the SSE stream) and the JSON success handler (after parsing usage
+/// from the response body).
+#[allow(clippy::too_many_arguments)]
+async fn record_post_response_telemetry(
+    quota_store: &crate::quota::SharedQuotaStore,
+    virtual_key_store: &crate::virtual_key::SharedVirtualKeyStore,
+    provider_budgets: &crate::provider_budget::SharedProviderBudgetStore,
+    key_rate_limiter: &Arc<crate::proxy::rate_limiter::KeyRateLimiter>,
+    channel_id: Uuid,
+    provider_name: &str,
+    model: &str,
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    cache_hit_tokens: Option<u64>,
+    cache_miss_tokens: Option<u64>,
+    cost: Option<f64>,
+    vk_id: Option<Uuid>,
+    reserved_cents: u64,
+) {
+    // 1. Accumulate usage (tokens + cost) into quota store.
+    quota_store
+        .accumulate_usage(
+            channel_id,
+            input_tokens,
+            output_tokens,
+            cache_hit_tokens,
+            cache_miss_tokens,
+            cost,
+        )
+        .await;
+
+    // 2. Attribute spend to the requesting virtual key (if any). When a
+    //    reservation was made before dispatch, reconcile against it so the
+    //    key is not double-charged (reservation + accumulation).
+    if let Some(vk) = vk_id {
+        let cost_cents = (cost.unwrap_or(0.0) * 100.0) as u64;
+        if reserved_cents > 0 {
+            virtual_key_store
+                .reconcile_spend(vk, reserved_cents, cost_cents)
+                .await;
+        } else {
+            virtual_key_store.accumulate_spend(vk, cost_cents).await;
+        }
+
+        // Record actual token consumption against the key's TPM window.
+        // This is the post-response complement to the pre-request `check_tpm`
+        // gate in the virtual-key middleware.
+        let total_tokens = input_tokens.unwrap_or(0) + output_tokens.unwrap_or(0);
+        key_rate_limiter.record_tokens(vk, total_tokens);
+    }
+
+    // 3. Accumulate spend into per-provider budget tracker.
+    let cost_cents = (cost.unwrap_or(0.0) * 100.0) as u64;
+    provider_budgets
+        .accumulate_spend(provider_name, cost_cents)
+        .await;
+
+    // 4. Token + cost Prometheus metrics.
+    if let Some(it) = input_tokens {
+        crate::metrics::input_tokens_total()
+            .with_label_values(&[provider_name, model])
+            .inc_by(it);
+    }
+    if let Some(ot) = output_tokens {
+        crate::metrics::output_tokens_total()
+            .with_label_values(&[provider_name, model])
+            .inc_by(ot);
+    }
+    crate::metrics::record_tokens(
+        input_tokens.unwrap_or(0),
+        output_tokens.unwrap_or(0),
+        model,
+    );
+    if let Some(c) = cost {
+        crate::metrics::record_cost(c, model);
+    }
+}
+
 /// Handle a successful streaming (SSE) response from upstream.
 /// Logs the attempt, spawns a background task to extract real token usage,
 /// caches the SSE response for streaming cache hits, and applies keepalive if configured.
@@ -1047,67 +1129,27 @@ pub(super) async fn handle_streaming_success(
                         .await;
                 }
 
-                // Accumulate usage (tokens + cost) into quota store
-                bg_quota_store
-                    .accumulate_usage(
-                        bg_channel_id,
-                        input_tokens,
-                        output_tokens,
-                        token_usage.cache_hit_tokens,
-                        token_usage.cache_miss_tokens,
-                        real_cost,
-                    )
-                    .await;
-
-                // Attribute spend to the requesting virtual key (if any).
-                // When a reservation was made before dispatch, reconcile against
-                // it so the key is not double-charged (reservation + accumulation).
-                if let Some(vk) = bg_vk_id {
-                    let cost_cents = (real_cost.unwrap_or(0.0) * 100.0) as u64;
-                    if bg_reserved_cents > 0 {
-                        bg_virtual_key_store
-                            .reconcile_spend(vk, bg_reserved_cents, cost_cents)
-                            .await;
-                    } else {
-                        bg_virtual_key_store.accumulate_spend(vk, cost_cents).await;
-                    }
-
-                    // Record actual token consumption against the key's TPM
-                    // window. This is the post-response complement to the
-                    // pre-request `check_tpm` gate in the virtual-key
-                    // middleware.
-                    let total_tokens = input_tokens.unwrap_or(0) + output_tokens.unwrap_or(0);
-                    bg_key_rate_limiter.record_tokens(vk, total_tokens);
-                }
-
-                // Accumulate spend into per-provider budget tracker.
-                let cost_cents = (real_cost.unwrap_or(0.0) * 100.0) as u64;
-                bg_provider_budgets
-                    .accumulate_spend(&bg_provider_name, cost_cents)
-                    .await;
-
-                // Token-level Prometheus metrics
-                if let Some(it) = input_tokens {
-                    crate::metrics::input_tokens_total()
-                        .with_label_values(&[&bg_provider_name, &bg_current_model])
-                        .inc_by(it);
-                }
-                if let Some(ot) = output_tokens {
-                    crate::metrics::output_tokens_total()
-                        .with_label_values(&[&bg_provider_name, &bg_current_model])
-                        .inc_by(ot);
-                }
-
-                // Latency / token / cost histograms (complement the existing
-                // counters and duration histogram above).
-                crate::metrics::record_tokens(
-                    input_tokens.unwrap_or(0),
-                    output_tokens.unwrap_or(0),
+                // Accumulate usage (tokens + cost) into quota store, attribute
+                // spend to the virtual key, accumulate into the provider budget,
+                // and emit token/cost Prometheus metrics. Shared with the JSON
+                // success handler via `record_post_response_telemetry`.
+                record_post_response_telemetry(
+                    &bg_quota_store,
+                    &bg_virtual_key_store,
+                    &bg_provider_budgets,
+                    &bg_key_rate_limiter,
+                    bg_channel_id,
+                    &bg_provider_name,
                     &bg_current_model,
-                );
-                if let Some(cost) = real_cost {
-                    crate::metrics::record_cost(cost, &bg_current_model);
-                }
+                    input_tokens,
+                    output_tokens,
+                    token_usage.cache_hit_tokens,
+                    token_usage.cache_miss_tokens,
+                    real_cost,
+                    bg_vk_id,
+                    bg_reserved_cents,
+                )
+                .await;
             }
         });
     }
@@ -1339,43 +1381,27 @@ pub(super) async fn handle_json_success(
         let bg_reserved_cents = reserved_cents;
 
         crate::spawn_bg(async move {
-            // Accumulate usage (tokens + cost) into quota store
-            bg_quota_store
-                .accumulate_usage(
-                    bg_channel_id,
-                    bg_input_tokens,
-                    bg_output_tokens,
-                    bg_cache_hit_tokens,
-                    bg_cache_miss_tokens,
-                    bg_estimated_cost,
-                )
-                .await;
-
-            // Attribute spend to the requesting virtual key (if any).
-            // When a reservation was made before dispatch, reconcile against
-            // it so the key is not double-charged (reservation + accumulation).
-            if let Some(vk) = bg_vk_id {
-                let cost_cents = (bg_estimated_cost.unwrap_or(0.0) * 100.0) as u64;
-                if bg_reserved_cents > 0 {
-                    bg_virtual_key_store
-                        .reconcile_spend(vk, bg_reserved_cents, cost_cents)
-                        .await;
-                } else {
-                    bg_virtual_key_store.accumulate_spend(vk, cost_cents).await;
-                }
-
-                // Record actual token consumption against the key's TPM
-                // window. Post-response complement to the pre-request
-                // `check_tpm` gate in the virtual-key middleware.
-                let total_tokens = bg_input_tokens.unwrap_or(0) + bg_output_tokens.unwrap_or(0);
-                bg_key_rate_limiter.record_tokens(vk, total_tokens);
-            }
-
-            // Accumulate spend into per-provider budget tracker.
-            let cost_cents = (bg_estimated_cost.unwrap_or(0.0) * 100.0) as u64;
-            bg_provider_budgets
-                .accumulate_spend(&bg_provider_name, cost_cents)
-                .await;
+            // Accumulate usage (tokens + cost) into quota store, attribute
+            // spend to the virtual key, accumulate into the provider budget,
+            // and emit token/cost Prometheus metrics. Shared with the
+            // streaming success handler via `record_post_response_telemetry`.
+            record_post_response_telemetry(
+                &bg_quota_store,
+                &bg_virtual_key_store,
+                &bg_provider_budgets,
+                &bg_key_rate_limiter,
+                bg_channel_id,
+                &bg_provider_name,
+                &bg_current_model,
+                bg_input_tokens,
+                bg_output_tokens,
+                bg_cache_hit_tokens,
+                bg_cache_miss_tokens,
+                bg_estimated_cost,
+                bg_vk_id,
+                bg_reserved_cents,
+            )
+            .await;
 
             bg_logger
                 .log(make_log(
@@ -1406,28 +1432,6 @@ pub(super) async fn handle_json_success(
                 .with_label_values(&[provider_label, &bg_current_model])
                 .observe(bg_start.elapsed().as_secs_f64());
             crate::metrics::record_latency(bg_start.elapsed(), &bg_current_model, provider_label);
-
-            // Token-level metrics
-            if let Some(it) = bg_input_tokens {
-                crate::metrics::input_tokens_total()
-                    .with_label_values(&[provider_label, &bg_current_model])
-                    .inc_by(it);
-            }
-            if let Some(ot) = bg_output_tokens {
-                crate::metrics::output_tokens_total()
-                    .with_label_values(&[provider_label, &bg_current_model])
-                    .inc_by(ot);
-            }
-            // Token-usage histogram (prompt + completion observations).
-            crate::metrics::record_tokens(
-                bg_input_tokens.unwrap_or(0),
-                bg_output_tokens.unwrap_or(0),
-                &bg_current_model,
-            );
-            // Cost histogram.
-            if let Some(cost) = bg_estimated_cost {
-                crate::metrics::record_cost(cost, &bg_current_model);
-            }
 
             let _ = bg_channel_mgr
                 .record_latency(bg_channel_id, bg_start.elapsed().as_millis() as u64)
