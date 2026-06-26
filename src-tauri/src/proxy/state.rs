@@ -89,6 +89,7 @@ pub struct SecurityState {
     pub admin_token: Option<String>,
     pub sanitizer_config: crate::config::SanitizerConfig,
     pub allowed_origins: Option<Vec<String>>,
+    pub trust_forwarded_headers: bool,
 }
 
 /// Shared application state for the proxy.

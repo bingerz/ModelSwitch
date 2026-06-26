@@ -49,31 +49,35 @@ fn attempts() -> &'static Mutex<HashMap<String, AuthAttemptInfo>> {
 /// 3. `X-Forwarded-For` header — least reliable; only the first IP in the chain
 ///    is used. Trust only when the gateway is behind a known proxy.
 /// 4. `"unknown"` — fallback when no source is available.
-pub(crate) fn extract_client_ip(req: &Request<Body>) -> String {
+pub(crate) fn extract_client_ip(req: &Request<Body>, trust_forwarded: bool) -> String {
     // 1. TCP peer IP from ConnectInfo extension (cannot be spoofed).
     //    Injected by into_make_service_with_connect_info on the non-TLS path.
     if let Some(ConnectInfo(peer)) = req.extensions().get::<ConnectInfo<std::net::SocketAddr>>() {
         return peer.ip().to_string();
     }
 
-    // 2. X-Real-IP (set by trusted reverse proxies like nginx)
-    if let Some(xri) = req.headers().get("x-real-ip").and_then(|v| v.to_str().ok()) {
-        let ip = xri.trim();
-        if !ip.is_empty() {
-            return ip.to_string();
+    // 2. X-Real-IP (only when trust_forwarded is enabled)
+    if trust_forwarded {
+        if let Some(xri) = req.headers().get("x-real-ip").and_then(|v| v.to_str().ok()) {
+            let ip = xri.trim();
+            if !ip.is_empty() {
+                return ip.to_string();
+            }
         }
     }
 
-    // 3. X-Forwarded-For header chain (least reliable, trust only behind proxy)
-    if let Some(xff) = req
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-    {
-        if let Some(first) = xff.split(',').next() {
-            let ip = first.trim();
-            if !ip.is_empty() {
-                return ip.to_string();
+    // 3. X-Forwarded-For header chain (only when trust_forwarded is enabled)
+    if trust_forwarded {
+        if let Some(xff) = req
+            .headers()
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+        {
+            if let Some(first) = xff.split(',').next() {
+                let ip = first.trim();
+                if !ip.is_empty() {
+                    return ip.to_string();
+                }
             }
         }
     }
@@ -161,7 +165,7 @@ pub async fn admin_auth_middleware(
         None => return Ok(next.run(req).await),
     };
 
-    let ip = extract_client_ip(&req);
+    let ip = extract_client_ip(&req, state.security.trust_forwarded_headers);
 
     // Reject early if the IP is already blocked.
     if is_rate_limited(&ip) {
@@ -286,7 +290,7 @@ mod tests {
             .unwrap();
         let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
         req.extensions_mut().insert(ConnectInfo(addr));
-        let ip = extract_client_ip(&req);
+        let ip = extract_client_ip(&req, true);
         assert_eq!(ip, "127.0.0.1", "should prefer ConnectInfo over headers");
     }
 
@@ -296,7 +300,7 @@ mod tests {
             .header("x-real-ip", "10.0.0.5")
             .body(Body::empty())
             .unwrap();
-        let ip = extract_client_ip(&req);
+        let ip = extract_client_ip(&req, true);
         assert_eq!(ip, "10.0.0.5");
     }
 
@@ -306,14 +310,14 @@ mod tests {
             .header("x-forwarded-for", "192.168.1.1, 10.0.0.1, 172.16.0.1")
             .body(Body::empty())
             .unwrap();
-        let ip = extract_client_ip(&req);
+        let ip = extract_client_ip(&req, true);
         assert_eq!(ip, "192.168.1.1");
     }
 
     #[test]
     fn extract_ip_returns_unknown_when_no_sources() {
         let req = Request::builder().body(Body::empty()).unwrap();
-        let ip = extract_client_ip(&req);
+        let ip = extract_client_ip(&req, true);
         assert_eq!(ip, "unknown");
     }
 }

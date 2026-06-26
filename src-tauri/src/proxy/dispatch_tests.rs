@@ -243,6 +243,7 @@ fn build_test_state_with_opts(
             admin_token: None,
             sanitizer_config: SanitizerConfig::default(),
             allowed_origins: None,
+            trust_forwarded_headers: false,
         },
         guardrails: Arc::new(crate::guardrails::GuardrailsChecker::new(
             crate::guardrails::GuardrailsConfig::default(),

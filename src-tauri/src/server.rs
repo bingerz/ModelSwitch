@@ -321,6 +321,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             admin_token,
             sanitizer_config: config.gateway.sanitizer.clone(),
             allowed_origins: config.gateway.allowed_origins.clone(),
+            trust_forwarded_headers: false,
         },
         guardrails: Arc::new(GuardrailsChecker::new(
             crate::guardrails::GuardrailsConfig::default(),

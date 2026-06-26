@@ -351,7 +351,12 @@ async fn virtual_keys_pagination() {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK, "key {} should be created", i);
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "key {} should be created",
+            i
+        );
     }
 
     // Page 1, limit 3 -> 3 keys, total 5.

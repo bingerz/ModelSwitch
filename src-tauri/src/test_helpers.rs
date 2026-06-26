@@ -176,6 +176,7 @@ fn build_state(channel_configs: Vec<ChannelConfig>, admin_token: Option<String>)
             admin_token,
             sanitizer_config: SanitizerConfig::default(),
             allowed_origins: None,
+            trust_forwarded_headers: true,
         },
         guardrails: Arc::new(crate::guardrails::GuardrailsChecker::new(
             crate::guardrails::GuardrailsConfig::default(),
