@@ -1,4 +1,7 @@
+use crate::auth::ldap::LdapAuthenticator;
 use crate::middleware::error::ApiError;
+use crate::proxy::AppState;
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
@@ -101,6 +104,98 @@ pub async fn get_pending_cookies() -> Json<super::ApiResponse<Option<serde_json:
             }
         }
         Err(_) => Json(super::ApiResponse::ok(None)),
+    }
+}
+
+// ─── LDAP Login ────────────────────────────────────────
+
+/// Request body for LDAP login.
+#[derive(Debug, serde::Deserialize)]
+pub struct LdapLoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+/// Response body for successful LDAP login.
+#[derive(Debug, serde::Serialize)]
+pub struct LdapLoginResponse {
+    pub key: String,
+    pub key_prefix: String,
+    pub username: String,
+    pub group: String,
+}
+
+/// LDAP login endpoint.
+///
+/// Authenticates a user against the configured LDAP/AD server and provisions
+/// a virtual API key for gateway access. Returns 503 if LDAP is not configured.
+pub async fn ldap_login(
+    State(state): State<std::sync::Arc<AppState>>,
+    Json(req): Json<LdapLoginRequest>,
+) -> axum::response::Response {
+    let ldap_config = match &state.ldap_config {
+        Some(cfg) => cfg.clone(),
+        None => {
+            return ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "LDAP authentication is not configured",
+            )
+            .into_response();
+        }
+    };
+
+    if req.username.is_empty() || req.password.is_empty() {
+        return ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "Username and password are required",
+        )
+        .into_response();
+    }
+
+    let authenticator = LdapAuthenticator::new(ldap_config);
+    match authenticator
+        .authenticate(&req.username, &req.password)
+        .await
+    {
+        Ok(user_info) => {
+            let store = &state.billing.virtual_key_store;
+            let (new_key, plaintext) = store
+                .create(
+                    format!("ldap:{}", user_info.username),
+                    None,   // daily_budget_cents
+                    None,   // monthly_budget_cents
+                    None,   // allowed_models
+                    vec![], // denied_models
+                    vec![], // allowed_ips
+                    None,   // rpm_limit
+                    None,   // tpm_limit
+                    None,   // expires_at
+                    Some(user_info.groups.first().cloned().unwrap_or_default()),
+                )
+                .await;
+
+            tracing::info!(
+                username = %user_info.username,
+                key_prefix = %new_key.key_prefix,
+                "LDAP login succeeded, virtual key provisioned"
+            );
+
+            let resp = LdapLoginResponse {
+                key: plaintext,
+                key_prefix: new_key.key_prefix,
+                username: user_info.username,
+                group: user_info.groups.first().cloned().unwrap_or_default(),
+            };
+            Json(super::ApiResponse::ok(resp)).into_response()
+        }
+        Err(e) => {
+            tracing::warn!(username = %req.username, error = %e, "LDAP login failed");
+            let status = match &e {
+                crate::auth::ldap::LdapAuthError::BindFailed { .. } => StatusCode::UNAUTHORIZED,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            ApiError::new(status, &e.to_string()).into_response()
+        }
     }
 }
 

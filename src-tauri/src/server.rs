@@ -345,6 +345,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         completion_ratios: Arc::new(parking_lot::RwLock::new(
             config.gateway.completion_ratios.clone(),
         )),
+        ldap_config: config.gateway.auth.ldap.clone(),
         started_at: std::time::Instant::now(),
     });
 
@@ -893,6 +894,10 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
             get(admin::get_usage_report_csv),
         )
         .route(&format!("{prefix}/auth/me"), get(admin::auth::auth_me))
+        .route(
+            &format!("{prefix}/auth/ldap/login"),
+            post(admin::auth::ldap_login),
+        )
 }
 
 /// Portal routes — employee self-service, authenticated by virtual key.

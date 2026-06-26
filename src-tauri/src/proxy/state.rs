@@ -119,5 +119,7 @@ pub struct AppState {
     /// Runtime-updatable completion ratios (mirrors the startup value from
     /// [`ProxyParams::completion_ratios`] but mutable at runtime via admin API).
     pub completion_ratios: Arc<parking_lot::RwLock<HashMap<String, f64>>>,
+    /// LDAP/AD authentication configuration. None = LDAP disabled.
+    pub ldap_config: Option<crate::config::LdapConfig>,
     pub started_at: std::time::Instant,
 }

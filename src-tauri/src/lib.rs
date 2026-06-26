@@ -1,4 +1,5 @@
 mod admin;
+pub mod auth;
 mod channel;
 pub mod config;
 pub mod credential;

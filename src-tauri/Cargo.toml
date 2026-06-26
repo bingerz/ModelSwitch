@@ -92,6 +92,9 @@ lettre = { version = "0.11", default-features = false, features = [
     "builder",
 ] }
 
+# Enterprise authentication
+ldap3 = "0.11"
+
 [dev-dependencies]
 wiremock = "0.6"
 

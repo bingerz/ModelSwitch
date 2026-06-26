@@ -249,6 +249,130 @@ pub struct GatewayConfig {
     /// "token_bucket" uses a burst-capable token bucket.
     #[serde(default)]
     pub rate_limit_algorithm: crate::proxy::rate_limiter::RateLimitAlgorithm,
+    /// Enterprise authentication (LDAP/AD, OIDC SSO).
+    #[serde(default)]
+    pub auth: AuthConfig,
+}
+
+// ─── Enterprise Authentication Config ──────────────────
+
+/// Enterprise authentication configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AuthConfig {
+    /// LDAP/Active Directory settings. None = LDAP disabled.
+    #[serde(default)]
+    pub ldap: Option<LdapConfig>,
+    /// OIDC SSO settings. None = OIDC disabled.
+    #[serde(default)]
+    pub oidc: Option<OidcConfig>,
+}
+
+/// LDAP/Active Directory authentication configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LdapConfig {
+    /// LDAP server URL (e.g., `ldap://dc01.corp.local:389` or `ldaps://dc01.corp.local:636`).
+    pub url: String,
+    /// Bind DN template with `{username}` placeholder.
+    /// Example: `cn={username},ou=users,dc=corp,dc=local`
+    /// For Active Directory userPrincipalName style, use `{username}@corp.local`.
+    pub bind_dn_template: String,
+    /// Whether to upgrade the connection with StartTLS before binding (recommended).
+    #[serde(default = "default_ldap_starttls")]
+    pub starttls: bool,
+    /// Default virtual key group to assign to LDAP-provisioned users.
+    #[serde(default = "default_ldap_group")]
+    pub default_group: String,
+    /// Connection timeout in seconds (default 10).
+    #[serde(default = "default_ldap_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+impl LdapConfig {
+    /// Build the bind DN by substituting the username into the template.
+    ///
+    /// The username is escaped according to RFC 4514 rules to prevent LDAP DN
+    /// injection. The following characters are escaped with a backslash:
+    /// - Comma (`,`) — DN separator
+    /// - Plus (`+`) — multi-valued RDN separator
+    /// - Double-quote (`"`) — quoting character
+    /// - Backslash (`\`) — escape character
+    /// - Less-than (`<`) — comparison operator
+    /// - Greater-than (`>`) — comparison operator
+    /// - Semicolon (`;`) — hierarchy separator
+    /// - Null (`\0`) — string terminator
+    ///
+    /// Leading/trailing whitespace and the `#` character at the start of a
+    /// value component are also escaped.
+    pub fn build_bind_dn(&self, username: &str) -> String {
+        let escaped = escape_ldap_dn(username);
+        self.bind_dn_template.replace("{username}", &escaped)
+    }
+}
+
+/// OIDC / OAuth2 SSO configuration (scaffold — not yet wired to token validation).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OidcConfig {
+    /// Issuer URL (e.g., `https://login.microsoftonline.com/{tenant}/v2.0`).
+    pub issuer: String,
+    /// OAuth2 client ID registered with the IdP.
+    pub client_id: String,
+    /// OAuth2 client secret (for confidential clients).
+    #[serde(default)]
+    pub client_secret: Option<String>,
+    /// Redirect URI registered with the IdP (must match exactly).
+    pub redirect_uri: String,
+    /// Requested scopes (default: `["openid", "email", "profile"]`).
+    #[serde(default = "default_oidc_scopes")]
+    pub scopes: Vec<String>,
+}
+
+fn default_ldap_starttls() -> bool {
+    false
+}
+
+fn default_ldap_group() -> String {
+    "ldap".to_string()
+}
+
+fn default_ldap_timeout_secs() -> u64 {
+    10
+}
+
+fn default_oidc_scopes() -> Vec<String> {
+    vec![
+        "openid".to_string(),
+        "email".to_string(),
+        "profile".to_string(),
+    ]
+}
+
+/// Escape a string for safe inclusion in an LDAP distinguished name (RFC 4514).
+fn escape_ldap_dn(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() + 4);
+    let chars: Vec<char> = input.chars().collect();
+    for (i, ch) in chars.iter().enumerate() {
+        let is_first = i == 0;
+        let is_last = i == chars.len() - 1;
+        match ch {
+            ',' | '+' | '"' | '\\' | '<' | '>' | ';' => {
+                out.push('\\');
+                out.push(*ch);
+            }
+            '#' if is_first => {
+                out.push_str("\\#");
+            }
+            ' ' if is_first || is_last => {
+                out.push_str("\\ ");
+            }
+            '\0' => {
+                out.push_str("\\00");
+            }
+            _ => {
+                out.push(*ch);
+            }
+        }
+    }
+    out
 }
 
 /// Config entry for a role-based admin token.
@@ -624,6 +748,7 @@ impl Default for GatewayConfig {
             tls: TlsConfig::default(),
             notification: crate::notification::NotificationConfig::default(),
             rate_limit_algorithm: crate::proxy::rate_limiter::RateLimitAlgorithm::default(),
+            auth: AuthConfig::default(),
         }
     }
 }
@@ -1410,5 +1535,124 @@ retry_base_ms = 200
         assert!(s.redact_secrets);
         assert!(!s.scan_response);
         assert!(s.custom_patterns.is_empty());
+    }
+
+    // ===== AuthConfig / LdapConfig / OidcConfig =====
+
+    #[test]
+    fn auth_config_defaults_to_disabled() {
+        let auth = AuthConfig::default();
+        assert!(auth.ldap.is_none());
+        assert!(auth.oidc.is_none());
+    }
+
+    #[test]
+    fn gateway_config_includes_auth_field_by_default() {
+        let gw = GatewayConfig::default();
+        assert!(gw.auth.ldap.is_none());
+        assert!(gw.auth.oidc.is_none());
+    }
+
+    #[test]
+    fn build_bind_dn_substitutes_username() {
+        let cfg = LdapConfig {
+            url: "ldap://dc01.corp.local:389".into(),
+            bind_dn_template: "cn={username},ou=users,dc=corp,dc=local".into(),
+            starttls: false,
+            default_group: "ldap".into(),
+            timeout_secs: 10,
+        };
+        let dn = cfg.build_bind_dn("alice");
+        assert_eq!(dn, "cn=alice,ou=users,dc=corp,dc=local");
+    }
+
+    #[test]
+    fn build_bind_dn_upn_style() {
+        let cfg = LdapConfig {
+            url: "ldaps://dc01.corp.local:636".into(),
+            bind_dn_template: "{username}@corp.local".into(),
+            starttls: true,
+            default_group: "ad".into(),
+            timeout_secs: 10,
+        };
+        let dn = cfg.build_bind_dn("bob");
+        assert_eq!(dn, "bob@corp.local");
+    }
+
+    #[test]
+    fn build_bind_dn_escapes_comma_injection() {
+        let cfg = LdapConfig {
+            url: "ldap://localhost:389".into(),
+            bind_dn_template: "cn={username},dc=corp,dc=local".into(),
+            starttls: false,
+            default_group: "ldap".into(),
+            timeout_secs: 10,
+        };
+        // Attacker tries to inject a second DN component
+        let dn = cfg.build_bind_dn("alice,dc=evil");
+        // The comma inside the username must be escaped
+        assert_eq!(dn, "cn=alice\\,dc=evil,dc=corp,dc=local");
+    }
+
+    #[test]
+    fn build_bind_dn_escapes_all_special_chars() {
+        let cfg = LdapConfig {
+            url: "ldap://localhost:389".into(),
+            bind_dn_template: "cn={username},dc=corp,dc=local".into(),
+            starttls: false,
+            default_group: "ldap".into(),
+            timeout_secs: 10,
+        };
+        let dn = cfg.build_bind_dn(r#"a+b"c\d<e>f;g"#);
+        assert_eq!(dn, r#"cn=a\+b\"c\\d\<e\>f\;g,dc=corp,dc=local"#);
+    }
+
+    #[test]
+    fn build_bind_dn_escapes_leading_and_trailing_space() {
+        let cfg = LdapConfig {
+            url: "ldap://localhost:389".into(),
+            bind_dn_template: "cn={username},dc=corp,dc=local".into(),
+            starttls: false,
+            default_group: "ldap".into(),
+            timeout_secs: 10,
+        };
+        let dn = cfg.build_bind_dn(" alice ");
+        assert_eq!(dn, r"cn=\ alice\ ,dc=corp,dc=local");
+    }
+
+    #[test]
+    fn build_bind_dn_escapes_leading_hash() {
+        let cfg = LdapConfig {
+            url: "ldap://localhost:389".into(),
+            bind_dn_template: "cn={username},dc=corp,dc=local".into(),
+            starttls: false,
+            default_group: "ldap".into(),
+            timeout_secs: 10,
+        };
+        let dn = cfg.build_bind_dn("#admin");
+        assert_eq!(dn, r"cn=\#admin,dc=corp,dc=local");
+    }
+
+    #[test]
+    fn ldap_config_serde_roundtrip() {
+        let cfg = LdapConfig {
+            url: "ldap://dc01.corp.local:389".into(),
+            bind_dn_template: "cn={username},ou=users,dc=corp,dc=local".into(),
+            starttls: true,
+            default_group: "corp".into(),
+            timeout_secs: 15,
+        };
+        let toml_str = toml::to_string(&cfg).unwrap();
+        let parsed: LdapConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.url, cfg.url);
+        assert_eq!(parsed.bind_dn_template, cfg.bind_dn_template);
+        assert!(parsed.starttls);
+        assert_eq!(parsed.timeout_secs, 15);
+    }
+
+    #[test]
+    fn oidc_config_defaults_scopes() {
+        let scopes = default_oidc_scopes();
+        assert_eq!(scopes, vec!["openid", "email", "profile"]);
     }
 }

@@ -210,6 +210,7 @@ fn build_state(
             crate::notification::NotificationConfig::default(),
         )),
         completion_ratios: Arc::new(parking_lot::RwLock::new(HashMap::new())),
+        ldap_config: None,
         started_at: std::time::Instant::now(),
     })
 }

@@ -27,9 +27,9 @@ impl Role {
 /// Anchored to known API prefixes to prevent any substring matching.
 fn is_virtual_keys_path(path: &str) -> bool {
     const VK_PREFIXES: [&str; 2] = ["/api/virtual-keys", "/v1/api/virtual-keys"];
-    VK_PREFIXES.iter().any(|prefix| {
-        path == *prefix || path.starts_with(&format!("{}/", prefix))
-    })
+    VK_PREFIXES
+        .iter()
+        .any(|prefix| path == *prefix || path.starts_with(&format!("{}/", prefix)))
 }
 
 /// Check if a role is permitted to perform an operation.
