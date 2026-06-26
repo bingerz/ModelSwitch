@@ -23,10 +23,10 @@ export default defineConfig({
       // Ratchet: raise as coverage improves. Baseline set just above current levels
       // to catch regressions without blocking incremental improvement.
       thresholds: {
-        lines: 4,
-        functions: 2,
-        statements: 4,
-        branches: 4,
+        lines: 6,
+        functions: 4,
+        statements: 6,
+        branches: 7,
       },
     },
   },
