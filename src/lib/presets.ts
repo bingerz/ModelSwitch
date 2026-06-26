@@ -51,7 +51,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     priority: 3,
     iconColor: "#D97757",
     apiKeyUrl: "https://console.anthropic.com/settings/keys",
-    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
     apiFormat: "anthropic",
     quotaStrategy: "webview", // console.anthropic.com/api/oauth/usage
   },
@@ -435,7 +435,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     modelMapping: {},
     priority: 2,
     iconColor: "#4F46E5",
-    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
     quotaStrategy: "response_header",
   },
   {
@@ -488,7 +488,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     modelMapping: {},
     priority: 3,
     iconColor: "#FF9900",
-    models: ["anthropic.claude-opus-4-7-v1:0", "anthropic.claude-sonnet-4-6-v1:0", "anthropic.claude-haiku-4-5-v1:0"],
+    models: ["anthropic.claude-opus-4-7-v1:0", "anthropic.claude-sonnet-4-6-v1:0", "anthropic.claude-sonnet-4-20250514-v1:0", "anthropic.claude-haiku-4-5-v1:0"],
     quotaStrategy: "disabled", // requires CloudWatch SDK
   },
   {
@@ -521,7 +521,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     priority: 2,
     iconColor: "#6366F1",
     apiKeyUrl: "https://www.packyapi.com",
-    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
     quotaStrategy: "openai_compat",
   },
   {
@@ -534,7 +534,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     priority: 2,
     iconColor: "#000000",
     apiKeyUrl: "https://cubence.com",
-    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
     quotaStrategy: "openai_compat",
   },
   {
@@ -547,7 +547,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     priority: 2,
     iconColor: "#5B7FFF",
     apiKeyUrl: "https://aigocode.com",
-    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
     quotaStrategy: "openai_compat",
   },
   {
@@ -584,7 +584,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     priority: 2,
     iconColor: "#8B5CF6",
     apiKeyUrl: "https://aicoding.sh",
-    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
     quotaStrategy: "openai_compat",
   },
   {
@@ -596,7 +596,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     modelMapping: {},
     priority: 2,
     iconColor: "#E11D48",
-    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
     quotaStrategy: "openai_compat",
   },
   {
@@ -608,7 +608,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     modelMapping: {},
     priority: 2,
     iconColor: "#7C3AED",
-    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
   },
   {
     name: "Micu",
@@ -643,7 +643,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     modelMapping: {},
     priority: 2,
     iconColor: "#EF4444",
-    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
     quotaStrategy: "openai_compat",
   },
   {
@@ -667,7 +667,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     modelMapping: {},
     priority: 2,
     iconColor: "#A855F7",
-    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+    models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
     quotaStrategy: "openai_compat",
   },
   {
