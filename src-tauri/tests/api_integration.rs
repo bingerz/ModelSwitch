@@ -555,3 +555,163 @@ async fn batch_create_keys() {
     let json = body_json(response).await;
     assert_eq!(json["data"]["total"], 5);
 }
+
+// ---------------------------------------------------------------------------
+// Test 11: virtual key budget exceeded blocks request
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn virtual_key_budget_exceeded_blocks_request() {
+    let state: Arc<AppState> = build_test_state(vec![]);
+
+    // Create a virtual key with a 1-cent daily budget.
+    let (vk, plaintext_key) = state
+        .billing
+        .virtual_key_store
+        .create(
+            "budget-limited".into(),
+            Some(1),
+            None,
+            None,
+            vec![],
+            vec![],
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+
+    // Record enough spend to exceed the 1-cent daily budget.
+    state
+        .billing
+        .virtual_key_store
+        .accumulate_spend(vk.id, 5)
+        .await;
+
+    let app = build_router(Arc::clone(&state), None);
+
+    // A proxy request with the exhausted key must be rejected.
+    // validate() returns None for over-budget keys, and the middleware
+    // maps that to 401 Unauthorized ("Invalid or exhausted virtual key").
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/models")
+                .header("Authorization", format!("Bearer {plaintext_key}"))
+                .header("X-Real-IP", "198.51.100.90")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "over-budget key must be rejected at the middleware"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 12: virtual key expired blocks request
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn virtual_key_expired_blocks_request() {
+    let state: Arc<AppState> = build_test_state(vec![]);
+
+    // Create a virtual key that expired 5 minutes ago.
+    let past = chrono::Utc::now() - chrono::Duration::minutes(5);
+    let (_vk, plaintext_key) = state
+        .billing
+        .virtual_key_store
+        .create(
+            "expired-key".into(),
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            None,
+            None,
+            Some(past),
+            None,
+        )
+        .await;
+
+    let app = build_router(Arc::clone(&state), None);
+
+    // validate() returns None for expired keys, so the middleware returns
+    // 401 Unauthorized ("Invalid or exhausted virtual key").
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/models")
+                .header("Authorization", format!("Bearer {plaintext_key}"))
+                .header("X-Real-IP", "198.51.100.91")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::UNAUTHORIZED,
+        "expired key must be rejected at the middleware"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 13: virtual key IP restriction enforced
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn virtual_key_ip_restriction_enforced() {
+    let state: Arc<AppState> = build_test_state(vec![]);
+
+    // Create a virtual key restricted to a specific IP.
+    let (_vk, plaintext_key) = state
+        .billing
+        .virtual_key_store
+        .create(
+            "ip-restricted".into(),
+            None,
+            None,
+            None,
+            vec![],
+            vec!["10.0.0.5".to_string()],
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+
+    let app = build_router(Arc::clone(&state), None);
+
+    // A request from a non-allowed IP must be rejected with 403 Forbidden.
+    // The key itself is valid (validate() returns Some), but the IP check
+    // in the middleware returns FORBIDDEN.
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/models")
+                .header("Authorization", format!("Bearer {plaintext_key}"))
+                .header("X-Real-IP", "192.168.1.99")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "request from non-allowed IP must be rejected"
+    );
+}
