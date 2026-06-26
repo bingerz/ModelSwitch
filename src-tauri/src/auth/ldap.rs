@@ -21,6 +21,9 @@ pub enum LdapAuthError {
     /// Network or connection error.
     #[error("LDAP connection error: {0}")]
     Connection(#[from] ldap3::LdapError),
+    /// Connection rejected: plaintext LDAP to a non-localhost host.
+    #[error("Insecure LDAP connection: {0}")]
+    InsecureConnection(String),
     /// The connection driver task terminated unexpectedly.
     #[error("LDAP connection driver error: {0}")]
     Driver(String),
@@ -37,6 +40,26 @@ impl LdapAuthenticator {
         Self { config }
     }
 
+    /// Validate that the connection configuration uses encryption
+    /// for non-localhost hosts.
+    ///
+    /// Rejects plaintext `ldap://` connections to non-localhost hosts unless
+    /// StartTLS is enabled or the `ldaps://` scheme is used. This prevents
+    /// credentials from being sent over the wire in cleartext.
+    fn validate_tls_requirement(&self) -> Result<(), LdapAuthError> {
+        let is_localhost = self.config.url.contains("://localhost:")
+            || self.config.url.contains("://127.0.0.1:")
+            || self.config.url.contains("://[::1]:");
+        let is_encrypted = self.config.starttls || self.config.url.starts_with("ldaps://");
+        if !is_encrypted && !is_localhost {
+            return Err(LdapAuthError::InsecureConnection(
+                "LDAP connection must use TLS (ldaps:// or starttls=true) for non-localhost hosts"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Authenticate a user by attempting a simple bind with their credentials.
     ///
     /// On success, returns [`AuthUserInfo`] with the username and default group
@@ -46,6 +69,9 @@ impl LdapAuthenticator {
         username: &str,
         password: &str,
     ) -> Result<AuthUserInfo, LdapAuthError> {
+        // Enforce TLS in production: reject plaintext LDAP to non-localhost hosts.
+        self.validate_tls_requirement()?;
+
         let settings = self.build_settings();
         let bind_dn = self.config.build_bind_dn(username);
 
@@ -169,6 +195,76 @@ mod tests {
         let auth = LdapAuthenticator::new(cfg);
         let settings = auth.build_settings();
         assert!(!settings.starttls());
+    }
+
+    #[test]
+    fn validate_tls_rejects_plaintext_non_localhost() {
+        let cfg = LdapConfig {
+            url: "ldap://ad.example.com:389".into(),
+            bind_dn_template: "cn={username},dc=test".into(),
+            starttls: false,
+            default_group: "test".into(),
+            timeout_secs: 5,
+        };
+        let auth = LdapAuthenticator::new(cfg);
+        assert!(auth.validate_tls_requirement().is_err());
+    }
+
+    #[test]
+    fn validate_tls_allows_localhost_plaintext() {
+        let cfg = LdapConfig {
+            url: "ldap://localhost:389".into(),
+            bind_dn_template: "cn={username},dc=test".into(),
+            starttls: false,
+            default_group: "test".into(),
+            timeout_secs: 5,
+        };
+        let auth = LdapAuthenticator::new(cfg);
+        assert!(auth.validate_tls_requirement().is_ok());
+    }
+
+    #[test]
+    fn validate_tls_allows_starttls() {
+        let cfg = LdapConfig {
+            url: "ldap://ad.example.com:389".into(),
+            bind_dn_template: "cn={username},dc=test".into(),
+            starttls: true,
+            default_group: "test".into(),
+            timeout_secs: 5,
+        };
+        let auth = LdapAuthenticator::new(cfg);
+        assert!(auth.validate_tls_requirement().is_ok());
+    }
+
+    #[test]
+    fn validate_tls_allows_ldaps_scheme() {
+        let cfg = LdapConfig {
+            url: "ldaps://ad.example.com:636".into(),
+            bind_dn_template: "cn={username},dc=test".into(),
+            starttls: false,
+            default_group: "test".into(),
+            timeout_secs: 5,
+        };
+        let auth = LdapAuthenticator::new(cfg);
+        assert!(auth.validate_tls_requirement().is_ok());
+    }
+
+    #[tokio::test]
+    async fn authenticate_rejects_plaintext_non_localhost() {
+        let cfg = LdapConfig {
+            url: "ldap://ad.example.com:389".into(),
+            bind_dn_template: "cn={username},dc=test".into(),
+            starttls: false,
+            default_group: "test".into(),
+            timeout_secs: 1,
+        };
+        let auth = LdapAuthenticator::new(cfg);
+        let result = auth.authenticate("user", "pass").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            LdapAuthError::InsecureConnection(_) => { /* expected */ }
+            other => panic!("expected InsecureConnection error, got: {other}"),
+        }
     }
 
     #[tokio::test]

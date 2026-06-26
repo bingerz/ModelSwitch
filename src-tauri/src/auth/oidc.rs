@@ -21,6 +21,9 @@ pub enum OidcError {
     /// Configuration error.
     #[error("OIDC configuration error: {0}")]
     Config(String),
+    /// Invalid issuer URL (wrong scheme, malformed, etc.).
+    #[error("Invalid OIDC issuer: {0}")]
+    InvalidIssuer(String),
 }
 
 /// OIDC authenticator handling the authorization code flow.
@@ -28,14 +31,32 @@ pub enum OidcError {
 /// **Scaffold**: only the authorization URL builder is implemented.
 /// Token exchange, ID token validation, and userinfo retrieval will be
 /// added in a subsequent phase.
+#[derive(Debug)]
 pub struct OidcAuthenticator {
     config: OidcConfig,
 }
 
 impl OidcAuthenticator {
     /// Create a new OIDC authenticator with the given configuration.
-    pub fn new(config: OidcConfig) -> Self {
-        Self { config }
+    ///
+    /// Validates that the issuer URL uses `https://` (or `http://` for
+    /// localhost development) to prevent SSRF and credential leakage.
+    pub fn new(config: OidcConfig) -> Result<Self, OidcError> {
+        let parsed = url::Url::parse(&config.issuer)
+            .map_err(|e| OidcError::InvalidIssuer(format!("malformed issuer URL: {e}")))?;
+
+        let is_localhost = matches!(
+            parsed.host_str(),
+            Some("localhost") | Some("127.0.0.1") | Some("::1")
+        );
+        if parsed.scheme() != "https" && !is_localhost {
+            return Err(OidcError::InvalidIssuer(
+                "OIDC issuer must use https:// scheme (or http:// for localhost development)"
+                    .to_string(),
+            ));
+        }
+
+        Ok(Self { config })
     }
 
     /// Build the authorization URL to redirect the user to.
@@ -115,7 +136,7 @@ mod tests {
 
     #[test]
     fn authorization_url_contains_required_params() {
-        let auth = OidcAuthenticator::new(test_config());
+        let auth = OidcAuthenticator::new(test_config()).unwrap();
         let (url, state) = auth.authorization_url();
 
         assert!(url.starts_with("https://login.example.com/authorize?"));
@@ -129,7 +150,7 @@ mod tests {
 
     #[test]
     fn authorization_url_has_unique_state() {
-        let auth = OidcAuthenticator::new(test_config());
+        let auth = OidcAuthenticator::new(test_config()).unwrap();
         let (_, state1) = auth.authorization_url();
         let (_, state2) = auth.authorization_url();
         assert_ne!(state1, state2, "state must be unique per request");
@@ -137,7 +158,7 @@ mod tests {
 
     #[test]
     fn authorization_url_includes_configured_scopes() {
-        let auth = OidcAuthenticator::new(test_config());
+        let auth = OidcAuthenticator::new(test_config()).unwrap();
         let (url, _) = auth.authorization_url();
         // Scopes are URL-encoded in the query string.
         assert!(url.contains("openid"));
@@ -154,7 +175,7 @@ mod tests {
             redirect_uri: "http://localhost/callback".into(),
             scopes: vec!["openid".into()],
         };
-        let auth = OidcAuthenticator::new(cfg);
+        let auth = OidcAuthenticator::new(cfg).unwrap();
         let (url, _) = auth.authorization_url();
         // Should not have a double slash before "authorize".
         assert!(url.starts_with("https://login.example.com/authorize?"));
@@ -163,8 +184,64 @@ mod tests {
 
     #[tokio::test]
     async fn exchange_code_returns_not_implemented() {
-        let auth = OidcAuthenticator::new(test_config());
+        let auth = OidcAuthenticator::new(test_config()).unwrap();
         let result = auth.exchange_code("fake-code", "fake-state").await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_http_issuer_for_non_localhost() {
+        let cfg = OidcConfig {
+            issuer: "http://login.example.com".into(),
+            client_id: "test".into(),
+            client_secret: None,
+            redirect_uri: "http://localhost/callback".into(),
+            scopes: vec!["openid".into()],
+        };
+        let result = OidcAuthenticator::new(cfg);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            OidcError::InvalidIssuer(msg) => assert!(msg.contains("https://")),
+            other => panic!("expected InvalidIssuer error, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn accepts_https_issuer() {
+        let cfg = OidcConfig {
+            issuer: "https://login.microsoftonline.com/tenant/v2.0".into(),
+            client_id: "test".into(),
+            client_secret: None,
+            redirect_uri: "http://localhost/callback".into(),
+            scopes: vec!["openid".into()],
+        };
+        let result = OidcAuthenticator::new(cfg);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn accepts_localhost_http_for_dev() {
+        let cfg = OidcConfig {
+            issuer: "http://localhost:8080".into(),
+            client_id: "test".into(),
+            client_secret: None,
+            redirect_uri: "http://localhost/callback".into(),
+            scopes: vec!["openid".into()],
+        };
+        let result = OidcAuthenticator::new(cfg);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn rejects_malformed_issuer_url() {
+        let cfg = OidcConfig {
+            issuer: "not a valid url".into(),
+            client_id: "test".into(),
+            client_secret: None,
+            redirect_uri: "http://localhost/callback".into(),
+            scopes: vec!["openid".into()],
+        };
+        let result = OidcAuthenticator::new(cfg);
         assert!(result.is_err());
     }
 }
