@@ -665,4 +665,550 @@ mod tests {
         assert_eq!(h4.buckets.len(), 1);
         assert_eq!(h4.total_requests, 1);
     }
+
+    // ---------------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------------
+
+    /// Build a DispatchLog with sensible defaults for tests.
+    fn make_log(id: Uuid, success: bool, latency_ms: u64) -> DispatchLog {
+        DispatchLog {
+            id,
+            timestamp: Utc::now(),
+            request_model: "test-model".into(),
+            channel_id: Uuid::new_v4(),
+            channel_name: "test-channel".into(),
+            channel_priority: 1,
+            retry_count: 0,
+            trigger_reason: None,
+            latency_ms,
+            success,
+            estimated_cost: None,
+            input_tokens: None,
+            output_tokens: None,
+            cache_hit_tokens: None,
+            cache_miss_tokens: None,
+            request_id: None,
+            virtual_key_id: None,
+        }
+    }
+
+    /// Like `make_log` but also sets cost/token fields.
+    fn make_cost_log(
+        id: Uuid,
+        success: bool,
+        cost: Option<f64>,
+        input: Option<u64>,
+        output: Option<u64>,
+    ) -> DispatchLog {
+        let mut l = make_log(id, success, 100);
+        l.estimated_cost = cost;
+        l.input_tokens = input;
+        l.output_tokens = output;
+        l
+    }
+
+    /// Generate a unique file path inside the OS temp directory.
+    fn unique_temp_file(prefix: &str) -> PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("{}_{}.ndjson", prefix, Uuid::new_v4()));
+        p
+    }
+
+    /// Check whether a path currently exists (tolerates races).
+    async fn path_exists(path: &Path) -> bool {
+        tokio::fs::metadata(path).await.is_ok()
+    }
+
+    // ---------------------------------------------------------------------------
+    // In-memory logging
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn new_logger_is_empty() {
+        let logger = DispatchLogger::new(100);
+        assert_eq!(logger.total().await, 0);
+        assert!(logger.list(0, 10).await.is_empty());
+
+        let stats = logger.stats().await;
+        assert_eq!(stats.total_requests, 0);
+        assert_eq!(stats.successes, 0);
+        assert_eq!(stats.failures, 0);
+        assert_eq!(stats.avg_latency_ms, 0);
+    }
+
+    #[tokio::test]
+    async fn log_appends_single_entry() {
+        let logger = DispatchLogger::new(100);
+        let id = Uuid::new_v4();
+        logger.log(make_log(id, true, 42)).await;
+
+        assert_eq!(logger.total().await, 1);
+        let entries = logger.list(0, 10).await;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, id);
+        assert_eq!(entries[0].latency_ms, 42);
+        assert!(entries[0].success);
+    }
+
+    #[tokio::test]
+    async fn log_evicts_oldest_when_max_exceeded() {
+        let logger = DispatchLogger::new(3);
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let id3 = Uuid::new_v4();
+        let id4 = Uuid::new_v4();
+
+        logger.log(make_log(id1, true, 10)).await;
+        logger.log(make_log(id2, true, 20)).await;
+        logger.log(make_log(id3, true, 30)).await;
+        logger.log(make_log(id4, true, 40)).await;
+
+        // FIFO eviction: id1 should be gone, the rest retained.
+        assert_eq!(logger.total().await, 3);
+        let entries = logger.list(0, 10).await;
+        assert_eq!(entries[0].id, id4); // newest first
+        assert_eq!(entries[1].id, id3);
+        assert_eq!(entries[2].id, id2);
+        assert!(entries.iter().all(|e| e.id != id1));
+    }
+
+    #[tokio::test]
+    async fn list_returns_newest_first_with_pagination() {
+        let logger = DispatchLogger::new(10);
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let id3 = Uuid::new_v4();
+        logger.log(make_log(id1, true, 10)).await;
+        logger.log(make_log(id2, true, 20)).await;
+        logger.log(make_log(id3, true, 30)).await;
+
+        // Newest first by default
+        let all = logger.list(0, 10).await;
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].id, id3);
+        assert_eq!(all[1].id, id2);
+        assert_eq!(all[2].id, id1);
+
+        // Page: offset 1, limit 1 → only id2
+        let page = logger.list(1, 1).await;
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].id, id2);
+
+        // Offset beyond available entries
+        assert!(logger.list(10, 5).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stats_reports_counts_and_avg_latency() {
+        let logger = DispatchLogger::new(100);
+        logger.log(make_log(Uuid::new_v4(), true, 100)).await;
+        logger.log(make_log(Uuid::new_v4(), true, 200)).await;
+        logger.log(make_log(Uuid::new_v4(), false, 50)).await;
+
+        let stats = logger.stats().await;
+        assert_eq!(stats.total_requests, 3);
+        assert_eq!(stats.successes, 2);
+        assert_eq!(stats.failures, 1);
+        assert_eq!(stats.avg_latency_ms, (100 + 200 + 50) / 3);
+    }
+
+    #[tokio::test]
+    async fn cost_stats_aggregates_breakdowns() {
+        let logger = DispatchLogger::new(100);
+
+        let mut e1 = make_cost_log(Uuid::new_v4(), true, Some(0.1), Some(100), Some(50));
+        e1.channel_priority = 1;
+        e1.request_model = "gpt-4".into();
+        logger.log(e1).await;
+
+        let mut e2 = make_cost_log(Uuid::new_v4(), true, Some(0.2), Some(200), Some(100));
+        e2.channel_priority = 1;
+        e2.request_model = "gpt-4".into();
+        logger.log(e2).await;
+
+        let mut e3 = make_cost_log(Uuid::new_v4(), true, Some(0.3), Some(150), Some(75));
+        e3.channel_priority = 2;
+        e3.request_model = "claude-3".into();
+        logger.log(e3).await;
+
+        // Failed entry should be excluded from cost stats
+        logger
+            .log(make_cost_log(Uuid::new_v4(), false, None, None, None))
+            .await;
+
+        let cost = logger.cost_stats().await;
+        assert_eq!(cost.total_requests, 3);
+        assert!((cost.total_estimated_cost - 0.6).abs() < 0.001);
+        assert_eq!(cost.total_input_tokens, 100 + 200 + 150);
+        assert_eq!(cost.total_output_tokens, 50 + 100 + 75);
+        assert_eq!(cost.model_counts.get("gpt-4").copied(), Some(2));
+        assert_eq!(cost.model_counts.get("claude-3").copied(), Some(1));
+        assert_eq!(cost.priority_breakdown.len(), 2);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Token updates
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn update_log_tokens_updates_matching_entry() {
+        let logger = DispatchLogger::new(10);
+        let id = Uuid::new_v4();
+        logger.log(make_log(id, true, 50)).await;
+
+        logger
+            .update_log_tokens(id, 100, 50, Some(10), Some(5), Some(0.5))
+            .await;
+
+        let entries = logger.list(0, 10).await;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].input_tokens, Some(100));
+        assert_eq!(entries[0].output_tokens, Some(50));
+        assert_eq!(entries[0].cache_hit_tokens, Some(10));
+        assert_eq!(entries[0].cache_miss_tokens, Some(5));
+        assert_eq!(entries[0].estimated_cost, Some(0.5));
+    }
+
+    #[tokio::test]
+    async fn update_log_tokens_noop_for_unknown_id() {
+        let logger = DispatchLogger::new(10);
+        let known = Uuid::new_v4();
+        logger.log(make_log(known, true, 50)).await;
+
+        // Update a non-existent ID — should not panic or modify anything
+        let unknown = Uuid::new_v4();
+        logger
+            .update_log_tokens(unknown, 999, 888, Some(1), Some(2), Some(9.9))
+            .await;
+
+        let entries = logger.list(0, 10).await;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, known);
+        assert!(entries[0].input_tokens.is_none());
+        assert!(entries[0].cache_hit_tokens.is_none());
+    }
+
+    #[tokio::test]
+    async fn update_log_tokens_safe_on_empty_logger() {
+        let logger = DispatchLogger::new(10);
+        // Must not panic
+        logger
+            .update_log_tokens(Uuid::new_v4(), 100, 50, None, None, None)
+            .await;
+        assert_eq!(logger.total().await, 0);
+    }
+
+    #[tokio::test]
+    async fn update_log_tokens_partial_update_preserves_existing_fields() {
+        let logger = DispatchLogger::new(10);
+        let id = Uuid::new_v4();
+
+        // Seed an entry with some cache/cost data
+        let mut entry = make_log(id, true, 50);
+        entry.cache_hit_tokens = Some(99);
+        entry.cache_miss_tokens = Some(88);
+        entry.estimated_cost = Some(1.0);
+        logger.log(entry).await;
+
+        // Partial update: only input/output set, cache/cost passed as None
+        // (should preserve existing values, not overwrite with None)
+        logger
+            .update_log_tokens(id, 200, 100, None, None, None)
+            .await;
+
+        let entries = logger.list(0, 10).await;
+        assert_eq!(entries[0].input_tokens, Some(200));
+        assert_eq!(entries[0].output_tokens, Some(100));
+        assert_eq!(entries[0].cache_hit_tokens, Some(99));
+        assert_eq!(entries[0].cache_miss_tokens, Some(88));
+        assert_eq!(entries[0].estimated_cost, Some(1.0));
+    }
+
+    // ---------------------------------------------------------------------------
+    // Virtual-key filtering
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn list_by_key_filters_entries() {
+        let logger = DispatchLogger::new(100);
+        let key_a = "key-alice";
+        let key_b = "key-bob";
+
+        let mut e1 = make_log(Uuid::new_v4(), true, 10);
+        e1.virtual_key_id = Some(key_a.into());
+        let mut e2 = make_log(Uuid::new_v4(), true, 20);
+        e2.virtual_key_id = Some(key_a.into());
+        let mut e3 = make_log(Uuid::new_v4(), true, 30);
+        e3.virtual_key_id = Some(key_b.into());
+
+        logger.log(e1).await;
+        logger.log(e2).await;
+        logger.log(e3).await;
+
+        let alice = logger.list_by_key(key_a, 0, 10).await;
+        assert_eq!(alice.len(), 2);
+        assert!(alice
+            .iter()
+            .all(|e| e.virtual_key_id.as_deref() == Some(key_a)));
+
+        let bob = logger.list_by_key(key_b, 0, 10).await;
+        assert_eq!(bob.len(), 1);
+
+        assert!(logger.list_by_key("unknown", 0, 10).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn total_by_key_counts_matching_entries_only() {
+        let logger = DispatchLogger::new(100);
+        for i in 0..5 {
+            let mut e = make_log(Uuid::new_v4(), true, i * 10);
+            e.virtual_key_id = Some("key-a".into());
+            logger.log(e).await;
+        }
+        let mut e = make_log(Uuid::new_v4(), true, 99);
+        e.virtual_key_id = Some("key-b".into());
+        logger.log(e).await;
+
+        assert_eq!(logger.total_by_key("key-a").await, 5);
+        assert_eq!(logger.total_by_key("key-b").await, 1);
+        assert_eq!(logger.total_by_key("nonexistent").await, 0);
+    }
+
+    // ---------------------------------------------------------------------------
+    // File persistence
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn append_line_writes_and_appends_entries() {
+        // append_line is the actual I/O path that log() calls via spawn_bg.
+        // Testing it directly avoids background-task timing flakiness while
+        // exercising the same serialization + file-append code.
+        let path = unique_temp_file("append_line");
+        DispatchLogger::ensure_parent_dir(&path).await.unwrap();
+
+        let log1 = make_log(Uuid::new_v4(), true, 10);
+        DispatchLogger::append_line(&path, &serde_json::to_string(&log1).unwrap())
+            .await
+            .unwrap();
+
+        let log2 = make_log(Uuid::new_v4(), false, 20);
+        DispatchLogger::append_line(&path, &serde_json::to_string(&log2).unwrap())
+            .await
+            .unwrap();
+
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 2, "file should contain 2 appended entries");
+
+        // First entry should be on the first line (append order preserved).
+        let parsed1: DispatchLog = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(parsed1.id, log1.id);
+        assert!(parsed1.success);
+
+        let parsed2: DispatchLog = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(parsed2.id, log2.id);
+        assert!(!parsed2.success);
+
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
+    async fn with_persistence_logs_in_memory_and_configures_file() {
+        // Verify that with_persistence creates a logger that still handles
+        // in-memory logging correctly while being configured for disk writes.
+        let path = unique_temp_file("persist_config");
+        let logger = DispatchLogger::with_persistence(100, path.clone(), 10, 3);
+
+        logger.log(make_log(Uuid::new_v4(), true, 10)).await;
+        logger.log(make_log(Uuid::new_v4(), true, 20)).await;
+
+        // In-memory state should reflect both entries immediately.
+        assert_eq!(logger.total().await, 2);
+        let entries = logger.list(0, 10).await;
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|e| e.success));
+
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
+    async fn load_from_file_roundtrips_entries() {
+        let path = unique_temp_file("load_roundtrip");
+        let log1 = make_log(Uuid::new_v4(), true, 10);
+        let log2 = make_log(Uuid::new_v4(), false, 99);
+        let log3 = make_log(Uuid::new_v4(), true, 50);
+
+        let contents = [
+            serde_json::to_string(&log1).unwrap(),
+            serde_json::to_string(&log2).unwrap(),
+            serde_json::to_string(&log3).unwrap(),
+        ]
+        .join("\n");
+        tokio::fs::write(&path, &contents).await.unwrap();
+
+        let logger = DispatchLogger::with_persistence(100, path.clone(), 10, 3);
+        logger.load_from_file().await;
+
+        assert_eq!(logger.total().await, 3);
+        let entries = logger.list(0, 10).await;
+        // list() returns newest first
+        assert_eq!(entries[0].id, log3.id);
+        assert_eq!(entries[1].id, log2.id);
+        assert_eq!(entries[2].id, log1.id);
+
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
+    async fn load_from_file_truncates_to_max_entries() {
+        let path = unique_temp_file("load_truncate");
+        // Write 10 entries with distinct model names
+        let logs: Vec<DispatchLog> = (0..10)
+            .map(|i| {
+                let mut l = make_log(Uuid::new_v4(), i % 2 == 0, (i * 10) as u64);
+                l.request_model = format!("model-{i}");
+                l
+            })
+            .collect();
+        let contents: Vec<String> = logs
+            .iter()
+            .map(|l| serde_json::to_string(l).unwrap())
+            .collect();
+        tokio::fs::write(&path, contents.join("\n")).await.unwrap();
+
+        // max_entries = 3 → only the 3 newest entries should be loaded.
+        let logger = DispatchLogger::with_persistence(3, path.clone(), 10, 3);
+        logger.load_from_file().await;
+
+        assert_eq!(logger.total().await, 3);
+        let entries = logger.list(0, 10).await;
+        assert_eq!(entries[0].request_model, "model-9");
+        assert_eq!(entries[1].request_model, "model-8");
+        assert_eq!(entries[2].request_model, "model-7");
+
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
+    async fn load_from_file_ignores_malformed_lines() {
+        let path = unique_temp_file("load_malformed");
+        let good = make_log(Uuid::new_v4(), true, 10);
+        let good_json = serde_json::to_string(&good).unwrap();
+        let contents = format!("{{not json\ngarbage line\n{good_json}\n");
+        tokio::fs::write(&path, &contents).await.unwrap();
+
+        let logger = DispatchLogger::with_persistence(100, path.clone(), 10, 3);
+        logger.load_from_file().await;
+
+        // Only the single valid line should be loaded
+        assert_eq!(logger.total().await, 1);
+        let entries = logger.list(0, 10).await;
+        assert_eq!(entries[0].id, good.id);
+
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    // ---------------------------------------------------------------------------
+    // File rotation
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn rotate_if_needed_renames_oversized_file_to_backup() {
+        let path = unique_temp_file("rotate_basic");
+        let big_line = "x".repeat(600);
+        tokio::fs::write(&path, &big_line).await.unwrap();
+
+        DispatchLogger::rotate_if_needed(&path, 512, 3)
+            .await
+            .unwrap();
+
+        // Original path should no longer exist
+        assert!(!path_exists(&path).await);
+
+        // Backup .1 should contain the original content
+        let backup = DispatchLogger::rotated_path_with_index(&path, 1);
+        let backup_content = tokio::fs::read_to_string(&backup).await.unwrap();
+        assert_eq!(backup_content, big_line);
+
+        let _ = tokio::fs::remove_file(&backup).await;
+    }
+
+    #[tokio::test]
+    async fn rotate_if_needed_noop_for_small_file() {
+        let path = unique_temp_file("rotate_noop");
+        tokio::fs::write(&path, "small").await.unwrap();
+
+        DispatchLogger::rotate_if_needed(&path, 1024, 2)
+            .await
+            .unwrap();
+
+        // File should be untouched
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(content, "small");
+        // No backup should exist
+        let backup = DispatchLogger::rotated_path_with_index(&path, 1);
+        assert!(!path_exists(&backup).await);
+
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
+    async fn rotate_if_needed_shifts_existing_backups() {
+        let path = unique_temp_file("rotate_shift");
+
+        // First rotation
+        tokio::fs::write(&path, "y".repeat(512)).await.unwrap();
+        DispatchLogger::rotate_if_needed(&path, 256, 2)
+            .await
+            .unwrap();
+        let backup1 = DispatchLogger::rotated_path_with_index(&path, 1);
+        assert!(path_exists(&backup1).await);
+
+        // Second rotation — should shift .1 → .2
+        tokio::fs::write(&path, "z".repeat(512)).await.unwrap();
+        DispatchLogger::rotate_if_needed(&path, 256, 2)
+            .await
+            .unwrap();
+        assert!(path_exists(&backup1).await);
+        let backup2 = DispatchLogger::rotated_path_with_index(&path, 2);
+        assert!(path_exists(&backup2).await);
+
+        // .2 should contain the content from the first rotation
+        let b2_content = tokio::fs::read_to_string(&backup2).await.unwrap();
+        assert_eq!(b2_content, "y".repeat(512));
+
+        for i in 1..=2 {
+            let _ = tokio::fs::remove_file(DispatchLogger::rotated_path_with_index(&path, i)).await;
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Concurrency
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn concurrent_log_preserves_all_entries() {
+        let logger = std::sync::Arc::new(DispatchLogger::new(200));
+        let concurrency = 50;
+
+        let mut handles = Vec::with_capacity(concurrency);
+        for i in 0..concurrency {
+            let log = std::sync::Arc::clone(&logger);
+            handles.push(tokio::spawn(async move {
+                log.log(make_log(Uuid::new_v4(), i % 2 == 0, i as u64))
+                    .await;
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        assert_eq!(logger.total().await, 50);
+        let stats = logger.stats().await;
+        assert_eq!(stats.total_requests, 50);
+        // Even indices are successful (i % 2 == 0), odd are failures
+        assert_eq!(stats.successes, 25);
+        assert_eq!(stats.failures, 25);
+    }
 }
