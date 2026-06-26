@@ -1,20 +1,25 @@
 //! Gateway server bootstrap: services initialization, Axum router, and start.
 
-use crate::admin;
+mod routes;
+mod services;
+mod tls;
+
+// Re-export public API for backward compatibility.
+pub use tls::{check_cert_freshness, start_tls_reload_watcher, TlsReloadState};
+// Re-export so existing callers (and tests in this file) can reach it.
+pub use routes::build_router;
+
 use crate::admin::audit::AuditLog;
 use crate::channel::manager::ChannelManager;
 use crate::config;
 use crate::config::AppConfig;
 use crate::credential::create_credential_store;
 use crate::guardrails::GuardrailsChecker;
-use crate::health;
 use crate::log::DispatchLogger;
 use crate::mcp::McpManager;
-use crate::middleware;
-use crate::model_registry::{refresh_from_endpoint, ModelRegistry};
+use crate::model_registry::ModelRegistry;
 use crate::notification::NotificationService;
 use crate::provider_budget::ProviderBudgetStore;
-use crate::proxy;
 use crate::proxy::cache::{CacheMode, InFlightRequests, RequestCache};
 use crate::proxy::payload_rules::ChannelPayloadRules;
 use crate::proxy::rate_limiter::RateLimiter;
@@ -22,8 +27,6 @@ use crate::proxy::{
     AppState, BillingState, CacheState, LimitsState, McpState, ProxyParams, RouterState,
     SecurityState,
 };
-use crate::quota;
-use crate::quota::registry::QuotaProviderRegistry;
 use crate::quota::{QuotaStore, RedemptionCodeStore};
 use crate::router::active_requests::ActiveRequests;
 use crate::router::affinity::SessionAffinity;
@@ -32,159 +35,11 @@ use crate::spawn_bg;
 use crate::virtual_key::VirtualKeyStore;
 use crate::GatewayHandles;
 
-use axum::extract::ConnectInfo;
-use axum::routing::{delete, get, post, put};
-use axum::Router;
 use std::fs::File;
 use std::io::BufReader;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use tokio::sync::{oneshot, Notify};
-use tower_http::compression::CompressionLayer;
-use tower_http::cors::CorsLayer;
-use tower_http::trace::TraceLayer;
-
-/// Tower service wrapper that injects `ConnectInfo(peer_addr)` into each
-/// request's extensions.
-///
-/// On the non-TLS path, `axum::serve(...).into_make_service_with_connect_info()`
-/// handles this automatically. The TLS path uses `hyper::server::conn` directly,
-/// so we need this wrapper to make `ConnectInfo<SocketAddr>` available for
-/// `extract_client_ip()` in the middleware.
-#[derive(Clone)]
-struct ConnectInfoService<S> {
-    inner: S,
-    addr: SocketAddr,
-}
-
-impl<S> ConnectInfoService<S> {
-    fn new(inner: S, addr: SocketAddr) -> Self {
-        Self { inner, addr }
-    }
-}
-
-impl<S, ReqBody> tower::Service<axum::http::Request<ReqBody>> for ConnectInfoService<S>
-where
-    S: tower::Service<axum::http::Request<ReqBody>>,
-{
-    type Response = S::Response;
-    type Error = S::Error;
-    type Future = S::Future;
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx)
-    }
-
-    fn call(&mut self, mut req: axum::http::Request<ReqBody>) -> Self::Future {
-        req.extensions_mut().insert(ConnectInfo(self.addr));
-        self.inner.call(req)
-    }
-}
-
-/// Interval at which the TLS reload watcher polls cert/key files on disk.
-const TLS_RELOAD_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
-
-/// Tracks TLS certificate state for hot-reload.
-///
-/// The gateway uses this to detect when on-disk cert/key files have been
-/// rotated, so it can warn operators that a restart is required to pick up
-/// the new credentials. Full live reload (rebuilding the acceptor without
-/// dropping connections) is not yet implemented; for now we only detect and
-/// log.
-#[derive(Debug, Clone)]
-pub struct TlsReloadState {
-    pub cert_path: std::path::PathBuf,
-    pub key_path: std::path::PathBuf,
-    pub last_modified: Option<std::time::SystemTime>,
-}
-
-impl TlsReloadState {
-    /// Create new reload state that will establish its baseline on the first
-    /// call to [`check_cert_freshness`].
-    pub fn new(cert_path: std::path::PathBuf, key_path: std::path::PathBuf) -> Self {
-        Self {
-            cert_path,
-            key_path,
-            last_modified: None,
-        }
-    }
-}
-
-/// Check whether the TLS cert/key files have been modified since the last call.
-///
-/// Reads the modification time of both files, compares against the previously
-/// recorded `last_modified` timestamp, and updates `last_modified` to the
-/// newer of the two current mtimes. Returns `true` if either file is newer
-/// than what was previously recorded.
-///
-/// On the first call (when `last_modified` is `None`), this establishes the
-/// baseline and returns `false` — there is no previous state to compare
-/// against, so we do not want to flag a spurious "change" on startup.
-pub fn check_cert_freshness(state: &mut TlsReloadState) -> bool {
-    let cert_mtime = std::fs::metadata(&state.cert_path)
-        .and_then(|m| m.modified())
-        .ok();
-    let key_mtime = std::fs::metadata(&state.key_path)
-        .and_then(|m| m.modified())
-        .ok();
-
-    let latest = match (cert_mtime, key_mtime) {
-        (Some(c), Some(k)) => Some(c.max(k)),
-        (Some(c), None) => Some(c),
-        (None, Some(k)) => Some(k),
-        (None, None) => None,
-    };
-
-    let changed = match (state.last_modified, latest) {
-        (Some(prev), Some(curr)) => curr > prev,
-        _ => false,
-    };
-
-    state.last_modified = latest;
-    changed
-}
-
-/// Start a background watcher that polls cert/key files for changes every
-/// [`TLS_RELOAD_POLL_INTERVAL`] seconds.
-///
-/// When a change is detected, logs a warning. Actually reloading TLS requires
-/// rebuilding the acceptor state, which is complex. For now, we only detect
-/// and warn so operators know a restart is needed.
-///
-/// Exits cleanly when the `shutdown` watch receives `true` or the sender is
-/// dropped.
-pub fn start_tls_reload_watcher(
-    mut state: TlsReloadState,
-    mut shutdown: tokio::sync::watch::Receiver<bool>,
-) {
-    spawn_bg(async move {
-        // Establish baseline so the first periodic check has something to
-        // compare against. Without this, the first poll would always return
-        // false anyway, but doing it upfront keeps the loop body uniform.
-        check_cert_freshness(&mut state);
-
-        loop {
-            tokio::select! {
-                biased;
-                changed = shutdown.changed() => {
-                    if changed.is_err() || *shutdown.borrow() {
-                        tracing::info!("TLS reload watcher shutting down");
-                        break;
-                    }
-                }
-                _ = tokio::time::sleep(TLS_RELOAD_POLL_INTERVAL) => {
-                    if check_cert_freshness(&mut state) {
-                        tracing::warn!(
-                            "TLS certificate files changed — restart required \
-                             to apply new certificates"
-                        );
-                    }
-                }
-            }
-        }
-    });
-}
 
 /// Build gateway state and start background services.
 /// Callable from both Tauri setup and CLI mode.
@@ -388,11 +243,11 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         started_at: std::time::Instant::now(),
     });
 
-    spawn_persistence_tasks(&state);
+    services::spawn_persistence_tasks(&state);
 
-    spawn_background_services(&state, &config);
+    services::spawn_background_services(&state, &config);
 
-    spawn_config_watcher(&state, &watcher_config_path);
+    services::spawn_config_watcher(&state, &watcher_config_path);
     GatewayHandles {
         state,
         host,
@@ -458,769 +313,6 @@ fn build_infra(config_path: Option<std::path::PathBuf>) -> (AppConfig, crate::ht
     tracing::info!(pool_size, "HTTP connection pool created");
 
     (config, http_pool)
-}
-
-/// Spawn tasks that load persisted state and periodically save it to disk.
-fn spawn_persistence_tasks(state: &Arc<AppState>) {
-    // Load persisted dispatch logs at startup
-    let boot_logger = Arc::clone(&state.logger);
-    spawn_bg(async move {
-        boot_logger.load_from_file().await;
-    });
-
-    // Load persisted audit log at startup (administrative history survives restarts)
-    let boot_audit = Arc::clone(&state.audit_log);
-    spawn_bg(async move {
-        boot_audit.load_from_file().await;
-    });
-
-    // Load persisted quota data (token usage survives restarts)
-    {
-        let boot_quota = Arc::clone(&state.billing.quota_store);
-        spawn_bg(async move {
-            boot_quota.load_from_file().await;
-        });
-    }
-
-    // Periodic quota persistence (every 10s)
-    {
-        let persist_quota = Arc::clone(&state.billing.quota_store);
-        spawn_bg(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
-            loop {
-                interval.tick().await;
-                persist_quota.persist_to_file().await;
-            }
-        });
-    }
-
-    // Load persisted virtual keys (so keys + spend survive restarts)
-    {
-        let boot_vk = Arc::clone(&state.billing.virtual_key_store);
-        spawn_bg(async move {
-            if let Err(e) = boot_vk.load().await {
-                tracing::warn!(error = %e, "Failed to load virtual keys");
-            } else {
-                let count = boot_vk.list().await.len();
-                tracing::info!(count, "Loaded virtual keys from disk");
-            }
-        });
-    }
-
-    // Periodic virtual key persistence (every 10s)
-    {
-        let persist_vk = Arc::clone(&state.billing.virtual_key_store);
-        spawn_bg(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
-            loop {
-                interval.tick().await;
-                if let Err(e) = persist_vk.persist().await {
-                    tracing::warn!(error = %e, "Failed to persist virtual keys");
-                }
-            }
-        });
-    }
-
-    // Load persisted provider budget spend (so limits + spend survive restarts)
-    {
-        let boot_pb = Arc::clone(&state.billing.provider_budgets);
-        spawn_bg(async move {
-            if let Err(e) = boot_pb.load().await {
-                tracing::warn!(error = %e, "Failed to load provider budgets");
-            } else {
-                tracing::info!("Loaded provider budget spend from disk");
-            }
-        });
-    }
-
-    // Periodic provider budget persistence (every 10s)
-    {
-        let persist_pb = Arc::clone(&state.billing.provider_budgets);
-        spawn_bg(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
-            loop {
-                interval.tick().await;
-                if let Err(e) = persist_pb.persist().await {
-                    tracing::warn!(error = %e, "Failed to persist provider budgets");
-                }
-            }
-        });
-    }
-}
-
-/// Spawn background services: health checker, quota poller, session affinity cleanup, cache sweep.
-fn spawn_background_services(state: &Arc<AppState>, config: &AppConfig) {
-    // Start background health probe (P2-7: simplified periodic connectivity check).
-    // When health_check_interval_secs > 0, spawns a lightweight probe that
-    // verifies each channel's base URL is reachable without sending API requests.
-    if config.gateway.health_check_enabled && config.gateway.health_check_interval_secs > 0 {
-        let probe_state = Arc::clone(state);
-        let probe_interval = config.gateway.health_check_interval_secs;
-        spawn_bg(async move {
-            health::run_periodic_probe(probe_state, probe_interval).await;
-        });
-    }
-
-    // Start background quota poller
-    {
-        let qp_mgr = Arc::clone(&state.channel_mgr);
-        let qp_store = Arc::clone(&state.billing.quota_store);
-        let qp_client = state.http_pool.first().clone();
-        let qp_interval = config.gateway.quota_poll_interval_secs;
-        let qp_registry = Arc::new(QuotaProviderRegistry::new(
-            quota::collectors::default_registry(),
-        ));
-        // Build per-channel quota config map
-        let qp_configs: std::collections::HashMap<String, config::QuotaConfig> = config
-            .channels
-            .iter()
-            .filter_map(|ch| ch.quota.as_ref().map(|q| (ch.id.clone(), q.clone())))
-            .collect();
-        spawn_bg(async move {
-            quota::poller::start_quota_poller(
-                qp_mgr,
-                qp_store,
-                qp_client,
-                qp_interval,
-                qp_registry,
-                qp_configs,
-            )
-            .await;
-        });
-    }
-
-    // Periodic session affinity cleanup
-    {
-        let affinity_cleanup = state.router.session_affinity.clone();
-        spawn_bg(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-                affinity_cleanup.cleanup().await;
-            }
-        });
-    }
-
-    // Periodic cache sweep — bulk-evict expired entries every 60s so that
-    // `get()` only needs a lazy per-key TTL check.
-    {
-        let sweep_cache = Arc::clone(&state.cache.request_cache);
-        spawn_bg(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                sweep_cache.sweep_expired();
-            }
-        });
-    }
-
-    // Periodic cleanup of expired per-model cooldowns (every 5 minutes)
-    {
-        let channel_mgr_cleanup = Arc::clone(&state.channel_mgr);
-        spawn_bg(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
-            interval.tick().await; // Skip first immediate tick
-            loop {
-                interval.tick().await;
-                channel_mgr_cleanup.clean_expired_model_cooldowns().await;
-            }
-        });
-    }
-
-    // Start background model discovery for channels with models_endpoint configured
-    {
-        let channel_mgr = Arc::clone(&state.channel_mgr);
-        let registry = Arc::clone(&state.model_registry);
-        spawn_bg(async move {
-            run_model_discovery(channel_mgr, registry).await;
-        });
-    }
-}
-
-/// Start the hot config reload watcher.
-fn spawn_config_watcher(state: &Arc<AppState>, watcher_config_path: &Option<std::path::PathBuf>) {
-    // Start hot config reload watcher
-    let watcher_path = watcher_config_path
-        .clone()
-        .or_else(|| AppConfig::config_path().ok());
-    if let Some(path) = watcher_path {
-        config::watcher::start_config_watcher(
-            path,
-            Arc::clone(&state.channel_mgr),
-            Arc::clone(&state.mcp.mcp_manager),
-            Arc::clone(&state.limits.rate_limiter),
-            Arc::clone(&state.limits.payload_rules),
-        );
-    }
-}
-
-/// Background model discovery for channels with `models_endpoint` configured.
-///
-/// Scans all channels on startup, finds those with a configured endpoint, and
-/// spawns a per-channel tokio task that periodically fetches available models
-/// and updates the shared registry.
-async fn run_model_discovery(
-    channel_mgr: Arc<ChannelManager>,
-    registry: Arc<parking_lot::RwLock<ModelRegistry>>,
-) {
-    use uuid::Uuid;
-
-    // Collect channels with models_endpoint
-    let configs: Vec<(Uuid, String, u64)> = {
-        let channels = channel_mgr.channels();
-        let guard = channels.read().await;
-        guard
-            .values()
-            .filter_map(|ch_arc| {
-                let ch = ch_arc.read();
-                ch.models_endpoint
-                    .as_ref()
-                    .map(|ep| (ch.id, ep.clone(), ch.models_refresh_interval_secs))
-            })
-            .collect()
-    };
-
-    for (channel_id, endpoint, interval_secs) in configs {
-        let mgr = Arc::clone(&channel_mgr);
-        let reg = Arc::clone(&registry);
-        tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
-            // First tick completes immediately, subsequent ticks wait for the interval
-            loop {
-                ticker.tick().await;
-                let api_key = mgr.get_credential(channel_id).await;
-                if let Some(key) = api_key {
-                    match refresh_from_endpoint(&endpoint, &key).await {
-                        Ok(models) => {
-                            tracing::info!(
-                                channel_id = %channel_id,
-                                count = models.len(),
-                                "Discovered {} models from endpoint {}",
-                                models.len(),
-                                endpoint,
-                            );
-                            reg.write().update_models(models, &endpoint);
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                channel_id = %channel_id,
-                                error = %e,
-                                "Failed to refresh models from endpoint {}",
-                                endpoint,
-                            );
-                        }
-                    }
-                } else {
-                    tracing::warn!(
-                        channel_id = %channel_id,
-                        "No API key found for model discovery",
-                    );
-                }
-            }
-        });
-    }
-}
-
-/// Build admin route tree under the given path prefix (e.g., `/api` or `/v1/api`).
-/// Both prefixes are mounted to ensure backward compatibility during versioning migration.
-fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
-    Router::new()
-        .route(&format!("{prefix}/channels"), get(admin::list_channels))
-        .route(&format!("{prefix}/channels"), post(admin::create_channel))
-        .route(
-            &format!("{prefix}/channels/{{id}}"),
-            put(admin::update_channel),
-        )
-        .route(
-            &format!("{prefix}/channels/{{id}}"),
-            delete(admin::delete_channel),
-        )
-        .route(
-            &format!("{prefix}/channels/{{id}}/ping"),
-            post(admin::ping_channel),
-        )
-        .route(
-            &format!("{prefix}/channels/{{id}}/status"),
-            get(admin::channel_status),
-        )
-        .route(
-            &format!("{prefix}/channels/batch/enable"),
-            post(admin::batch_enable_channels),
-        )
-        .route(
-            &format!("{prefix}/channels/batch/disable"),
-            post(admin::batch_disable_channels),
-        )
-        .route(
-            &format!("{prefix}/channels/batch/delete"),
-            post(admin::batch_delete_channels),
-        )
-        .route(
-            &format!("{prefix}/channels/batch/tags"),
-            put(admin::batch_update_tags),
-        )
-        .route(&format!("{prefix}/logs"), get(admin::get_logs))
-        .route(&format!("{prefix}/stats"), get(admin::get_stats))
-        .route(&format!("{prefix}/stats/cost"), get(admin::get_cost_stats))
-        .route(
-            &format!("{prefix}/stats/usage"),
-            get(admin::get_usage_history),
-        )
-        .route(&format!("{prefix}/quota"), get(admin::get_quota))
-        .route(
-            &format!("{prefix}/auth/cookies"),
-            post(admin::receive_login_cookies),
-        )
-        .route(
-            &format!("{prefix}/auth/pending-cookies"),
-            get(admin::get_pending_cookies),
-        )
-        .route(
-            &format!("{prefix}/channels/{{id}}/reset-circuit"),
-            post(admin::reset_circuit),
-        )
-        .route(
-            &format!("{prefix}/channels/{{id}}/payload-rules"),
-            get(admin::get_payload_rules).put(admin::set_payload_rules),
-        )
-        .route(&format!("{prefix}/cache/flush"), post(admin::flush_cache))
-        .route(&format!("{prefix}/cache/stats"), get(admin::cache_stats))
-        .route(
-            &format!("{prefix}/config/reload"),
-            post(admin::reload_config),
-        )
-        .route(
-            &format!("{prefix}/mcp/servers"),
-            get(admin::list_mcp_servers),
-        )
-        .route(
-            &format!("{prefix}/mcp/servers"),
-            post(admin::create_mcp_server),
-        )
-        .route(
-            &format!("{prefix}/mcp/servers/{{id}}"),
-            put(admin::update_mcp_server),
-        )
-        .route(
-            &format!("{prefix}/mcp/servers/{{id}}"),
-            delete(admin::delete_mcp_server),
-        )
-        .route(
-            &format!("{prefix}/mcp/servers/{{id}}/start"),
-            post(admin::start_mcp_server),
-        )
-        .route(
-            &format!("{prefix}/mcp/servers/{{id}}/stop"),
-            post(admin::stop_mcp_server),
-        )
-        .route(
-            &format!("{prefix}/mcp/servers/{{id}}/tools"),
-            get(admin::list_mcp_server_tools),
-        )
-        .route(
-            &format!("{prefix}/mcp/tools"),
-            get(admin::list_all_mcp_tools),
-        )
-        .route(
-            &format!("{prefix}/virtual-keys"),
-            get(admin::list_virtual_keys),
-        )
-        .route(
-            &format!("{prefix}/virtual-keys"),
-            post(admin::create_virtual_key),
-        )
-        .route(
-            &format!("{prefix}/virtual-keys/batch"),
-            post(admin::batch_create_virtual_keys),
-        )
-        .route(
-            &format!("{prefix}/virtual-keys/{{id}}"),
-            put(admin::update_virtual_key),
-        )
-        .route(
-            &format!("{prefix}/virtual-keys/{{id}}"),
-            delete(admin::delete_virtual_key),
-        )
-        .route(
-            &format!("{prefix}/virtual-keys/groups"),
-            get(admin::list_virtual_key_groups),
-        )
-        .route(
-            &format!("{prefix}/provider-budgets"),
-            get(admin::list_provider_budgets),
-        )
-        .route(
-            &format!("{prefix}/provider-budgets/{{provider}}"),
-            put(admin::set_provider_budget),
-        )
-        .route(
-            &format!("{prefix}/provider-budgets/{{provider}}"),
-            delete(admin::delete_provider_budget),
-        )
-        .route(&format!("{prefix}/gateway/info"), get(admin::gateway_info))
-        .route(&format!("{prefix}/audit-log"), get(admin::get_audit_log))
-        // ── Feature module routes ────────────────────────────
-        // Guardrails config
-        .route(
-            &format!("{prefix}/guardrails"),
-            get(admin::get_guardrails_config),
-        )
-        .route(
-            &format!("{prefix}/guardrails"),
-            put(admin::update_guardrails_config),
-        )
-        // Redemption codes
-        .route(
-            &format!("{prefix}/redemption-codes"),
-            get(admin::list_redemption_codes),
-        )
-        .route(
-            &format!("{prefix}/redemption-codes"),
-            post(admin::create_redemption_code),
-        )
-        .route(
-            &format!("{prefix}/redemption-codes/redeem"),
-            post(admin::redeem_code),
-        )
-        .route(
-            &format!("{prefix}/redemption-codes/{{code}}"),
-            delete(admin::delete_redemption_code),
-        )
-        // Notifications
-        .route(
-            &format!("{prefix}/notifications"),
-            get(admin::get_notification_config),
-        )
-        .route(
-            &format!("{prefix}/notifications"),
-            put(admin::update_notification_config),
-        )
-        // Channel auto-test
-        .route(
-            &format!("{prefix}/channels/{{id}}/test"),
-            post(admin::test_channel),
-        )
-        .route(
-            &format!("{prefix}/channels/test-all"),
-            post(admin::test_all_channels),
-        )
-        // Channel cooldown status
-        .route(
-            &format!("{prefix}/channels/{{id}}/cooldown"),
-            get(admin::get_channel_cooldown),
-        )
-        // MCP health
-        .route(&format!("{prefix}/mcp/health"), get(admin::get_mcp_health))
-        // Completion ratios
-        .route(
-            &format!("{prefix}/completion-ratios"),
-            get(admin::get_completion_ratios),
-        )
-        .route(
-            &format!("{prefix}/completion-ratios"),
-            put(admin::update_completion_ratios),
-        )
-        // Model registry inspection
-        .route(
-            &format!("{prefix}/model-registry"),
-            get(admin::get_model_registry),
-        )
-        // Usage reports (JSON + CSV export)
-        .route(
-            &format!("{prefix}/reports/usage"),
-            get(admin::get_usage_report),
-        )
-        .route(
-            &format!("{prefix}/reports/usage/csv"),
-            get(admin::get_usage_report_csv),
-        )
-        .route(&format!("{prefix}/auth/me"), get(admin::auth::auth_me))
-}
-
-/// Portal routes — employee self-service, authenticated by virtual key.
-/// These are NOT protected by admin_auth_middleware.
-fn portal_routes() -> Router<Arc<AppState>> {
-    Router::new()
-        .route("/api/portal/usage", get(admin::portal::portal_usage))
-        .route("/api/portal/logs", get(admin::portal::portal_logs))
-        .route("/api/portal/test", get(admin::portal::portal_test))
-}
-
-/// Public authentication routes — NOT protected by admin_auth_middleware.
-/// These endpoints handle their own authentication internally (e.g. LDAP bind).
-///
-/// Rate-limiting middleware is applied to prevent brute-force attacks on
-/// publicly accessible auth endpoints (e.g. LDAP credential stuffing).
-fn auth_routes(state: Arc<AppState>) -> Router {
-    let auth_rate_limit_state = Arc::clone(&state);
-    Router::new()
-        .route("/api/auth/ldap/login", post(admin::auth::ldap_login))
-        .layer(axum::middleware::from_fn_with_state(
-            auth_rate_limit_state,
-            middleware::auth::auth_rate_limit_middleware,
-        ))
-        .with_state(state)
-}
-
-/// Build the Axum Router with all proxy and admin routes.
-/// Proxy routes use optional virtual-key auth (pass-through when no keys configured);
-/// admin routes use optional Bearer token auth.
-pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Router {
-    // Warn loudly when web console is active without admin_token protection.
-    if state.security.admin_token.is_none() && web_console_dir.is_some() {
-        tracing::warn!("==========================================================");
-        tracing::warn!("  WARNING: Web console is active but admin_token is");
-        tracing::warn!("    not set. All admin endpoints are OPEN to the network.");
-        tracing::warn!("    Set [security] admin_token in config.toml immediately.");
-        tracing::warn!("==========================================================");
-    }
-
-    let proxy_state = Arc::clone(&state);
-    let proxy_auth_state = Arc::clone(&state);
-    let sanitizer_state = Arc::clone(&state);
-    let admin_route_state = Arc::clone(&state);
-    let admin_auth_state = Arc::clone(&state);
-
-    // Proxy routes -- virtual-key auth (pass-through when no virtual keys configured)
-    let proxy_router = Router::new()
-        .route(
-            "/v1/chat/completions",
-            post(proxy::openai::handle_chat_completions),
-        )
-        .route("/v1/responses", post(proxy::responses::handle_responses))
-        .route("/v1/embeddings", post(proxy::embeddings::handle_embeddings))
-        .route(
-            "/v1/images/generations",
-            post(proxy::images::handle_image_generation),
-        )
-        .route("/v1/images/edits", post(proxy::images::handle_image_edits))
-        .route("/v1/models", get(proxy::openai::handle_list_models))
-        .route(
-            "/v1/models/{model_id}",
-            get(proxy::openai::handle_get_model),
-        )
-        .route("/v1/tools", get(proxy::openai::handle_list_tools))
-        .route("/v1/messages", post(proxy::anthropic::handle_messages))
-        .route("/v1beta/models/{*path}", post(proxy::gemini::handle_gemini))
-        .route("/health", get(proxy::openai::health_check))
-        // Claude Code Protocol -- provider-prefixed routes for agentic tools
-        .route(
-            "/api/provider/{provider}/v1/chat/completions",
-            post(proxy::openai::handle_chat_completions),
-        )
-        .route(
-            "/api/provider/{provider}/v1/embeddings",
-            post(proxy::embeddings::handle_embeddings),
-        )
-        .route(
-            "/api/provider/{provider}/v1/messages",
-            post(proxy::anthropic::handle_messages),
-        )
-        .route(
-            "/api/provider/{provider}/v1/models",
-            get(proxy::openai::handle_list_models),
-        )
-        .route(
-            "/api/provider/{provider}/v1/models/{model_id}",
-            get(proxy::openai::handle_get_model),
-        )
-        .layer(axum::middleware::from_fn_with_state(
-            proxy_auth_state,
-            middleware::virtual_key::virtual_key_middleware,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            sanitizer_state,
-            middleware::sanitizer::sanitizer_middleware,
-        ))
-        .with_state(proxy_state);
-
-    // Admin routes -- optional Bearer token auth.
-    // Mounted under both `/api` (backward compat) and `/v1/api` (versioned).
-    let admin_router = admin_routes("/api")
-        .merge(admin_routes("/v1/api"))
-        .with_state(admin_route_state)
-        .layer(axum::middleware::from_fn(middleware::rbac::rbac_middleware))
-        .layer(axum::middleware::from_fn_with_state(
-            admin_auth_state,
-            middleware::auth::admin_auth_middleware,
-        ));
-
-    let base_router = Router::new()
-        .merge(proxy_router)
-        .merge(admin_router)
-        .merge(portal_routes().with_state(Arc::clone(&state)))
-        .merge(auth_routes(Arc::clone(&state)))
-        .route("/metrics", get(metrics_handler))
-        .route("/v1/metrics", get(metrics_handler))
-        .route("/healthz", get(healthz_handler));
-
-    // Conditionally mount MCP Gateway Mode endpoint.
-    let router = if state.mcp.mcp_gateway_enabled {
-        use crate::mcp::McpGatewayHandler;
-        use rmcp::transport::streamable_http_server::{
-            session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
-        };
-        let mcp_manager = Arc::clone(&state.mcp.mcp_manager);
-        let service: StreamableHttpService<McpGatewayHandler, LocalSessionManager> =
-            StreamableHttpService::new(
-                move || Ok(McpGatewayHandler::new(Arc::clone(&mcp_manager))),
-                Arc::new(LocalSessionManager::default()),
-                StreamableHttpServerConfig::default(),
-            );
-        base_router.nest_service("/mcp", service)
-    } else {
-        base_router
-    };
-
-    // Build CORS layer — restrictive in production, permissive only when no origins configured
-    let cors_layer = build_cors_layer(&state.security.allowed_origins);
-
-    let router = router
-        .layer(axum::middleware::from_fn(
-            middleware::request_id::request_id_middleware,
-        ))
-        .layer(axum::middleware::from_fn(
-            middleware::security_headers::security_headers_middleware,
-        ))
-        .layer(
-            CompressionLayer::new()
-                .gzip(true)
-                .br(true)
-                .zstd(true)
-                .deflate(true),
-        )
-        .layer(cors_layer)
-        .layer(TraceLayer::new_for_http())
-        .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024));
-
-    // Serve web console static files if configured.
-    // Explicit API routes (above) take precedence — this only catches unmatched paths,
-    // which is exactly SPA routing behavior.
-    let router = if let Some(dir) = web_console_dir {
-        use tower_http::services::{ServeDir, ServeFile};
-        let index_path = format!("{}/index.html", dir);
-        let serve_dir = ServeDir::new(dir).fallback(ServeFile::new(index_path));
-        router.fallback_service(serve_dir)
-    } else {
-        router
-    };
-
-    router
-}
-
-/// Build a configurable CORS layer.
-///
-/// * When `allowed_origins` is configured (non-empty), only those origins are allowed.
-/// * When `allowed_origins` is `None` or empty:
-///   - **Debug builds**: `CorsLayer::permissive()` — convenient for local development.
-///   - **Release builds**: localhost-only (127.0.0.1:8080, localhost:8080).
-fn build_cors_layer(allowed_origins: &Option<Vec<String>>) -> CorsLayer {
-    use axum::http::header;
-    use axum::http::{HeaderValue, Method};
-    use tower_http::cors::AllowOrigin;
-
-    let methods = [
-        Method::GET,
-        Method::POST,
-        Method::PUT,
-        Method::DELETE,
-        Method::PATCH,
-        Method::OPTIONS,
-        Method::HEAD,
-    ];
-    let headers = [
-        header::AUTHORIZATION,
-        header::CONTENT_TYPE,
-        header::ACCEPT,
-        header::ORIGIN,
-    ];
-
-    match allowed_origins {
-        Some(origins) if !origins.is_empty() => {
-            let origin_values: Vec<HeaderValue> = origins
-                .iter()
-                .filter_map(|o| match o.parse::<HeaderValue>() {
-                    Ok(v) => Some(v),
-                    Err(_) => {
-                        tracing::warn!("Invalid CORS origin in config: {o}");
-                        None
-                    }
-                })
-                .collect();
-
-            CorsLayer::new()
-                .allow_origin(AllowOrigin::list(origin_values))
-                .allow_methods(methods)
-                .allow_headers(headers)
-        }
-        _ => {
-            // No origins configured — localhost-only in release, permissive in debug
-            #[cfg(debug_assertions)]
-            {
-                CorsLayer::permissive()
-            }
-            #[cfg(not(debug_assertions))]
-            {
-                let localhost_origins: Vec<HeaderValue> = vec![
-                    "http://127.0.0.1:8080".parse().unwrap(),
-                    "http://localhost:8080".parse().unwrap(),
-                ];
-                CorsLayer::new()
-                    .allow_origin(AllowOrigin::list(localhost_origins))
-                    .allow_methods(methods)
-                    .allow_headers(headers)
-            }
-        }
-    }
-}
-
-/// Handler for the `/metrics` Prometheus scrape endpoint.
-async fn metrics_handler() -> axum::response::Response {
-    let body = crate::metrics::render();
-    axum::response::Response::builder()
-        .header("Content-Type", "text/plain; version=0.0.4")
-        .body(axum::body::Body::from(body))
-        .expect("valid response")
-}
-
-/// Lightweight liveness probe returning a minimal `{"status":"ok"}` body.
-/// Intended for Kubernetes-style liveness checks that only need a 200 OK
-/// without the overhead of the full `/health` endpoint. Unauthenticated.
-async fn healthz_handler() -> axum::response::Response {
-    crate::proxy::stream::json_response(
-        axum::http::StatusCode::OK,
-        r#"{"status":"ok"}"#.to_string(),
-    )
-}
-
-/// Validate a TLS file path: canonicalize to prevent traversal, check extension.
-/// Returns the canonical path or panics with a redacted error message.
-fn validate_tls_path(path: &str, kind: &str) -> std::path::PathBuf {
-    let allowed_extensions = match kind {
-        "cert" => &["pem", "crt"][..],
-        "key" => &["pem", "key"][..],
-        _ => &["pem"][..],
-    };
-
-    // Reject empty paths
-    if path.trim().is_empty() {
-        panic!("TLS {} path is empty", kind);
-    }
-
-    // Canonicalize to resolve any .. or symlink traversal
-    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| {
-        panic!("TLS {} file not found or inaccessible", kind);
-    });
-
-    // Validate file extension
-    let ext = canonical.extension().and_then(|e| e.to_str()).unwrap_or("");
-    if !allowed_extensions.contains(&ext) {
-        panic!(
-            "TLS {} file must have one of these extensions: {:?}",
-            kind, allowed_extensions
-        );
-    }
-
-    tracing::info!(kind, path = %canonical.display(), "Loading TLS {} file", kind);
-    canonical
 }
 
 /// Start the Axum gateway server with graceful shutdown.
@@ -1324,8 +416,8 @@ pub async fn start_gateway(
     };
 
     if tls_config.enable {
-        let cert_path = validate_tls_path(&tls_config.cert, "cert");
-        let key_path = validate_tls_path(&tls_config.key, "key");
+        let cert_path = tls::validate_tls_path(&tls_config.cert, "cert");
+        let key_path = tls::validate_tls_path(&tls_config.key, "key");
 
         let cert_file = File::open(&cert_path).unwrap_or_else(|_| {
             panic!("TLS cert file cannot be opened");
@@ -1388,7 +480,7 @@ pub async fn start_gateway(
                                         Ok(tls_stream) => {
                                             let io = hyper_util::rt::TokioIo::new(tls_stream);
                                             let svc = hyper_util::service::TowerToHyperService::new(
-                                                ConnectInfoService::new(app_clone, peer),
+                                                tls::ConnectInfoService::new(app_clone, peer),
                                             );
                                             if let Err(e) = hyper::server::conn::http1::Builder::new()
                                                 .serve_connection(io, svc)
@@ -1781,7 +873,7 @@ mod tests {
     fn validate_tls_path_accepts_pem_cert() {
         let cert = tls_test_temp_file("pem");
         let _guard = TempFileGuard(cert.clone());
-        let canonical = validate_tls_path(cert.to_str().unwrap(), "cert");
+        let canonical = tls::validate_tls_path(cert.to_str().unwrap(), "cert");
         assert!(canonical.exists(), "canonical path should exist");
     }
 
@@ -1789,7 +881,7 @@ mod tests {
     fn validate_tls_path_accepts_crt_cert() {
         let cert = tls_test_temp_file("crt");
         let _guard = TempFileGuard(cert.clone());
-        let canonical = validate_tls_path(cert.to_str().unwrap(), "cert");
+        let canonical = tls::validate_tls_path(cert.to_str().unwrap(), "cert");
         assert!(canonical.exists(), "canonical path should exist");
     }
 
@@ -1797,7 +889,7 @@ mod tests {
     fn validate_tls_path_accepts_pem_key() {
         let key = tls_test_temp_file("pem");
         let _guard = TempFileGuard(key.clone());
-        let canonical = validate_tls_path(key.to_str().unwrap(), "key");
+        let canonical = tls::validate_tls_path(key.to_str().unwrap(), "key");
         assert!(canonical.exists(), "canonical path should exist");
     }
 
@@ -1805,20 +897,20 @@ mod tests {
     fn validate_tls_path_accepts_key_extension() {
         let key = tls_test_temp_file("key");
         let _guard = TempFileGuard(key.clone());
-        let canonical = validate_tls_path(key.to_str().unwrap(), "key");
+        let canonical = tls::validate_tls_path(key.to_str().unwrap(), "key");
         assert!(canonical.exists(), "canonical path should exist");
     }
 
     #[test]
     #[should_panic(expected = "empty")]
     fn validate_tls_path_rejects_empty_path() {
-        validate_tls_path("", "cert");
+        tls::validate_tls_path("", "cert");
     }
 
     #[test]
     #[should_panic(expected = "not found")]
     fn validate_tls_path_rejects_nonexistent_file() {
-        validate_tls_path("/nonexistent/path/cert.pem", "cert");
+        tls::validate_tls_path("/nonexistent/path/cert.pem", "cert");
     }
 
     #[test]
@@ -1826,7 +918,7 @@ mod tests {
     fn validate_tls_path_rejects_wrong_extension_cert() {
         let cert = tls_test_temp_file("txt");
         let _guard = TempFileGuard(cert.clone());
-        validate_tls_path(cert.to_str().unwrap(), "cert");
+        tls::validate_tls_path(cert.to_str().unwrap(), "cert");
     }
 
     #[test]
@@ -1834,29 +926,29 @@ mod tests {
     fn validate_tls_path_rejects_wrong_extension_key() {
         let key = tls_test_temp_file("txt");
         let _guard = TempFileGuard(key.clone());
-        validate_tls_path(key.to_str().unwrap(), "key");
+        tls::validate_tls_path(key.to_str().unwrap(), "key");
     }
 
     // ----- build_cors_layer tests ------------------------------------------
 
     #[test]
     fn build_cors_layer_handles_none() {
-        let _layer = build_cors_layer(&None);
+        let _layer = routes::build_cors_layer(&None);
     }
 
     #[test]
     fn build_cors_layer_handles_empty_vec() {
-        let _layer = build_cors_layer(&Some(vec![]));
+        let _layer = routes::build_cors_layer(&Some(vec![]));
     }
 
     #[test]
     fn build_cors_layer_handles_valid_origins() {
-        let _layer = build_cors_layer(&Some(vec!["https://example.com".into()]));
+        let _layer = routes::build_cors_layer(&Some(vec!["https://example.com".into()]));
     }
 
     #[test]
     fn build_cors_layer_handles_invalid_origin() {
-        let _layer = build_cors_layer(&Some(vec!["not a url".into()]));
+        let _layer = routes::build_cors_layer(&Some(vec!["not a url".into()]));
     }
 
     // ----- check_cert_freshness edge case ----------------------------------
