@@ -343,6 +343,12 @@ pub async fn handle_embeddings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::{build_test_state, channel_config, response_json, response_status};
+    use serde_json::json;
+    use std::sync::Arc;
+    use uuid::Uuid;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn embeddings_path_constant_is_correct() {
@@ -357,5 +363,304 @@ mod tests {
         assert!(SKIP_HEADERS.contains(&"host"));
         assert!(SKIP_HEADERS.contains(&"content-type"));
         assert!(SKIP_HEADERS.contains(&"content-length"));
+    }
+
+    // ── Error path tests (no wiremock needed) ───────────────────────────────
+
+    #[tokio::test]
+    async fn handle_embeddings_rejects_missing_model() {
+        let state = build_test_state(vec![]);
+        let headers = HeaderMap::new();
+        let response = handle_embeddings(State(state), headers, Json(json!({}))).await;
+
+        assert_eq!(response_status(&response), 400);
+        let v = response_json(response).await;
+        assert_eq!(v["error"]["code"], "missing_model");
+    }
+
+    #[tokio::test]
+    async fn handle_embeddings_rejects_missing_input() {
+        let state = build_test_state(vec![]);
+        let headers = HeaderMap::new();
+        let body = json!({"model": "text-embedding-3-small"});
+        let response = handle_embeddings(State(state), headers, Json(body)).await;
+
+        assert_eq!(response_status(&response), 400);
+        let v = response_json(response).await;
+        assert_eq!(v["error"]["code"], "missing_input");
+    }
+
+    #[tokio::test]
+    async fn handle_embeddings_returns_503_when_no_channel() {
+        let state = build_test_state(vec![]);
+        let headers = HeaderMap::new();
+        let body = json!({"model": "text-embedding-3-small", "input": "hello world"});
+        let response = handle_embeddings(State(state), headers, Json(body)).await;
+
+        assert_eq!(response_status(&response), 503);
+        let v = response_json(response).await;
+        assert_eq!(v["error"]["code"], "no_channel_available");
+    }
+
+    // ── Success path tests (with wiremock) ──────────────────────────────────
+
+    #[tokio::test]
+    async fn handle_embeddings_success_forwards_response() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "object": "list",
+                "data": [{
+                    "object": "embedding",
+                    "index": 0,
+                    "embedding": [0.1, 0.2, 0.3]
+                }],
+                "model": "text-embedding-3-small",
+                "usage": {"prompt_tokens": 5, "total_tokens": 5}
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let state = build_test_state(vec![channel_config(
+            "00000000-0000-0000-0000-000000000001",
+            "primary",
+            &mock_server.uri(),
+            1,
+        )]);
+
+        let headers = HeaderMap::new();
+        let body = json!({"model": "text-embedding-3-small", "input": "hello world"});
+        let response = handle_embeddings(State(state), headers, Json(body)).await;
+
+        assert_eq!(response_status(&response), 200);
+        let v = response_json(response).await;
+        assert_eq!(v["data"][0]["object"], "embedding");
+        assert_eq!(v["model"], "text-embedding-3-small");
+    }
+
+    #[tokio::test]
+    async fn handle_embeddings_applies_model_mapping() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "object": "list",
+                "data": [{"object": "embedding", "index": 0, "embedding": [0.1]}],
+                "model": "upstream-model",
+                "usage": {"prompt_tokens": 1, "total_tokens": 1}
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let mut cfg = channel_config(
+            "00000000-0000-0000-0000-000000000001",
+            "mapped",
+            &mock_server.uri(),
+            1,
+        );
+        cfg.model_mapping = [("test-model".to_string(), "upstream-model".to_string())].into();
+
+        let state = build_test_state(vec![cfg]);
+        let headers = HeaderMap::new();
+        let body = json!({"model": "test-model", "input": "hello"});
+        let response = handle_embeddings(State(state), headers, Json(body)).await;
+
+        assert_eq!(response_status(&response), 200);
+
+        // Verify the upstream received the mapped model name
+        let received = mock_server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1);
+        let req_body: serde_json::Value = serde_json::from_slice(&received[0].body).unwrap();
+        assert_eq!(req_body["model"], "upstream-model");
+    }
+
+    #[tokio::test]
+    async fn handle_embeddings_skips_denylisted_headers() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "object": "list",
+                "data": [{"object": "embedding", "index": 0, "embedding": [0.1]}],
+                "model": "text-embedding-3-small",
+                "usage": {"prompt_tokens": 1, "total_tokens": 1}
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let state = build_test_state(vec![channel_config(
+            "00000000-0000-0000-0000-000000000001",
+            "primary",
+            &mock_server.uri(),
+            1,
+        )]);
+
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer client-secret".parse().unwrap());
+        headers.insert("host", "gateway.example.com".parse().unwrap());
+        headers.insert("x-safe-header", "safe-value".parse().unwrap());
+
+        let body = json!({"model": "text-embedding-3-small", "input": "hello"});
+        let response = handle_embeddings(State(state), headers, Json(body)).await;
+
+        assert_eq!(response_status(&response), 200);
+
+        let received = mock_server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1);
+        let req = &received[0];
+
+        // The client's Authorization must NOT be forwarded — the gateway
+        // substitutes the channel credential instead.
+        let auth = req
+            .headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert_eq!(
+            auth, "Bearer sk-test-key",
+            "should use channel credential, not client auth"
+        );
+
+        // The client-supplied Host header must not leak through.
+        let host = req.headers.get("host").and_then(|v| v.to_str().ok());
+        assert_ne!(
+            host,
+            Some("gateway.example.com"),
+            "client Host must not be forwarded"
+        );
+
+        // Non-denylisted custom headers are forwarded.
+        let safe = req
+            .headers
+            .get("x-safe-header")
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(
+            safe,
+            Some("safe-value"),
+            "non-denylisted headers should be forwarded"
+        );
+    }
+
+    // ── Error handling tests ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn handle_embeddings_returns_502_on_upstream_connection_error() {
+        // Point at a port with no listener — connection refused.
+        let state = build_test_state(vec![channel_config(
+            "00000000-0000-0000-0000-000000000001",
+            "dead-channel",
+            "http://127.0.0.1:1",
+            1,
+        )]);
+
+        let headers = HeaderMap::new();
+        let body = json!({"model": "text-embedding-3-small", "input": "hello"});
+        let response = handle_embeddings(State(state), headers, Json(body)).await;
+
+        assert_eq!(response_status(&response), 502);
+        let v = response_json(response).await;
+        assert_eq!(v["error"]["code"], "upstream_connection_error");
+    }
+
+    #[tokio::test]
+    async fn handle_embeddings_forwards_upstream_429() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(ResponseTemplate::new(429).set_body_json(json!({
+                "error": {"message": "Rate limited", "type": "rate_limit_error"}
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let state = build_test_state(vec![channel_config(
+            "00000000-0000-0000-0000-000000000001",
+            "primary",
+            &mock_server.uri(),
+            1,
+        )]);
+
+        let headers = HeaderMap::new();
+        let body = json!({"model": "text-embedding-3-small", "input": "hello"});
+        let response = handle_embeddings(State(state), headers, Json(body)).await;
+
+        assert_eq!(response_status(&response), 429);
+    }
+
+    #[tokio::test]
+    async fn handle_embeddings_applies_bearer_auth() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "object": "list",
+                "data": [{"object": "embedding", "index": 0, "embedding": [0.1]}],
+                "model": "text-embedding-3-small",
+                "usage": {"prompt_tokens": 1, "total_tokens": 1}
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let state = build_test_state(vec![channel_config(
+            "00000000-0000-0000-0000-000000000001",
+            "primary",
+            &mock_server.uri(),
+            1,
+        )]);
+
+        let headers = HeaderMap::new();
+        let body = json!({"model": "text-embedding-3-small", "input": "hello"});
+        let response = handle_embeddings(State(state), headers, Json(body)).await;
+
+        assert_eq!(response_status(&response), 200);
+
+        let received = mock_server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1);
+        let auth = received[0]
+            .headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(auth, Some("Bearer sk-test-key"));
+    }
+
+    #[tokio::test]
+    async fn handle_embeddings_records_rate_limiter_usage() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "object": "list",
+                "data": [{"object": "embedding", "index": 0, "embedding": [0.1]}],
+                "model": "text-embedding-3-small",
+                "usage": {"prompt_tokens": 1, "total_tokens": 1}
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let channel_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let state = build_test_state(vec![channel_config(
+            "00000000-0000-0000-0000-000000000001",
+            "primary",
+            &mock_server.uri(),
+            1,
+        )]);
+
+        // Clone the Arc so we can inspect state after the handler call
+        let headers = HeaderMap::new();
+        let body = json!({"model": "text-embedding-3-small", "input": "hello"});
+        let response = handle_embeddings(State(Arc::clone(&state)), headers, Json(body)).await;
+
+        assert_eq!(response_status(&response), 200);
+
+        // The handler records estimated_tokens = 1000 after dispatching
+        let tpm = state.limits.rate_limiter.current_tpm(channel_id);
+        assert_eq!(tpm, 1000);
     }
 }
