@@ -97,3 +97,90 @@ impl CredentialStore for FileCredentialStore {
             .with_context(|| "failed to persist credentials file after delete")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn credentials_path() -> std::path::PathBuf {
+        crate::config::app_config_dir().join("credentials.toml")
+    }
+
+    fn cleanup_file() {
+        let _ = std::fs::remove_file(credentials_path());
+    }
+
+    #[test]
+    fn file_store_set_and_get() {
+        cleanup_file();
+        let store = FileCredentialStore::new();
+        store.set("test_service", "user1", "secret123").unwrap();
+        let result = store.get("test_service", "user1").unwrap();
+        assert_eq!(result.as_deref(), Some("secret123"));
+        let _ = store.delete("test_service", "user1");
+        cleanup_file();
+    }
+
+    #[test]
+    fn file_store_get_returns_none_for_missing() {
+        let store = FileCredentialStore::new();
+        let result = store.get("nonexistent_service", "nobody").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn file_store_delete_removes_credential() {
+        cleanup_file();
+        let store = FileCredentialStore::new();
+        store.set("svc_del_test", "user_del", "pass_del").unwrap();
+        assert_eq!(
+            store.get("svc_del_test", "user_del").unwrap().as_deref(),
+            Some("pass_del")
+        );
+        store.delete("svc_del_test", "user_del").unwrap();
+        assert_eq!(store.get("svc_del_test", "user_del").unwrap(), None);
+        cleanup_file();
+    }
+
+    #[test]
+    fn file_store_overwrite_on_set() {
+        cleanup_file();
+        let store = FileCredentialStore::new();
+        store.set("svc_overwrite_test", "user", "old").unwrap();
+        store.set("svc_overwrite_test", "user", "new").unwrap();
+        let result = store.get("svc_overwrite_test", "user").unwrap();
+        assert_eq!(result.as_deref(), Some("new"));
+        let _ = store.delete("svc_overwrite_test", "user");
+        cleanup_file();
+    }
+
+    #[test]
+    fn file_store_key_isolation() {
+        cleanup_file();
+        let store = FileCredentialStore::new();
+        store.set("svc1_iso_test", "user", "a").unwrap();
+        store.set("svc2_iso_test", "user", "b").unwrap();
+        assert_eq!(
+            store.get("svc1_iso_test", "user").unwrap().as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            store.get("svc2_iso_test", "user").unwrap().as_deref(),
+            Some("b")
+        );
+        let _ = store.delete("svc1_iso_test", "user");
+        let _ = store.delete("svc2_iso_test", "user");
+        cleanup_file();
+    }
+
+    #[test]
+    fn file_store_empty_username() {
+        cleanup_file();
+        let store = FileCredentialStore::new();
+        store.set("svc_empty_user_test", "", "pass").unwrap();
+        let result = store.get("svc_empty_user_test", "").unwrap();
+        assert_eq!(result.as_deref(), Some("pass"));
+        let _ = store.delete("svc_empty_user_test", "");
+        cleanup_file();
+    }
+}
