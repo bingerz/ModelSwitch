@@ -60,6 +60,37 @@ async fn log_attempt_failure(
         .await;
 }
 
+/// Record a channel failure (circuit breaker + cooldown + log) and return `Retry`.
+/// Centralises the failure-handling pattern to avoid drift across 6+ call sites.
+async fn fail_and_retry(
+    state: &Arc<crate::proxy::AppState>,
+    channel: &Channel,
+    current_model: &str,
+    attempt: u32,
+    reason: FailureReason,
+    start: std::time::Instant,
+    request_id: Option<&str>,
+    vk_id: Option<Uuid>,
+) -> AttemptOutcome {
+    state.channel_mgr.mark_circuit_open(channel.id).await;
+    state
+        .router
+        .cooldown_tracker
+        .record_attempt(channel.id, false);
+    log_attempt_failure(
+        &state.logger,
+        current_model,
+        channel,
+        attempt,
+        reason,
+        start,
+        request_id,
+        vk_id.map(|id| id.to_string()),
+    )
+    .await;
+    AttemptOutcome::Retry
+}
+
 /// Attempt to dispatch a request to a single channel.
 /// Returns `Respond(response)` if a final response is ready, or `Retry` to try next.
 #[allow(clippy::too_many_arguments)]
@@ -172,19 +203,17 @@ pub(super) async fn try_channel_attempt(
         Some(key) => key,
         None => {
             tracing::error!(channel = %channel.name, "No credential found");
-            state.channel_mgr.mark_circuit_open(channel.id).await;
-            log_attempt_failure(
-                &state.logger,
-                current_model,
+            return fail_and_retry(
+                state,
                 channel,
+                current_model,
                 attempt,
                 FailureReason::NoCredential,
                 start,
                 request_id,
-                vk_id.map(|id| id.to_string()),
+                vk_id,
             )
             .await;
-            return AttemptOutcome::Retry;
         }
     };
 
@@ -302,19 +331,17 @@ pub(super) async fn try_channel_attempt(
                     error = %e,
                     "Failed to build proxied client"
                 );
-                state.channel_mgr.mark_circuit_open(channel.id).await;
-                log_attempt_failure(
-                    &state.logger,
-                    current_model,
+                return fail_and_retry(
+                    state,
                     channel,
+                    current_model,
                     attempt,
                     FailureReason::ConnectionError,
                     start,
                     request_id,
-                    vk_id.map(|id| id.to_string()),
+                    vk_id,
                 )
                 .await;
-                return AttemptOutcome::Retry;
             }
         }
     } else {
@@ -387,23 +414,17 @@ pub(super) async fn try_channel_attempt(
                             .limits
                             .rate_limiter
                             .record(channel.id, estimated_tokens);
-                        state.channel_mgr.mark_circuit_open(channel.id).await;
-                        state
-                            .router
-                            .cooldown_tracker
-                            .record_attempt(channel.id, false);
-                        log_attempt_failure(
-                            &state.logger,
-                            current_model,
+                        return fail_and_retry(
+                            state,
                             channel,
+                            current_model,
                             attempt,
                             FailureReason::Timeout,
                             start,
                             request_id,
-                            vk_id.map(|id| id.to_string()),
+                            vk_id,
                         )
                         .await;
-                        return AttemptOutcome::Retry;
                     }
                 }
             }
@@ -423,23 +444,17 @@ pub(super) async fn try_channel_attempt(
         Ok(r) => r,
         Err(e) => {
             tracing::error!(channel = %channel.name, error = %e, "Request failed");
-            state.channel_mgr.mark_circuit_open(channel.id).await;
-            state
-                .router
-                .cooldown_tracker
-                .record_attempt(channel.id, false);
-            log_attempt_failure(
-                &state.logger,
-                current_model,
+            return fail_and_retry(
+                state,
                 channel,
+                current_model,
                 attempt,
                 FailureReason::ConnectionError,
                 start,
                 request_id,
-                vk_id.map(|id| id.to_string()),
+                vk_id,
             )
             .await;
-            return AttemptOutcome::Retry;
         }
     };
 
@@ -487,23 +502,17 @@ pub(super) async fn try_channel_attempt(
 
     if status.is_server_error() {
         tracing::warn!(channel = %channel.name, status = %status, "Server error");
-        state.channel_mgr.mark_circuit_open(channel.id).await;
-        state
-            .router
-            .cooldown_tracker
-            .record_attempt(channel.id, false);
-        log_attempt_failure(
-            &state.logger,
-            current_model,
+        return fail_and_retry(
+            state,
             channel,
+            current_model,
             attempt,
             FailureReason::ServerError,
             start,
             request_id,
-            vk_id.map(|id| id.to_string()),
+            vk_id,
         )
         .await;
-        return AttemptOutcome::Retry;
     }
 
     if !status.is_success() {
