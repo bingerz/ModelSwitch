@@ -20,7 +20,13 @@ use super::{estimate_tokens, make_log, RequestFormat};
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channel::Channel;
+    use crate::http_pool::HttpPool;
+    use crate::proxy::provider::OpenAIAdaptor;
     use crate::proxy::stream::json_response;
+    use crate::router::active_requests::ActiveRequests;
+    use crate::test_helpers;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn inject_passthrough_headers_adds_headers() {
@@ -112,6 +118,605 @@ mod tests {
         assert!(
             (output_component - 60.0).abs() < f64::EPSILON,
             "output component should be 60 with ratio 2.0, got {output_component}"
+        );
+    }
+
+    // =====================================================================
+    // P1: Pure helper tests — extract_passthrough_headers
+    // =====================================================================
+
+    #[tokio::test]
+    async fn extract_passthrough_headers_returns_matching_headers() {
+        let server = MockServer::start().await;
+        Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-ratelimit-remaining", "100")
+                    .insert_header("x-request-id", "abc"),
+            )
+            .mount(&server)
+            .await;
+        let resp = reqwest::Client::new()
+            .get(server.uri())
+            .send()
+            .await
+            .unwrap();
+        let passthrough = vec![
+            "x-ratelimit-remaining".to_string(),
+            "x-request-id".to_string(),
+        ];
+        let result = extract_passthrough_headers(&resp, &passthrough);
+        assert_eq!(result.len(), 2);
+        assert_eq!(
+            result[0],
+            ("x-ratelimit-remaining".to_string(), "100".into())
+        );
+        assert_eq!(result[1], ("x-request-id".to_string(), "abc".into()));
+    }
+
+    #[tokio::test]
+    async fn extract_passthrough_headers_ignores_missing() {
+        let server = MockServer::start().await;
+        Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(ResponseTemplate::new(200).insert_header("x-request-id", "abc"))
+            .mount(&server)
+            .await;
+        let resp = reqwest::Client::new()
+            .get(server.uri())
+            .send()
+            .await
+            .unwrap();
+        let passthrough = vec![
+            "x-ratelimit-remaining".to_string(),
+            "x-request-id".to_string(),
+        ];
+        let result = extract_passthrough_headers(&resp, &passthrough);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], ("x-request-id".to_string(), "abc".into()));
+    }
+
+    #[tokio::test]
+    async fn extract_passthrough_headers_empty_list_returns_empty() {
+        let server = MockServer::start().await;
+        Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(ResponseTemplate::new(200).insert_header("x-request-id", "abc"))
+            .mount(&server)
+            .await;
+        let resp = reqwest::Client::new()
+            .get(server.uri())
+            .send()
+            .await
+            .unwrap();
+        let result = extract_passthrough_headers(&resp, &[]);
+        assert!(result.is_empty());
+    }
+
+    // =====================================================================
+    // P1: Pure helper tests — inject_passthrough_headers
+    // =====================================================================
+
+    #[test]
+    fn inject_passthrough_headers_multiple_headers() {
+        let resp = json_response(reqwest::StatusCode::OK, "{}".to_string());
+        let headers = vec![
+            ("X-A".to_string(), "1".to_string()),
+            ("X-B".to_string(), "2".to_string()),
+        ];
+        let resp = inject_passthrough_headers(resp, &headers);
+        assert_eq!(resp.headers().get("x-a").unwrap(), "1");
+        assert_eq!(resp.headers().get("x-b").unwrap(), "2");
+    }
+
+    #[test]
+    fn inject_passthrough_headers_skips_invalid_name() {
+        let resp = json_response(reqwest::StatusCode::OK, "{}".to_string());
+        let headers = vec![
+            ("Invalid Header".to_string(), "val".to_string()),
+            ("X-Valid".to_string(), "ok".to_string()),
+        ];
+        let resp = inject_passthrough_headers(resp, &headers);
+        assert!(resp.headers().get("invalid header").is_none());
+        assert_eq!(resp.headers().get("x-valid").unwrap(), "ok");
+    }
+
+    #[test]
+    fn inject_passthrough_headers_appends_duplicates() {
+        let resp = json_response(reqwest::StatusCode::OK, "{}".to_string());
+        let headers = vec![
+            ("X-Dup".to_string(), "a".to_string()),
+            ("X-Dup".to_string(), "b".to_string()),
+        ];
+        let resp = inject_passthrough_headers(resp, &headers);
+        let values: Vec<_> = resp.headers().get_all("x-dup").iter().collect();
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0], "a");
+        assert_eq!(values[1], "b");
+    }
+
+    // =====================================================================
+    // P2: Cost calculation formula tests
+    // =====================================================================
+
+    /// Model-level pricing overrides channel-level rates when both are set.
+    #[test]
+    fn cost_calc_model_pricing_overrides_channel_rates() {
+        let model_input_rate = 15.0_f64;
+        let model_output_rate = 45.0_f64;
+        let _channel_input_rate = 10.0_f64;
+        let _channel_output_rate = 30.0_f64;
+
+        let input_tokens = 1_000_000_f64;
+        let output_tokens = 1_000_000_f64;
+        let completion_ratio = 1.0_f64;
+
+        // Model pricing wins: 1 * 15.0 + 1 * 45.0 * 1.0 = 60.0
+        let cost = input_tokens / 1_000_000.0 * model_input_rate
+            + output_tokens / 1_000_000.0 * model_output_rate * completion_ratio;
+
+        assert!(
+            (cost - 60.0).abs() < f64::EPSILON,
+            "model pricing should override channel rates: expected 60.0, got {cost}"
+        );
+    }
+
+    /// Channel per-Mtok rates are used when no model-level pricing exists.
+    #[test]
+    fn cost_calc_channel_rate_used_when_no_model_pricing() {
+        let channel_input_rate = 10.0_f64;
+        let channel_output_rate = 30.0_f64;
+        let completion_ratio = 1.0_f64;
+
+        let input_tokens = 500_000_f64;
+        let output_tokens = 500_000_f64;
+
+        // 0.5 * 10.0 + 0.5 * 30.0 * 1.0 = 20.0
+        let cost = input_tokens / 1_000_000.0 * channel_input_rate
+            + output_tokens / 1_000_000.0 * channel_output_rate * completion_ratio;
+
+        assert!(
+            (cost - 20.0).abs() < f64::EPSILON,
+            "channel rate should apply: expected 20.0, got {cost}"
+        );
+    }
+
+    /// cost_per_token fallback when no per-Mtok rates are configured.
+    #[test]
+    fn cost_calc_cost_per_token_fallback() {
+        let cost_per_token = 0.002_f64; // $0.002 per 1K tokens
+        let input_tokens = 1000_u64;
+        let output_tokens = 1000_u64;
+        let total_tokens = input_tokens + output_tokens;
+
+        // 2000 / 1000 * 0.002 = 0.004
+        let cost = total_tokens as f64 / 1000.0 * cost_per_token;
+
+        assert!(
+            (cost - 0.004).abs() < 1e-9,
+            "cost_per_token fallback: expected 0.004, got {cost}"
+        );
+    }
+
+    /// With per-Mtok rates present but zero token usage, cost is 0.0 (not None).
+    #[test]
+    fn cost_calc_zero_tokens_zero_cost() {
+        let input_rate = 10.0_f64;
+        let output_rate = 30.0_f64;
+        let input_tokens = 0_f64;
+        let output_tokens = 0_f64;
+
+        // Rates exist, so the per-Mtok branch fires; 0 tokens => 0.0 cost.
+        let cost =
+            input_tokens / 1_000_000.0 * input_rate + output_tokens / 1_000_000.0 * output_rate;
+
+        assert!(
+            (cost - 0.0).abs() < f64::EPSILON,
+            "zero tokens with rates => Some(0.0), got {cost}"
+        );
+    }
+
+    // =====================================================================
+    // P3: handle_json_success integration tests
+    // =====================================================================
+
+    /// Build a test Channel for handle_json_success tests.
+    fn test_channel() -> Channel {
+        let cfg = test_helpers::channel_config(
+            "00000000-0000-0000-0000-000000000001",
+            "test-channel",
+            "http://unused",
+            1,
+        );
+        Channel::from_config(&cfg)
+    }
+
+    /// Build a PooledClient for testing.
+    fn test_pool_guard() -> crate::http_pool::PooledClient {
+        let pool =
+            HttpPool::new(1, || reqwest::Client::builder()).expect("Failed to build HTTP pool");
+        pool.get()
+    }
+
+    /// Build an ActiveRequestGuard for testing.
+    fn test_active_guard(channel_id: Uuid) -> ActiveRequestGuard {
+        let tracker = Arc::new(ActiveRequests::new());
+        tracker.acquire(channel_id)
+    }
+
+    /// Create a mock upstream returning the given body via wiremock,
+    /// then fetch it as a real reqwest::Response.
+    async fn mock_upstream(body: &str) -> reqwest::Response {
+        let server = MockServer::start().await;
+        Mock::given(wiremock::matchers::method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/json")
+                    .set_body_string(body.to_string()),
+            )
+            .mount(&server)
+            .await;
+        reqwest::Client::new()
+            .post(server.uri())
+            .send()
+            .await
+            .unwrap()
+    }
+
+    /// Standard request body used across handle_json_success tests.
+    fn request_body() -> Value {
+        serde_json::json!({
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "hi"}],
+        })
+    }
+
+    #[tokio::test]
+    async fn handle_json_success_returns_200_with_body() {
+        let state = test_helpers::build_test_state(vec![]);
+        let channel = test_channel();
+        let provider = OpenAIAdaptor;
+        let resp = mock_upstream(
+            r#"{"choices":[{"message":{"content":"hi"}}],"usage":{"prompt_tokens":10,"completion_tokens":5},"model":"gpt-4"}"#,
+        )
+        .await;
+
+        let response = handle_json_success(
+            &state,
+            &channel,
+            resp,
+            &request_body(),
+            "gpt-4",
+            &provider,
+            "gpt-4",
+            "gpt-4",
+            0,
+            None,
+            std::time::Instant::now(),
+            None,
+            &[],
+            None,
+            0,
+            42u128,
+            "test-key",
+            test_pool_guard(),
+            test_active_guard(channel.id),
+            RequestFormat::OpenAIChat,
+            RequestFormat::OpenAIChat,
+        )
+        .await;
+
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8_lossy(&bytes);
+        assert!(
+            body_str.contains("hi"),
+            "response body should contain 'hi', got: {body_str}"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_json_success_inserts_fallback_headers() {
+        let state = test_helpers::build_test_state(vec![]);
+        let channel = test_channel();
+        let provider = OpenAIAdaptor;
+        let resp = mock_upstream(
+            r#"{"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0},"model":"gpt-4"}"#,
+        )
+        .await;
+
+        let response = handle_json_success(
+            &state,
+            &channel,
+            resp,
+            &request_body(),
+            "gpt-4o",
+            &provider,
+            "gpt-4-turbo",
+            "gpt-4-turbo",
+            0,
+            Some("model_fallback"),
+            std::time::Instant::now(),
+            None,
+            &[],
+            None,
+            0,
+            43u128,
+            "test-key",
+            test_pool_guard(),
+            test_active_guard(channel.id),
+            RequestFormat::OpenAIChat,
+            RequestFormat::OpenAIChat,
+        )
+        .await;
+
+        assert_eq!(
+            response
+                .headers()
+                .get("x-modelswitch-fallback-model")
+                .unwrap(),
+            "gpt-4-turbo"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get("x-modelswitch-original-model")
+                .unwrap(),
+            "gpt-4o"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_json_success_no_fallback_headers_without_trigger() {
+        let state = test_helpers::build_test_state(vec![]);
+        let channel = test_channel();
+        let provider = OpenAIAdaptor;
+        let resp = mock_upstream(
+            r#"{"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0},"model":"gpt-4"}"#,
+        )
+        .await;
+
+        let response = handle_json_success(
+            &state,
+            &channel,
+            resp,
+            &request_body(),
+            "gpt-4",
+            &provider,
+            "gpt-4",
+            "gpt-4",
+            0,
+            None,
+            std::time::Instant::now(),
+            None,
+            &[],
+            None,
+            0,
+            44u128,
+            "test-key",
+            test_pool_guard(),
+            test_active_guard(channel.id),
+            RequestFormat::OpenAIChat,
+            RequestFormat::OpenAIChat,
+        )
+        .await;
+
+        assert!(response
+            .headers()
+            .get("x-modelswitch-fallback-model")
+            .is_none());
+        assert!(response
+            .headers()
+            .get("x-modelswitch-original-model")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn handle_json_success_passthrough_headers_injected() {
+        let state = test_helpers::build_test_state(vec![]);
+        let channel = test_channel();
+        let provider = OpenAIAdaptor;
+        let resp = mock_upstream(
+            r#"{"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0},"model":"gpt-4"}"#,
+        )
+        .await;
+
+        let upstream_headers = vec![("x-ratelimit-remaining".to_string(), "100".to_string())];
+
+        let response = handle_json_success(
+            &state,
+            &channel,
+            resp,
+            &request_body(),
+            "gpt-4",
+            &provider,
+            "gpt-4",
+            "gpt-4",
+            0,
+            None,
+            std::time::Instant::now(),
+            None,
+            &upstream_headers,
+            None,
+            0,
+            45u128,
+            "test-key",
+            test_pool_guard(),
+            test_active_guard(channel.id),
+            RequestFormat::OpenAIChat,
+            RequestFormat::OpenAIChat,
+        )
+        .await;
+
+        assert_eq!(
+            response.headers().get("x-ratelimit-remaining").unwrap(),
+            "100"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_json_success_handles_missing_usage() {
+        let state = test_helpers::build_test_state(vec![]);
+        let channel = test_channel();
+        let provider = OpenAIAdaptor;
+        let resp = mock_upstream(r#"{"choices":[]}"#).await;
+
+        let response = handle_json_success(
+            &state,
+            &channel,
+            resp,
+            &request_body(),
+            "gpt-4",
+            &provider,
+            "gpt-4",
+            "gpt-4",
+            0,
+            None,
+            std::time::Instant::now(),
+            None,
+            &[],
+            None,
+            0,
+            46u128,
+            "test-key",
+            test_pool_guard(),
+            test_active_guard(channel.id),
+            RequestFormat::OpenAIChat,
+            RequestFormat::OpenAIChat,
+        )
+        .await;
+
+        // Should return 200 without panicking
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn handle_json_success_caches_response() {
+        let state = test_helpers::build_test_state(vec![]);
+        let channel = test_channel();
+        let provider = OpenAIAdaptor;
+        let resp = mock_upstream(
+            r#"{"choices":[{"message":{"content":"cached"}}],"usage":{"prompt_tokens":3,"completion_tokens":2},"model":"gpt-4"}"#,
+        )
+        .await;
+
+        let cache_key = 99u128;
+        let cache_key_material = "cache-test-material";
+
+        let _response = handle_json_success(
+            &state,
+            &channel,
+            resp,
+            &request_body(),
+            "gpt-4",
+            &provider,
+            "gpt-4",
+            "gpt-4",
+            0,
+            None,
+            std::time::Instant::now(),
+            None,
+            &[],
+            None,
+            0,
+            cache_key,
+            cache_key_material,
+            test_pool_guard(),
+            test_active_guard(channel.id),
+            RequestFormat::OpenAIChat,
+            RequestFormat::OpenAIChat,
+        )
+        .await;
+
+        // Allow any background tasks to settle.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let cached = state.cache.request_cache.get(cache_key, cache_key_material);
+        assert!(
+            cached.is_some(),
+            "response should be cached after handle_json_success"
+        );
+        let cached_body = cached.unwrap();
+        assert!(
+            cached_body.contains("cached"),
+            "cached body should contain 'cached', got: {cached_body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_json_success_with_empty_body() {
+        let state = test_helpers::build_test_state(vec![]);
+        let channel = test_channel();
+        let provider = OpenAIAdaptor;
+        let resp = mock_upstream("").await;
+
+        let response = handle_json_success(
+            &state,
+            &channel,
+            resp,
+            &request_body(),
+            "gpt-4",
+            &provider,
+            "gpt-4",
+            "gpt-4",
+            0,
+            None,
+            std::time::Instant::now(),
+            None,
+            &[],
+            None,
+            0,
+            47u128,
+            "test-key",
+            test_pool_guard(),
+            test_active_guard(channel.id),
+            RequestFormat::OpenAIChat,
+            RequestFormat::OpenAIChat,
+        )
+        .await;
+
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn handle_json_success_with_large_usage() {
+        let state = test_helpers::build_test_state(vec![]);
+        let channel = test_channel();
+        let provider = OpenAIAdaptor;
+        let resp = mock_upstream(
+            r#"{"choices":[],"usage":{"prompt_tokens":1000000,"completion_tokens":500000},"model":"gpt-4"}"#,
+        )
+        .await;
+
+        let response = handle_json_success(
+            &state,
+            &channel,
+            resp,
+            &request_body(),
+            "gpt-4",
+            &provider,
+            "gpt-4",
+            "gpt-4",
+            0,
+            None,
+            std::time::Instant::now(),
+            None,
+            &[],
+            None,
+            0,
+            48u128,
+            "test-key",
+            test_pool_guard(),
+            test_active_guard(channel.id),
+            RequestFormat::OpenAIChat,
+            RequestFormat::OpenAIChat,
+        )
+        .await;
+
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::OK,
+            "should handle large token counts without overflow/panic"
         );
     }
 }
