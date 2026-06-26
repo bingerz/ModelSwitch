@@ -305,6 +305,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             quota_store: Arc::clone(&quota_store),
             virtual_key_store: Arc::clone(&virtual_key_store),
             provider_budgets: Arc::clone(&provider_budget_store),
+            key_rate_limiter: Arc::new(crate::proxy::rate_limiter::KeyRateLimiter::new()),
         },
         mcp: McpState {
             mcp_manager: Arc::clone(&mcp_manager),
@@ -780,6 +781,10 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
         .route(
             &format!("{prefix}/virtual-keys/{{id}}"),
             delete(admin::delete_virtual_key),
+        )
+        .route(
+            &format!("{prefix}/virtual-keys/groups"),
+            get(admin::list_virtual_key_groups),
         )
         .route(
             &format!("{prefix}/provider-budgets"),

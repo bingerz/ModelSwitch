@@ -152,6 +152,7 @@ pub(crate) fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppSt
             quota_store,
             virtual_key_store,
             provider_budgets: Arc::new(crate::provider_budget::ProviderBudgetStore::new()),
+            key_rate_limiter: Arc::new(crate::proxy::rate_limiter::KeyRateLimiter::new()),
         },
         mcp: McpState {
             mcp_manager,

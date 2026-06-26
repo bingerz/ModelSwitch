@@ -120,7 +120,7 @@ impl TokenBucket {
 
 /// Fixed-size time-bucketed counter for sliding-window rate limiting.
 /// Uses O(bucket_count) memory and per-operation time, independent of request volume.
-struct BucketedWindow {
+pub(crate) struct BucketedWindow {
     /// Each bucket: (bucket_start_ms, count). Index = (timestamp_ms / bucket_ms) % bucket_count.
     buckets: Vec<(u64, u64)>,
     bucket_ms: u64,
@@ -130,7 +130,7 @@ struct BucketedWindow {
 }
 
 impl BucketedWindow {
-    fn new(window_ms: u64) -> Self {
+    pub(crate) fn new(window_ms: u64) -> Self {
         let bucket_ms = 1000.min(window_ms);
         let bucket_count = (window_ms / bucket_ms).max(1);
         Self {
@@ -146,7 +146,7 @@ impl BucketedWindow {
         self.epoch.elapsed().as_millis() as u64
     }
 
-    fn add(&mut self, count: u64) {
+    pub(crate) fn add(&mut self, count: u64) {
         let now = self.now_ms();
         let bucket_ts = (now / self.bucket_ms) * self.bucket_ms;
         let idx = ((now / self.bucket_ms) % self.bucket_count) as usize;
@@ -161,7 +161,7 @@ impl BucketedWindow {
 
     /// Sum counts from buckets whose start time falls within the active window.
     /// O(bucket_count) — independent of request volume.
-    fn current_total(&self) -> u64 {
+    pub(crate) fn current_total(&self) -> u64 {
         let now = self.now_ms();
         let cutoff = now.saturating_sub(self.window_ms);
         self.buckets
@@ -340,6 +340,58 @@ impl RateLimiter {
         } else {
             None
         }
+    }
+}
+
+/// Per-virtual-key rate limiter for RPM enforcement.
+///
+/// Uses a `BucketedWindow` per key ID to track request counts over a
+/// rolling 60-second window. Each key gets its own `Mutex<BucketedWindow>`
+/// so contention is minimal.
+pub struct KeyRateLimiter {
+    windows: RwLock<HashMap<Uuid, Arc<Mutex<BucketedWindow>>>>,
+}
+
+impl KeyRateLimiter {
+    pub fn new() -> Self {
+        Self {
+            windows: RwLock::new(HashMap::new()),
+        }
+    }
+
+    fn get_or_create(&self, key_id: Uuid) -> Arc<Mutex<BucketedWindow>> {
+        {
+            let map = self.windows.read();
+            if let Some(arc) = map.get(&key_id) {
+                return Arc::clone(arc);
+            }
+        }
+        let mut map = self.windows.write();
+        map.entry(key_id)
+            .or_insert_with(|| Arc::new(Mutex::new(BucketedWindow::new(WINDOW_MS))))
+            .clone()
+    }
+
+    /// Check if a request is allowed under the RPM limit.
+    /// Does NOT increment the counter — call `record` after the request succeeds.
+    /// Returns `true` if allowed, `false` if RPM limit exceeded.
+    pub fn check(&self, key_id: Uuid, rpm_limit: u32) -> bool {
+        let arc = self.get_or_create(key_id);
+        let window = arc.lock();
+        window.current_total() < rpm_limit as u64
+    }
+
+    /// Record a request for a key (increment RPM counter).
+    pub fn record(&self, key_id: Uuid) {
+        let arc = self.get_or_create(key_id);
+        let mut window = arc.lock();
+        window.add(1);
+    }
+}
+
+impl Default for KeyRateLimiter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

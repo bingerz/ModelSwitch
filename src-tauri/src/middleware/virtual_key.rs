@@ -55,6 +55,18 @@ pub async fn virtual_key_middleware(
                 }
             }
 
+            // Enforce per-key RPM rate limit.
+            if let Some(rpm_limit) = vk.rpm_limit {
+                if !state.billing.key_rate_limiter.check(vk.id, rpm_limit) {
+                    return Err((
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "Virtual key RPM limit exceeded",
+                    ));
+                }
+            }
+            // Record this request against the key's RPM window.
+            state.billing.key_rate_limiter.record(vk.id);
+
             // Inject virtual key ID for downstream spend tracking.
             // Handler extractors only see HeaderMap, not request extensions,
             // so we use a synthetic header to thread the id through.
@@ -232,6 +244,110 @@ mod tests {
                     .uri("/v1/test")
                     .header("Authorization", format!("Bearer {plaintext}"))
                     .header("x-forwarded-for", "99.99.99.99")
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    /// A key with `rpm_limit: Some(1)` must reject the second rapid request
+    /// with 429 Too Many Requests.
+    #[tokio::test]
+    async fn rejects_request_when_rpm_exceeded() {
+        let state = build_test_state(vec![]);
+
+        let (_, plaintext) = state
+            .billing
+            .virtual_key_store
+            .create(
+                "rpm-limited".to_string(),
+                None,
+                None,
+                None,
+                vec![],
+                vec![],
+                Some(1),
+                None,
+                None,
+                None,
+            )
+            .await;
+
+        let build_app = || {
+            let state = Arc::clone(&state);
+            axum::Router::new()
+                .route("/v1/test", axum::routing::any(|| async { "ok" }))
+                .layer(from_fn_with_state(state, virtual_key_middleware))
+        };
+
+        // First request should succeed.
+        let response = build_app()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/test")
+                    .header("Authorization", format!("Bearer {plaintext}"))
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Second request within the same window should be rejected.
+        let response = build_app()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/test")
+                    .header("Authorization", format!("Bearer {plaintext}"))
+                    .body(Body::default())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    /// A key with `rpm_limit: Some(10)` must allow a request that stays
+    /// within the limit.
+    #[tokio::test]
+    async fn allows_request_under_rpm_limit() {
+        let state = build_test_state(vec![]);
+
+        let (_, plaintext) = state
+            .billing
+            .virtual_key_store
+            .create(
+                "rpm-ok".to_string(),
+                None,
+                None,
+                None,
+                vec![],
+                vec![],
+                Some(10),
+                None,
+                None,
+                None,
+            )
+            .await;
+
+        let app = axum::Router::new()
+            .route("/v1/test", axum::routing::any(|| async { "ok" }))
+            .layer(from_fn_with_state(
+                Arc::clone(&state),
+                virtual_key_middleware,
+            ));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/test")
+                    .header("Authorization", format!("Bearer {plaintext}"))
                     .body(Body::default())
                     .unwrap(),
             )

@@ -8,7 +8,7 @@ use crate::model_registry::ModelRegistry;
 use crate::notification::NotificationService;
 use crate::proxy::cache::{InFlightRequests, RequestCache};
 use crate::proxy::payload_rules::ChannelPayloadRules;
-use crate::proxy::rate_limiter::RateLimiter;
+use crate::proxy::rate_limiter::{KeyRateLimiter, RateLimiter};
 use crate::quota::{RedemptionCodeStore, SharedQuotaStore};
 use crate::router::active_requests::ActiveRequests;
 use crate::router::affinity::SessionAffinity;
@@ -73,6 +73,7 @@ pub struct BillingState {
     pub quota_store: SharedQuotaStore,
     pub virtual_key_store: SharedVirtualKeyStore,
     pub provider_budgets: crate::provider_budget::SharedProviderBudgetStore,
+    pub key_rate_limiter: Arc<KeyRateLimiter>,
 }
 
 /// MCP integration state.
