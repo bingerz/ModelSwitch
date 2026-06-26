@@ -1692,4 +1692,113 @@ mod tests {
         let _ = std::fs::remove_file(&cert);
         let _ = std::fs::remove_file(&key);
     }
+
+    // ----- validate_tls_path tests -----------------------------------------
+
+    /// RAII guard that removes a file when dropped — ensures cleanup even on panic.
+    struct TempFileGuard(std::path::PathBuf);
+
+    impl Drop for TempFileGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    #[test]
+    fn validate_tls_path_accepts_pem_cert() {
+        let cert = tls_test_temp_file("pem");
+        let _guard = TempFileGuard(cert.clone());
+        let canonical = validate_tls_path(cert.to_str().unwrap(), "cert");
+        assert!(canonical.exists(), "canonical path should exist");
+    }
+
+    #[test]
+    fn validate_tls_path_accepts_crt_cert() {
+        let cert = tls_test_temp_file("crt");
+        let _guard = TempFileGuard(cert.clone());
+        let canonical = validate_tls_path(cert.to_str().unwrap(), "cert");
+        assert!(canonical.exists(), "canonical path should exist");
+    }
+
+    #[test]
+    fn validate_tls_path_accepts_pem_key() {
+        let key = tls_test_temp_file("pem");
+        let _guard = TempFileGuard(key.clone());
+        let canonical = validate_tls_path(key.to_str().unwrap(), "key");
+        assert!(canonical.exists(), "canonical path should exist");
+    }
+
+    #[test]
+    fn validate_tls_path_accepts_key_extension() {
+        let key = tls_test_temp_file("key");
+        let _guard = TempFileGuard(key.clone());
+        let canonical = validate_tls_path(key.to_str().unwrap(), "key");
+        assert!(canonical.exists(), "canonical path should exist");
+    }
+
+    #[test]
+    #[should_panic(expected = "empty")]
+    fn validate_tls_path_rejects_empty_path() {
+        validate_tls_path("", "cert");
+    }
+
+    #[test]
+    #[should_panic(expected = "not found")]
+    fn validate_tls_path_rejects_nonexistent_file() {
+        validate_tls_path("/nonexistent/path/cert.pem", "cert");
+    }
+
+    #[test]
+    #[should_panic(expected = "extension")]
+    fn validate_tls_path_rejects_wrong_extension_cert() {
+        let cert = tls_test_temp_file("txt");
+        let _guard = TempFileGuard(cert.clone());
+        validate_tls_path(cert.to_str().unwrap(), "cert");
+    }
+
+    #[test]
+    #[should_panic(expected = "extension")]
+    fn validate_tls_path_rejects_wrong_extension_key() {
+        let key = tls_test_temp_file("txt");
+        let _guard = TempFileGuard(key.clone());
+        validate_tls_path(key.to_str().unwrap(), "key");
+    }
+
+    // ----- build_cors_layer tests ------------------------------------------
+
+    #[test]
+    fn build_cors_layer_handles_none() {
+        let _layer = build_cors_layer(&None);
+    }
+
+    #[test]
+    fn build_cors_layer_handles_empty_vec() {
+        let _layer = build_cors_layer(&Some(vec![]));
+    }
+
+    #[test]
+    fn build_cors_layer_handles_valid_origins() {
+        let _layer = build_cors_layer(&Some(vec!["https://example.com".into()]));
+    }
+
+    #[test]
+    fn build_cors_layer_handles_invalid_origin() {
+        let _layer = build_cors_layer(&Some(vec!["not a url".into()]));
+    }
+
+    // ----- check_cert_freshness edge case ----------------------------------
+
+    #[test]
+    fn check_cert_freshness_missing_files_returns_false() {
+        let cert = std::path::PathBuf::from("/nonexistent/cert.pem");
+        let key = std::path::PathBuf::from("/nonexistent/key.pem");
+        let mut state = TlsReloadState::new(cert, key);
+
+        let changed = check_cert_freshness(&mut state);
+        assert!(!changed, "missing files should not be flagged as changed");
+        assert!(
+            state.last_modified.is_none(),
+            "last_modified should remain None when both files are missing"
+        );
+    }
 }
