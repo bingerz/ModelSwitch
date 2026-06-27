@@ -416,6 +416,30 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         audit_log_file,
     ));
 
+    // Load or create OIDC state secret — persisted to survive restarts so
+    // in-flight OIDC logins (user redirected to IdP, not yet returned) do
+    // not fail when the gateway restarts mid-flow.
+    let oidc_state_secret = {
+        let secret_path = config_dir.join("oidc_state_secret");
+        match std::fs::read_to_string(&secret_path) {
+            Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
+            _ => {
+                // Generate new secret and persist it.
+                let new_secret = uuid::Uuid::new_v4().to_string();
+                let _ = std::fs::write(&secret_path, &new_secret);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(
+                        &secret_path,
+                        std::fs::Permissions::from_mode(0o600),
+                    );
+                }
+                new_secret
+            }
+        }
+    };
+
     // Build shared state (used by all proxy handlers including Gemini)
     let state = Arc::new(AppState {
         channel_mgr: Arc::clone(&channel_mgr),
@@ -488,7 +512,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         )),
         ldap_config: config.gateway.auth.ldap.clone(),
         oidc_config: config.gateway.auth.oidc.clone(),
-        oidc_state_secret: uuid::Uuid::new_v4().to_string(),
+        oidc_state_secret,
         started_at: std::time::Instant::now(),
     });
 

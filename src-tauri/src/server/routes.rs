@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use axum::extract::State;
 use axum::routing::{delete, get, post, put};
 use axum::Router;
 use tower_http::compression::CompressionLayer;
@@ -344,11 +345,18 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
             middleware::auth::admin_auth_middleware,
         ));
 
+    // `/ready` needs AppState to inspect channel health, so it is mounted on
+    // its own stateful router and converted to `Router<()>` before merging.
+    let ready_router = Router::new()
+        .route("/ready", get(ready_handler))
+        .with_state(Arc::clone(&state));
+
     let base_router = Router::new()
         .merge(proxy_router)
         .merge(admin_router)
         .merge(portal_routes().with_state(Arc::clone(&state)))
         .merge(auth_routes(Arc::clone(&state)))
+        .merge(ready_router)
         .route("/healthz", get(healthz_handler));
 
     // Conditionally mount MCP Gateway Mode endpoint.
@@ -488,4 +496,56 @@ async fn healthz_handler() -> axum::response::Response {
         axum::http::StatusCode::OK,
         r#"{"status":"ok"}"#.to_string(),
     )
+}
+
+/// Readiness probe — returns 200 when the gateway can serve at least one
+/// upstream request, 503 when all channels are unhealthy.
+///
+/// Unlike `/healthz` (liveness), this distinguishes "starting up" from
+/// "ready to serve traffic." Zero channels configured is treated as ready
+/// (fresh install / config-only mode). Unauthenticated.
+async fn ready_handler(State(state): State<Arc<AppState>>) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let channels = state.channel_mgr.list().await;
+
+    if channels.is_empty() {
+        // No channels configured — fresh install or config-only mode.
+        // Return 200: the gateway is "ready" (it just has nothing to proxy to yet).
+        return (
+            axum::http::StatusCode::OK,
+            axum::Json(serde_json::json!({
+                "status": "ready",
+                "channels": 0,
+                "healthy": 0,
+            })),
+        )
+            .into_response();
+    }
+
+    let total = channels.len();
+    let healthy = channels.iter().filter(|c| c.is_available()).count();
+
+    if healthy == 0 {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(serde_json::json!({
+                "status": "not_ready",
+                "channels": total,
+                "healthy": 0,
+                "reason": "all channels are unhealthy",
+            })),
+        )
+            .into_response();
+    }
+
+    (
+        axum::http::StatusCode::OK,
+        axum::Json(serde_json::json!({
+            "status": "ready",
+            "channels": total,
+            "healthy": healthy,
+        })),
+    )
+        .into_response()
 }
