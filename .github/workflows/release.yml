@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        working-directory: src-tauri
+        run: cargo build --bin modelswitch-cli --release --no-default-features
+
+      - name: Compress binary
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          cd src-tauri/target/release
+          tar czf "../../../modelswitch-${VERSION}-linux-amd64.tar.gz" modelswitch-cli
+
+      - name: Build Docker image
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          docker build --build-arg VERSION="${VERSION}" \
+            -t "modelswitch:${VERSION}" \
+            -t modelswitch:latest \
+            -f Dockerfile .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: modelswitch-${{ github.ref_name }}-linux-amd64.tar.gz
+          draft: true
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

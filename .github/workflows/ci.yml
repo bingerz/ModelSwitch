@@ -65,3 +65,44 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  # ── Security: cargo audit + cargo deny ──────────────────────
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run cargo audit
+        working-directory: src-tauri
+        run: cargo audit
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny
+
+      - name: Create deny.toml if not present
+        run: |
+          if [ ! -f src-tauri/deny.toml ]; then
+            cat > src-tauri/deny.toml << 'DENYEOF'
+          [advisories]
+          db-urls = ["https://github.com/RustSec/advisory-db"]
+          vulnerability = "deny"
+          unmaintained = "warn"
+          yanked = "deny"
+
+          [licenses]
+          allow = [
+            "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause",
+            "BSD-3-Clause", "ISC", "Unicode-DFS-2016", "Zlib", "0BSD",
+            "CC0-1.0", "Unicode-3.0",
+          ]
+          DENYEOF
+          fi
+
+      - name: Run cargo deny
+        working-directory: src-tauri
+        run: cargo deny check advisories licenses
