@@ -20,6 +20,10 @@ use tokio::sync::{Mutex, RwLock};
 
 /// Default ring-buffer capacity.
 const DEFAULT_MAX_ENTRIES: usize = 1000;
+/// Maximum audit log file size before rotation (10 MB, matching DispatchLogger).
+const AUDIT_LOG_MAX_SIZE: u64 = 10 * 1024 * 1024;
+/// Number of rotated backup files to keep.
+const AUDIT_LOG_MAX_BACKUPS: usize = 5;
 
 /// A single audit log entry recording an administrative action.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,8 +196,31 @@ impl AuditLog {
             if !line.is_empty() {
                 let file_path = path.clone();
                 crate::spawn_bg(async move {
-                    if let Err(e) = Self::append_line(&file_path, &line).await {
-                        tracing::warn!(error = %e, "failed to append audit entry to file");
+                    let mut last_err = None;
+                    for attempt in 1..=3 {
+                        match Self::append_line(&file_path, &line).await {
+                            Ok(()) => return,
+                            Err(e) => {
+                                tracing::warn!(
+                                    attempt,
+                                    error = %e,
+                                    "failed to append audit entry, will retry"
+                                );
+                                last_err = Some(e);
+                                if attempt < 3 {
+                                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                                }
+                            }
+                        }
+                    }
+                    if let Some(e) = last_err {
+                        tracing::error!(
+                            error = %e,
+                            path = %file_path.display(),
+                            "AUDIT LOG PERSISTENCE FAILED after 3 attempts — \
+                             in-memory chain advanced but on-disk log has a gap. \
+                             Investigate disk space and permissions."
+                        );
                     }
                 });
             }
@@ -264,7 +291,37 @@ impl AuditLog {
         Ok(())
     }
 
+    /// Rotate the audit log file if it exceeds the maximum size.
+    /// Shifts backups: file → file.1 → file.2 → ... → file.{N} (dropped)
+    async fn rotate_if_needed(path: &PathBuf) {
+        let Ok(metadata) = tokio::fs::metadata(path).await else {
+            return;
+        };
+        if metadata.len() < AUDIT_LOG_MAX_SIZE {
+            return;
+        }
+
+        // Drop the oldest backup, then shift each backup up by one.
+        for i in (1..=AUDIT_LOG_MAX_BACKUPS).rev() {
+            let src = if i == 1 {
+                path.clone()
+            } else {
+                path.with_extension(format!("{}", i - 1))
+            };
+            let dst = path.with_extension(format!("{}", i));
+            let _ = tokio::fs::rename(&src, &dst).await;
+        }
+        // The original file has been renamed to .1. A new file will be created
+        // on the next append_line() call.
+        tracing::info!(
+            path = %path.display(),
+            "audit log rotated — previous log archived as .1"
+        );
+    }
+
     async fn append_line(path: &PathBuf, line: &str) -> std::io::Result<()> {
+        Self::rotate_if_needed(path).await;
+        Self::ensure_parent_dir(path).await?;
         use tokio::io::AsyncWriteExt;
         let mut opts = tokio::fs::OpenOptions::new();
         opts.create(true).append(true);
@@ -275,6 +332,8 @@ impl AuditLog {
         let mut file = opts.open(path).await?;
         file.write_all(line.as_bytes()).await?;
         file.write_all(b"\n").await?;
+        // Flush to OS buffer and fsync to ensure durability across power loss.
+        file.sync_all().await?;
         Ok(())
     }
 }
@@ -806,5 +865,59 @@ mod tests {
             log.verify_chain().await,
             "chain should remain valid after eviction"
         );
+    }
+
+    #[tokio::test]
+    async fn append_line_persists_and_can_be_read_back() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-audit-test-{}.log",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        AuditLog::append_line(&path, r#"{"action":"test"}"#)
+            .await
+            .unwrap();
+        AuditLog::append_line(&path, r#"{"action":"test2"}"#)
+            .await
+            .unwrap();
+
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert!(content.contains(r#"{"action":"test"}"#));
+        assert!(content.contains(r#"{"action":"test2"}"#));
+        assert_eq!(content.lines().count(), 2);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn rotate_if_needed_does_nothing_for_small_files() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-audit-rotate-small-{}.log",
+            uuid::Uuid::new_v4().simple()
+        ));
+        tokio::fs::write(&path, b"small").await.unwrap();
+
+        AuditLog::rotate_if_needed(&path).await;
+
+        assert!(path.exists(), "file should still exist (not rotated)");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn append_line_creates_parent_dirs() {
+        let dir = std::env::temp_dir().join(format!(
+            "modelswitch-audit-nested-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let path = dir.join("deep/audit.log");
+
+        AuditLog::append_line(&path, r#"{"action":"test"}"#)
+            .await
+            .unwrap();
+
+        assert!(path.exists(), "file should exist with created parent dirs");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
