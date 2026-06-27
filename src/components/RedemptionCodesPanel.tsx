@@ -169,21 +169,22 @@ export function RedemptionCodesPanel() {
       ) : (
         <div className="settings-table-wrapper">
           <table className="settings-table">
+            <caption className="sr-only">{t("redemption.title")}</caption>
             <thead>
               <tr>
-                <th>{t("redemption.code")}</th>
-                <th>{t("redemption.credits")}</th>
-                <th>{t("common.status")}</th>
-                <th>{t("redemption.usedBy")}</th>
-                <th>{t("redemption.usedAt")}</th>
-                <th>{t("redemption.expires")}</th>
-                <th>{t("common.actions")}</th>
+                <th scope="col">{t("redemption.code")}</th>
+                <th scope="col">{t("redemption.credits")}</th>
+                <th scope="col">{t("common.status")}</th>
+                <th scope="col">{t("redemption.usedBy")}</th>
+                <th scope="col">{t("redemption.usedAt")}</th>
+                <th scope="col">{t("redemption.expires")}</th>
+                <th scope="col">{t("common.actions")}</th>
               </tr>
             </thead>
             <tbody>
               {codes.map((c) => (
                 <tr key={c.code}>
-                  <td className="mono" style={{ fontFamily: "var(--font-mono, monospace)" }}>{c.code}</td>
+                  <th scope="row" className="mono" style={{ fontFamily: "var(--font-mono, monospace)" }}>{c.code}</th>
                   <td className="mono">{formatCents(c.credits_cents)}</td>
                   <td>
                     {c.used ? (
