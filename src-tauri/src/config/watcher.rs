@@ -205,12 +205,6 @@ pub(crate) async fn apply_config_reload(
 /// Summary of gateway-level runtime config changes detected during hot-reload.
 #[derive(Debug, Default)]
 pub(crate) struct RuntimeReloadSummary {
-    pub rate_limit_algorithm_changed: bool,
-    pub routing_strategy_changed: bool,
-    pub notification_changed: bool,
-    pub timeout_changed: bool,
-    pub retry_changed: bool,
-    pub cache_changed: bool,
     pub any_changed: bool,
 }
 
@@ -309,12 +303,6 @@ pub(crate) fn apply_runtime_config(
         || cache_changed;
 
     RuntimeReloadSummary {
-        rate_limit_algorithm_changed,
-        routing_strategy_changed,
-        notification_changed,
-        timeout_changed,
-        retry_changed,
-        cache_changed,
         any_changed,
     }
 }
@@ -1170,13 +1158,12 @@ tpm_limit = 10000
         new.rate_limit_algorithm = crate::proxy::rate_limiter::RateLimitAlgorithm::TokenBucket;
 
         let summary = apply_runtime_config(&prev, &new);
-        assert!(summary.rate_limit_algorithm_changed);
         assert!(summary.any_changed);
 
         // sanity check: prev is still the default
         prev.rate_limit_algorithm = crate::proxy::rate_limiter::RateLimitAlgorithm::TokenBucket;
         let summary2 = apply_runtime_config(&prev, &new);
-        assert!(!summary2.rate_limit_algorithm_changed);
+        assert!(!summary2.any_changed);
     }
 
     #[test]
@@ -1186,12 +1173,6 @@ tpm_limit = 10000
 
         let summary = apply_runtime_config(&prev, &new);
         assert!(!summary.any_changed);
-        assert!(!summary.rate_limit_algorithm_changed);
-        assert!(!summary.routing_strategy_changed);
-        assert!(!summary.notification_changed);
-        assert!(!summary.timeout_changed);
-        assert!(!summary.retry_changed);
-        assert!(!summary.cache_changed);
     }
 
     #[test]
@@ -1201,7 +1182,6 @@ tpm_limit = 10000
         new.notification.webhook_url = Some("https://example.com/webhook".to_string());
 
         let summary = apply_runtime_config(&prev, &new);
-        assert!(summary.notification_changed);
         assert!(summary.any_changed);
     }
 }

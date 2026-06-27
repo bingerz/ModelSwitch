@@ -130,7 +130,7 @@ fn translate_protocol_sse_chunk(
 /// the post-stream telemetry task. The per-chunk hot path performs only a
 /// single zero-copy `extend_from_slice` into the output buffer.
 #[allow(clippy::type_complexity)]
-pub fn sse_stream_response_with_telemetry(
+pub(crate) fn sse_stream_response_with_telemetry(
     upstream_stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
     translate_gemini: bool,
     model: String,

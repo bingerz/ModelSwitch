@@ -1108,7 +1108,7 @@ pub fn anthropic_to_openai_stream_chunk(chunk: &Value, model: &str) -> Option<St
 ///
 /// When `from == to` or no translation is available, returns a clone of the
 /// input. Logs the translation event at info level.
-pub fn translate_request(body: &Value, from: RequestFormat, to: RequestFormat) -> Value {
+pub(crate) fn translate_request(body: &Value, from: RequestFormat, to: RequestFormat) -> Value {
     if from == to {
         return body.clone();
     }
@@ -1129,7 +1129,7 @@ pub fn translate_request(body: &Value, from: RequestFormat, to: RequestFormat) -
 ///
 /// When `from == to` or no translation is available, returns a clone of the
 /// input. Logs the translation event at info level.
-pub fn translate_response(
+pub(crate) fn translate_response(
     body: &Value,
     from: RequestFormat,
     to: RequestFormat,
@@ -1155,7 +1155,7 @@ pub fn translate_response(
 ///
 /// When `from == to` or no translation is available, returns `None` (the
 /// chunk passes through unchanged).
-pub fn translate_stream_chunk(
+pub(crate) fn translate_stream_chunk(
     chunk: &Value,
     from: RequestFormat,
     to: RequestFormat,

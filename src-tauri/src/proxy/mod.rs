@@ -148,26 +148,6 @@ const SKIP_HEADERS: &[&str] = &[
     "content-type",
 ];
 
-/// Upstream response headers to pass through to the client.
-const PASSTHROUGH_RESPONSE_HEADERS: &[&str] = &[
-    "x-ratelimit-remaining",
-    "x-ratelimit-limit",
-    "x-ratelimit-reset",
-    "x-ratelimit-limit-requests",
-    "x-ratelimit-remaining-requests",
-    "x-ratelimit-reset-requests",
-    "x-ratelimit-limit-tokens",
-    "x-ratelimit-remaining-tokens",
-    "x-ratelimit-reset-tokens",
-    "anthropic-ratelimit-requests-limit",
-    "anthropic-ratelimit-requests-remaining",
-    "anthropic-ratelimit-requests-reset",
-    "anthropic-ratelimit-tokens-limit",
-    "anthropic-ratelimit-tokens-remaining",
-    "anthropic-ratelimit-tokens-reset",
-    "x-request-id",
-];
-
 /// Categorized reason for a channel dispatch failure.
 #[derive(Debug, Clone)]
 pub(super) enum FailureReason {

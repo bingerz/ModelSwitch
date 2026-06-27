@@ -270,7 +270,6 @@ impl AuditLog {
         opts.create(true).append(true);
         #[cfg(unix)]
         {
-            use std::os::unix::fs::OpenOptionsExt;
             opts.mode(0o600);
         }
         let mut file = opts.open(path).await?;
