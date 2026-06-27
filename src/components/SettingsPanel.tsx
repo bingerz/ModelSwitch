@@ -163,7 +163,7 @@ export function SettingsPanel() {
       {/* Demo Mode */}
       <div className="settings-section">
         <h3 className="settings-section-title">
-          <FlaskConical size={14} style={{ display: "inline", marginRight: "var(--space-2)", verticalAlign: "middle" }} />
+          <FlaskConical size={14} className="icon-inline" />
           {t("settings.demoMode")}
         </h3>
         <p className="settings-hint">
@@ -186,7 +186,7 @@ export function SettingsPanel() {
       {gatewayInfo && (
         <div className="settings-section">
           <h3 className="settings-section-title">
-            <Server size={14} style={{ display: "inline", marginRight: "var(--space-2)", verticalAlign: "middle" }} />
+            <Server size={14} className="icon-inline" />
             {t("settings.gatewayInfo")}
           </h3>
           <div className="settings-stats-grid">
@@ -224,7 +224,7 @@ export function SettingsPanel() {
       {cacheStats && (
         <div className="settings-section">
           <h3 className="settings-section-title">
-            <Database size={14} style={{ display: "inline", marginRight: "var(--space-2)", verticalAlign: "middle" }} />
+            <Database size={14} className="icon-inline" />
             {t("settings.cacheManagement")}
           </h3>
           <div className="settings-stats-grid">
@@ -277,7 +277,7 @@ export function SettingsPanel() {
       {/* Config Reload */}
       <div className="settings-section">
         <h3 className="settings-section-title">
-          <RotateCcw size={14} style={{ display: "inline", marginRight: "var(--space-2)", verticalAlign: "middle" }} />
+          <RotateCcw size={14} className="icon-inline" />
           {t("settings.config")}
         </h3>
         <p className="settings-hint">
@@ -297,7 +297,7 @@ export function SettingsPanel() {
       {/* Provider Budgets */}
       <div className="settings-section">
         <h3 className="settings-section-title">
-          <Wallet size={14} style={{ display: "inline", marginRight: "var(--space-2)", verticalAlign: "middle" }} />
+          <Wallet size={14} className="icon-inline" />
           {t("settings.providerBudgets")}
         </h3>
         {budgets.length > 0 && (
@@ -440,7 +440,7 @@ export function SettingsPanel() {
         </h3>
         <p className="settings-hint">{t("settings.completionRatiosHint")}</p>
         {Object.keys(completionRatios).length > 0 && (
-          <div className="settings-table-wrapper" style={{ marginBottom: "var(--space-2)" }}>
+          <div className="settings-table-wrapper mb-2">
             <table className="settings-table">
               <thead>
                 <tr>

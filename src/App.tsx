@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { type GwStatus, invokeTauri, isTauri } from "./lib/api";
@@ -177,6 +177,8 @@ function AppInner() {
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
   const [lang, setLang] = useState<"en" | "zh">(getInitialLang);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
+  const logoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [authed, setAuthed] = useState(() => {
     if (isTauri) return true;
     return !!localStorage.getItem("admin_token");
@@ -188,6 +190,13 @@ function AppInner() {
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("theme", theme);
   }, [theme]);
+
+  // Cleanup logout confirmation timer on unmount
+  useEffect(() => {
+    return () => {
+      if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
+    };
+  }, []);
 
   const toggleTheme = () => setTheme((th) => (th === "dark" ? "light" : "dark"));
 
@@ -326,15 +335,24 @@ function AppInner() {
           </div>
           {!isTauri && (
             <button
-              className="nav-item logout-button"
+              className={`nav-item logout-button ${confirmLogout ? "logout-button-confirm" : ""}`}
               onClick={() => {
-                if (confirm(t("common.logoutConfirm"))) {
-                  localStorage.removeItem("admin_token");
-                  window.location.reload();
+                if (!confirmLogout) {
+                  setConfirmLogout(true);
+                  if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
+                  logoutTimerRef.current = setTimeout(() => setConfirmLogout(false), 3000);
+                  return;
                 }
+                if (logoutTimerRef.current) {
+                  clearTimeout(logoutTimerRef.current);
+                  logoutTimerRef.current = null;
+                }
+                setConfirmLogout(false);
+                localStorage.removeItem("admin_token");
+                window.location.reload();
               }}
             >
-              {t("common.logout")}
+              {confirmLogout ? t("common.confirmQuestion") : t("common.logout")}
             </button>
           )}
           <div className="sidebar-footer">

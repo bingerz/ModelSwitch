@@ -397,7 +397,7 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
 
             {/* Parse errors */}
             {parseErrors.length > 0 && (
-              <div className="form-error" style={{ marginTop: "var(--space-2)" }}>
+              <div className="form-error mt-2">
                 {parseErrors.map((e, i) => (
                   <div key={i}>{e}</div>
                 ))}
@@ -459,7 +459,7 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
                 )}
 
                 {/* Shared settings */}
-                <div style={{ marginTop: "var(--space-3)" }}>
+                <div className="mt-3">
                   <div className="form-title" style={{ fontSize: "0.9em", marginBottom: "var(--space-2)" }}>
                     {t("virtualKeys.csv.sharedSettings")}
                   </div>

@@ -51,7 +51,7 @@ export function NotificationPanel() {
       {/* Webhook */}
       <div className="settings-section">
         <h3 className="settings-section-title">{t("notifications.webhook")}</h3>
-        <div style={{ marginTop: "var(--space-3)" }}>
+        <div className="mt-3">
           <label className="settings-stat-label">{t("notifications.webhookUrl")}</label>
           <input
             type="url"
@@ -64,7 +64,7 @@ export function NotificationPanel() {
             style={{ width: "100%", maxWidth: "500px" }}
           />
         </div>
-        <div style={{ marginTop: "var(--space-2)" }}>
+        <div className="mt-2">
           <label className="settings-stat-label">{t("notifications.webhookSecret")}</label>
           <input
             type="password"
@@ -82,7 +82,7 @@ export function NotificationPanel() {
       {/* Bark */}
       <div className="settings-section">
         <h3 className="settings-section-title">{t("notifications.bark")}</h3>
-        <div style={{ marginTop: "var(--space-3)" }}>
+        <div className="mt-3">
           <label className="settings-stat-label">{t("notifications.barkUrl")}</label>
           <input
             type="url"
@@ -100,7 +100,7 @@ export function NotificationPanel() {
       {/* Budget Threshold */}
       <div className="settings-section">
         <h3 className="settings-section-title">{t("notifications.budgetThreshold")}</h3>
-        <div style={{ marginTop: "var(--space-3)" }}>
+        <div className="mt-3">
           <label className="settings-stat-label">{t("notifications.budgetThresholdHint")}</label>
           <input
             type="number"
@@ -120,18 +120,18 @@ export function NotificationPanel() {
       {/* SMTP Email */}
       <div className="settings-section">
         <h3 className="settings-section-title">{t("notifications.smtp")}</h3>
-        <div style={{ marginTop: "var(--space-3)" }}>
+        <div className="mt-3">
           <label className="settings-stat-label">
             <input
               type="checkbox"
               checked={config.smtp_enabled}
               onChange={(e) => setConfig({ ...config, smtp_enabled: e.target.checked })}
-              style={{ marginRight: "var(--space-2)" }}
+              className="mr-2"
             />
             {t("notifications.smtpEnable")}
           </label>
         </div>
-        <div style={{ marginTop: "var(--space-2)" }}>
+        <div className="mt-2">
           <label className="settings-stat-label">{t("notifications.smtpHost")}</label>
           <input
             type="text"
@@ -144,7 +144,7 @@ export function NotificationPanel() {
             style={{ width: "100%", maxWidth: "400px" }}
           />
         </div>
-        <div style={{ marginTop: "var(--space-2)" }}>
+        <div className="mt-2">
           <label className="settings-stat-label">{t("notifications.smtpPort")}</label>
           <input
             type="number"
@@ -161,7 +161,7 @@ export function NotificationPanel() {
             style={{ width: "100%", maxWidth: "100px" }}
           />
         </div>
-        <div style={{ marginTop: "var(--space-2)" }}>
+        <div className="mt-2">
           <label className="settings-stat-label">{t("notifications.smtpUsername")}</label>
           <input
             type="text"
@@ -174,7 +174,7 @@ export function NotificationPanel() {
             style={{ width: "100%", maxWidth: "300px" }}
           />
         </div>
-        <div style={{ marginTop: "var(--space-2)" }}>
+        <div className="mt-2">
           <label className="settings-stat-label">{t("notifications.smtpPassword")}</label>
           <input
             type="password"
@@ -187,7 +187,7 @@ export function NotificationPanel() {
             style={{ width: "100%", maxWidth: "300px" }}
           />
         </div>
-        <div style={{ marginTop: "var(--space-2)" }}>
+        <div className="mt-2">
           <label className="settings-stat-label">{t("notifications.smtpFrom")}</label>
           <input
             type="email"
@@ -200,7 +200,7 @@ export function NotificationPanel() {
             style={{ width: "100%", maxWidth: "300px" }}
           />
         </div>
-        <div style={{ marginTop: "var(--space-2)" }}>
+        <div className="mt-2">
           <label className="settings-stat-label">{t("notifications.smtpAdminEmail")}</label>
           <input
             type="email"
@@ -213,13 +213,13 @@ export function NotificationPanel() {
             style={{ width: "100%", maxWidth: "300px" }}
           />
         </div>
-        <div style={{ marginTop: "var(--space-2)" }}>
+        <div className="mt-2">
           <label className="settings-stat-label">
             <input
               type="checkbox"
               checked={config.smtp_use_tls}
               onChange={(e) => setConfig({ ...config, smtp_use_tls: e.target.checked })}
-              style={{ marginRight: "var(--space-2)" }}
+              className="mr-2"
             />
             {t("notifications.smtpUseTls")}
           </label>

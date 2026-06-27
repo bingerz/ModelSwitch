@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Copy, CheckCheck, X } from "lucide-react";
 import {
   api,
   type BatchCreateVirtualKeyItem,
 } from "../../lib/api";
+import { useFocusTrap } from "../../hooks/useFocusTrap";
 import { useToast } from "../Toast";
 import {
   validateBatchCreateInput,
@@ -49,6 +50,7 @@ const ERROR_I18N_KEYS: Record<BatchValidationError, string> = {
 export function BatchCreateModal({ onClose, onCreated }: BatchCreateModalProps) {
   const { t } = useTranslation();
   const toast = useToast();
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [settings, setSettings] = useState<SharedSettings>(INITIAL_SETTINGS);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -118,8 +120,11 @@ export function BatchCreateModal({ onClose, onCreated }: BatchCreateModalProps) 
     onClose();
   };
 
+  useFocusTrap(dialogRef, true, handleClose);
+
   return (
     <div
+      ref={dialogRef}
       className="vk-batch-backdrop"
       role="dialog"
       aria-modal="true"
