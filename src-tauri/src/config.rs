@@ -84,9 +84,9 @@ impl AppConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::auth::default_oidc_scopes;
     use super::channel::{default_priority, default_weight};
+    use super::*;
     use std::collections::HashMap;
 
     // ===== Helper =====

@@ -41,7 +41,7 @@ pub async fn handle_responses(
         .unwrap_or(false);
     let chat_body = match translate_request(&body) {
         Ok(b) => b,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
 
     if let Err(resp) = validate_chat_request(&chat_body) {
@@ -90,7 +90,7 @@ pub async fn handle_responses(
 /// Translate a Responses API request body into a chat-completions body.
 ///
 /// Returns `Err(response)` with a 400 JSON error when the request is malformed.
-fn translate_request(body: &Value) -> Result<Value, Response> {
+fn translate_request(body: &Value) -> Result<Value, Box<Response>> {
     let mut chat = serde_json::Map::new();
 
     // model — pass through (required for downstream validation).
@@ -124,13 +124,13 @@ fn translate_request(body: &Value) -> Result<Value, Response> {
 /// - `input` as a string becomes a single user message.
 /// - `input` as an array is treated as a conversation and copied as-is after
 ///   any system message from `instructions`.
-fn build_messages(body: &Value) -> Result<Vec<Value>, Response> {
+fn build_messages(body: &Value) -> Result<Vec<Value>, Box<Response>> {
     let mut messages = Vec::new();
 
     if let Some(instructions) = body.get("instructions") {
         let text = instructions
             .as_str()
-            .ok_or_else(|| invalid_request("instructions must be a string"))?;
+            .ok_or_else(|| Box::new(invalid_request("instructions must be a string")))?;
         messages.push(json!({"role": "system", "content": text}));
     }
 
@@ -143,7 +143,9 @@ fn build_messages(body: &Value) -> Result<Vec<Value>, Response> {
             messages.extend(arr.iter().cloned());
         }
         Some(_) => {
-            return Err(invalid_request("input must be a string or an array"));
+            return Err(Box::new(invalid_request(
+                "input must be a string or an array",
+            )));
         }
         None => {
             // `input` is not strictly required when the caller passes `instructions`,
@@ -152,7 +154,7 @@ fn build_messages(body: &Value) -> Result<Vec<Value>, Response> {
     }
 
     if messages.is_empty() {
-        return Err(invalid_request("Missing required field: input"));
+        return Err(Box::new(invalid_request("Missing required field: input")));
     }
 
     Ok(messages)

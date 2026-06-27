@@ -28,7 +28,7 @@ impl CacheMode {
     }
 
     /// Parse a cache mode from a configuration string.
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_mode(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "off" | "disabled" | "false" => Self::Off,
             "readonly" | "read-only" | "ro" => Self::ReadOnly,
@@ -188,6 +188,11 @@ impl RequestCache {
     pub fn len(&self) -> usize {
         let state = self.state.read().unwrap_or_else(|e| e.into_inner());
         state.entries.len()
+    }
+
+    /// Returns `true` if the cache contains no entries.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Clear all cached entries.
@@ -474,17 +479,17 @@ mod tests {
 
     #[test]
     fn cache_mode_from_str_parses_correctly() {
-        assert_eq!(CacheMode::from_str("on"), CacheMode::On);
-        assert_eq!(CacheMode::from_str("off"), CacheMode::Off);
-        assert_eq!(CacheMode::from_str("readonly"), CacheMode::ReadOnly);
-        assert_eq!(CacheMode::from_str("read-only"), CacheMode::ReadOnly);
-        assert_eq!(CacheMode::from_str("ro"), CacheMode::ReadOnly);
-        assert_eq!(CacheMode::from_str("writeonly"), CacheMode::WriteOnly);
-        assert_eq!(CacheMode::from_str("write-only"), CacheMode::WriteOnly);
-        assert_eq!(CacheMode::from_str("wo"), CacheMode::WriteOnly);
-        assert_eq!(CacheMode::from_str("disabled"), CacheMode::Off);
-        assert_eq!(CacheMode::from_str("false"), CacheMode::Off);
-        assert_eq!(CacheMode::from_str("invalid"), CacheMode::On);
+        assert_eq!(CacheMode::parse_mode("on"), CacheMode::On);
+        assert_eq!(CacheMode::parse_mode("off"), CacheMode::Off);
+        assert_eq!(CacheMode::parse_mode("readonly"), CacheMode::ReadOnly);
+        assert_eq!(CacheMode::parse_mode("read-only"), CacheMode::ReadOnly);
+        assert_eq!(CacheMode::parse_mode("ro"), CacheMode::ReadOnly);
+        assert_eq!(CacheMode::parse_mode("writeonly"), CacheMode::WriteOnly);
+        assert_eq!(CacheMode::parse_mode("write-only"), CacheMode::WriteOnly);
+        assert_eq!(CacheMode::parse_mode("wo"), CacheMode::WriteOnly);
+        assert_eq!(CacheMode::parse_mode("disabled"), CacheMode::Off);
+        assert_eq!(CacheMode::parse_mode("false"), CacheMode::Off);
+        assert_eq!(CacheMode::parse_mode("invalid"), CacheMode::On);
     }
 
     #[test]

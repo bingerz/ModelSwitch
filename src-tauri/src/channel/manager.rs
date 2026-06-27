@@ -52,11 +52,11 @@ impl ChannelManager {
         let channels = self.channels.read().await;
         channels
             .values()
-            .filter_map(|ch_arc| {
+            .map(|ch_arc| {
                 let ch = ch_arc.read();
                 let mut c = ch.clone();
                 c.recover_if_expired();
-                Some(c)
+                c
             })
             .collect()
     }

@@ -21,7 +21,7 @@
 //! 1. Bump `CURRENT_SCHEMA_VERSION`.
 //! 2. Add a `migrate_vN_to_vN1` function.
 //! 3. Register it in the `while version < CURRENT_SCHEMA_VERSION` loop in
-//!   both [`migrate_json_file`] and [`migrate_ndjson_file`].
+//!    both [`migrate_json_file`] and [`migrate_ndjson_file`].
 
 use serde_json::Value;
 use std::path::Path;

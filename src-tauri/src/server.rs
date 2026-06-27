@@ -81,7 +81,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     // Build shared components
     let active_requests = Arc::new(ActiveRequests::new());
     let latency_tracker = Arc::new(crate::router::latency_tracker::LatencyTracker::new());
-    let cache_mode = CacheMode::from_str(&config.gateway.cache_mode);
+    let cache_mode = CacheMode::parse_mode(&config.gateway.cache_mode);
     tracing::info!(cache_mode = ?cache_mode, "Request cache mode");
     let request_cache = Arc::new(RequestCache::new(
         std::time::Duration::from_secs(config.gateway.cache_ttl_secs),
@@ -114,7 +114,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         .admin_tokens
         .iter()
         .filter_map(|entry| {
-            crate::middleware::rbac::Role::from_str(&entry.role)
+            crate::middleware::rbac::Role::parse_role(&entry.role)
                 .map(|role| (entry.token.clone(), role))
         })
         .collect();

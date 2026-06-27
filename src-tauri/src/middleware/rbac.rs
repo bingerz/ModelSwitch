@@ -13,7 +13,7 @@ pub enum Role {
 }
 
 impl Role {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_role(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "super_admin" | "superadmin" | "admin" => Some(Self::SuperAdmin),
             "key_manager" | "keymanager" => Some(Self::KeyManager),
@@ -204,12 +204,12 @@ mod tests {
 
     #[test]
     fn role_from_str_parses_variants() {
-        assert_eq!(Role::from_str("super_admin"), Some(Role::SuperAdmin));
-        assert_eq!(Role::from_str("SuperAdmin"), Some(Role::SuperAdmin));
-        assert_eq!(Role::from_str("admin"), Some(Role::SuperAdmin));
-        assert_eq!(Role::from_str("key_manager"), Some(Role::KeyManager));
-        assert_eq!(Role::from_str("keymanager"), Some(Role::KeyManager));
-        assert_eq!(Role::from_str("auditor"), Some(Role::Auditor));
-        assert_eq!(Role::from_str("invalid"), None);
+        assert_eq!(Role::parse_role("super_admin"), Some(Role::SuperAdmin));
+        assert_eq!(Role::parse_role("SuperAdmin"), Some(Role::SuperAdmin));
+        assert_eq!(Role::parse_role("admin"), Some(Role::SuperAdmin));
+        assert_eq!(Role::parse_role("key_manager"), Some(Role::KeyManager));
+        assert_eq!(Role::parse_role("keymanager"), Some(Role::KeyManager));
+        assert_eq!(Role::parse_role("auditor"), Some(Role::Auditor));
+        assert_eq!(Role::parse_role("invalid"), None);
     }
 }
