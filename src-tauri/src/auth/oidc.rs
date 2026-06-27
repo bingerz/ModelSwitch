@@ -10,14 +10,10 @@
 //!    is present, by calling the IdP's userinfo endpoint with the access token.
 //!
 //! ID token signatures are verified via the IdP's JWKS
-//! (`{jwks_uri}` from the discovery document) before claims are trusted. If
-//! JWKS verification fails (e.g. unknown key type, transient fetch error), the
-//! authenticator falls back to claim-only validation (`iss`/`aud`/`exp`) so
-//! compatibility with unusual IdP configurations is preserved. The fallback
-//! can be removed in a future hardening pass to require strict signature
-//! verification.
+//! (`{jwks_uri}` from the discovery document) before claims are trusted.
+//! Verification failures (e.g. unknown key type, JWKS fetch error, bogus
+//! signature) propagate as errors — there is no fail-open fallback.
 
-use base64::Engine;
 use hmac::{Hmac, Mac};
 use jsonwebtoken::{DecodingKey, Validation};
 use serde::Deserialize;
@@ -323,30 +319,15 @@ impl OidcAuthenticator {
     ///
     /// Preference order:
     /// 1. ID token claims (`sub`, `email`, `name` / `preferred_username`) when
-    ///    an `id_token` was returned. JWKS signature verification is attempted
-    ///    first; if it fails the authenticator falls back to claim-only
-    ///    validation so unusual IdP configurations keep working.
+    ///    an `id_token` was returned. JWKS signature verification is mandatory
+    ///    — tokens that fail verification are rejected.
     /// 2. UserInfo endpoint (`userinfo_endpoint` from discovery) queried with
     ///    the access token as a Bearer header.
     pub async fn extract_user_info(&self, tokens: &TokenSet) -> Result<AuthUserInfo, OidcError> {
         if let Some(id_token) = &tokens.id_token {
-            // Try JWKS signature verification first (strong security).
-            match self.verify_id_token(id_token).await {
-                Ok(claims) => return Ok(claims_to_user_info(&claims)),
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        "ID token JWKS verification failed — falling back to claim-only validation"
-                    );
-                    // Fallback: decode without signature verification, validate
-                    // claims only. Maintains compatibility with IdPs that have
-                    // unusual JWKS configurations; can be removed in a future
-                    // hardening pass to require strict signature verification.
-                    let claims = decode_jwt_payload(id_token)?;
-                    validate_id_token_claims(&claims, &self.config.issuer, &self.config.client_id)?;
-                    return Ok(claims_to_user_info(&claims));
-                }
-            }
+            // JWKS signature verification is mandatory.
+            let claims = self.verify_id_token(id_token).await?;
+            return Ok(claims_to_user_info(&claims));
         }
 
         // No ID token — fall back to userinfo endpoint.
@@ -462,23 +443,6 @@ impl OidcAuthenticator {
     }
 }
 
-/// Decode the payload (middle) segment of a JWT without signature validation.
-///
-/// This is the fallback path used when JWKS signature verification fails or
-/// is unavailable. The TLS-protected token endpoint response plus the claim
-/// validation in [`validate_id_token_claims`] provide the baseline trust.
-fn decode_jwt_payload(token: &str) -> Result<serde_json::Value, OidcError> {
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() < 2 {
-        return Err(OidcError::UserInfo("malformed JWT".to_string()));
-    }
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(parts[1])
-        .map_err(|e| OidcError::UserInfo(format!("JWT payload decode error: {e}")))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|e| OidcError::UserInfo(format!("JWT payload parse error: {e}")))
-}
-
 /// Map a JWT/userinfo JSON claim set to [`AuthUserInfo`].
 fn claims_to_user_info(claims: &serde_json::Value) -> AuthUserInfo {
     let id = claims
@@ -567,52 +531,6 @@ fn compute_hmac(secret: &str, data: &str) -> String {
     hex::encode(mac.finalize().into_bytes())
 }
 
-/// Validate OIDC ID token claims (iss, aud, exp) without signature verification.
-///
-/// This is the fallback path used when JWKS verification cannot be performed.
-/// It catches misconfiguration, token replay, and tokens from the wrong IdP;
-/// [`OidcAuthenticator::verify_id_token`] is the preferred, signature-checking
-/// path.
-fn validate_id_token_claims(
-    claims: &serde_json::Value,
-    expected_iss: &str,
-    expected_aud: &str,
-) -> Result<(), OidcError> {
-    // Verify issuer matches configuration.
-    let iss = claims
-        .get("iss")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| OidcError::UserInfo("ID token missing 'iss' claim".to_string()))?;
-    if iss != expected_iss {
-        return Err(OidcError::UserInfo(format!(
-            "ID token issuer mismatch: expected '{expected_iss}', got '{iss}'"
-        )));
-    }
-
-    // Verify audience matches our client_id.
-    let aud = claims.get("aud");
-    let aud_matches = match aud {
-        Some(serde_json::Value::String(s)) => s == expected_aud,
-        Some(serde_json::Value::Array(arr)) => arr.iter().any(|v| v.as_str() == Some(expected_aud)),
-        _ => false,
-    };
-    if !aud_matches {
-        return Err(OidcError::UserInfo(
-            "ID token audience does not match client_id".to_string(),
-        ));
-    }
-
-    // Verify token has not expired.
-    if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64()) {
-        let now = chrono::Utc::now().timestamp();
-        if now > exp {
-            return Err(OidcError::UserInfo("ID token has expired".to_string()));
-        }
-    }
-
-    Ok(())
-}
-
 /// Validate that a URL from the discovery document has the same host as the issuer.
 ///
 /// Prevents SSRF via malicious discovery documents that redirect the server to
@@ -633,6 +551,7 @@ fn validate_endpoint_host(url_str: &str, issuer_host: &str) -> Result<(), OidcEr
 mod tests {
     use super::*;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
     use serde_json::json;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -783,28 +702,6 @@ mod tests {
     }
 
     // ── New tests for the full flow ───────────────────────────────
-
-    #[test]
-    fn decode_jwt_payload_extracts_claims() {
-        let claims = json!({
-            "sub": "user-123",
-            "email": "alice@example.com",
-            "name": "Alice Adams",
-            "preferred_username": "alice"
-        });
-        let jwt = make_fake_jwt(&claims);
-
-        let decoded = decode_jwt_payload(&jwt).expect("decode should succeed");
-        assert_eq!(decoded["sub"], "user-123");
-        assert_eq!(decoded["email"], "alice@example.com");
-        assert_eq!(decoded["preferred_username"], "alice");
-    }
-
-    #[test]
-    fn decode_jwt_payload_rejects_malformed_token() {
-        let result = decode_jwt_payload("not-a-jwt");
-        assert!(result.is_err());
-    }
 
     #[test]
     fn claims_to_user_info_prefers_preferred_username() {
@@ -988,35 +885,6 @@ mod tests {
         let auth = OidcAuthenticator::new(cfg).unwrap();
         let result = auth.exchange_code("code").await;
         assert!(result.is_ok(), "expected secret-conditional mock to match");
-    }
-
-    #[tokio::test]
-    async fn extract_user_info_from_id_token() {
-        let claims = json!({
-            "sub": "user-abc",
-            "email": "alice@example.com",
-            "preferred_username": "alice",
-            "name": "Alice Adams",
-            "iss": "https://login.example.com",
-            "aud": "test-client-id"
-        });
-        let jwt = make_fake_jwt(&claims);
-
-        let cfg = test_config();
-        let auth = OidcAuthenticator::new(cfg).unwrap();
-        let tokens = TokenSet {
-            access_token: "atk".into(),
-            id_token: Some(jwt),
-            token_type: "Bearer".into(),
-            expires_in: None,
-            refresh_token: None,
-        };
-
-        let info = auth.extract_user_info(&tokens).await.expect("extract ok");
-        assert_eq!(info.id, "user-abc");
-        assert_eq!(info.username, "alice");
-        assert_eq!(info.email.as_deref(), Some("alice@example.com"));
-        assert_eq!(info.source, AuthSource::Oidc);
     }
 
     #[tokio::test]
@@ -1236,11 +1104,11 @@ mod tests {
         assert_eq!(info.source, AuthSource::Oidc);
     }
 
-    /// A fake-signed JWT cannot pass JWKS verification, so the authenticator
-    /// must fall back to claim-only validation. The expired `exp` then
-    /// triggers the expected rejection.
+    /// A fake-signed JWT cannot pass JWKS verification, and with the
+    /// fail-open fallback removed the authenticator must reject the token
+    /// outright rather than degrading to claim-only validation.
     #[tokio::test]
-    async fn extract_user_info_falls_back_when_jwks_unreachable() {
+    async fn extract_user_info_rejects_when_jwks_unreachable() {
         let server = MockServer::start().await;
 
         // Discovery points the JWKS URI at the mock server but we deliberately
@@ -1282,12 +1150,10 @@ mod tests {
             refresh_token: None,
         };
 
-        let info = auth
-            .extract_user_info(&tokens)
-            .await
-            .expect("fallback claim-only validation should succeed");
-        assert_eq!(info.id, "fallback-user");
-        assert_eq!(info.username, "fallback");
-        assert_eq!(info.email.as_deref(), Some("fallback@example.com"));
+        let result = auth.extract_user_info(&tokens).await;
+        assert!(
+            result.is_err(),
+            "JWKS verification must be mandatory — fake-signed tokens must be rejected"
+        );
     }
 }
