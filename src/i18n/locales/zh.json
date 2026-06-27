@@ -666,7 +666,10 @@
     "boundaryTitle": "发生错误",
     "boundaryMessage": "出现了一个意外错误。",
     "reloadApp": "重新加载应用",
-    "copyFailed": "复制到剪贴板失败"
+    "copyFailed": "复制到剪贴板失败",
+    "panelLoadTitle": "加载 {{name}} 失败",
+    "panelLoadMessage": "出现错误。请尝试刷新页面。",
+    "retry": "重试"
   },
   "presets": {
     "official": "官方",

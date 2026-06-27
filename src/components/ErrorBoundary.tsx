@@ -1,8 +1,19 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { withTranslation, type WithTranslation } from "react-i18next";
 
+/**
+ * Optional custom fallback. When provided, the boundary renders this instead of
+ * the default full-screen error card. Useful for per-panel isolation where a
+ * single panel failure should not take over the entire viewport.
+ *
+ * The render-prop form receives the caught error so callers can display
+ * targeted diagnostics.
+ */
+type ErrorBoundaryFallback = ReactNode | ((error: Error) => ReactNode);
+
 interface ErrorBoundaryProps extends WithTranslation {
   children: ReactNode;
+  fallback?: ErrorBoundaryFallback;
 }
 
 interface ErrorBoundaryState {
@@ -27,6 +38,13 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 
   render() {
     if (this.state.hasError) {
+      const { fallback } = this.props;
+      if (fallback !== undefined) {
+        return typeof fallback === "function"
+          ? fallback(this.state.error ?? new Error("Unknown error"))
+          : fallback;
+      }
+
       const { t } = this.props;
       return (
         <div className="error-boundary-overlay">

@@ -667,7 +667,10 @@
     "boundaryTitle": "Something went wrong",
     "boundaryMessage": "An unexpected error occurred.",
     "reloadApp": "Reload App",
-    "copyFailed": "Failed to copy to clipboard"
+    "copyFailed": "Failed to copy to clipboard",
+    "panelLoadTitle": "Failed to load {{name}}",
+    "panelLoadMessage": "Something went wrong. Try refreshing the page.",
+    "retry": "Retry"
   },
   "presets": {
     "official": "Official",

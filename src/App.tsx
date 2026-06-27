@@ -1,28 +1,63 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { type GwStatus, invokeTauri, isTauri } from "./lib/api";
 import { ToastProvider, useToast } from "./components/Toast";
 import { LoginPage } from "./components/LoginPage";
 import { Portal } from "./components/Portal";
-import { ChannelPanel } from "./components/channel/ChannelPanel";
-import { LogViewer } from "./components/LogViewer";
 import { StatusBar } from "./components/StatusBar";
-import { StatusDashboard } from "./components/dashboard/StatusDashboard";
-import { CostDashboard } from "./components/CostDashboard";
-import { QuotaPanel } from "./components/quota/QuotaPanel";
-import { McpServersPanel } from "./components/mcp/McpServersPanel";
-import { VirtualKeysPanel } from "./components/virtualkeys/VirtualKeysPanel";
-import { SettingsPanel } from "./components/SettingsPanel";
-import { AuditLogPanel } from "./components/AuditLogPanel";
-import { GuardrailsPanel } from "./components/GuardrailsPanel";
-import { RedemptionCodesPanel } from "./components/RedemptionCodesPanel";
-import { MetricsPanel } from "./components/MetricsPanel";
-import { ModelRegistryPanel } from "./components/ModelRegistryPanel";
-import { NotificationPanel } from "./components/NotificationPanel";
-import { ReportsPanel } from "./components/ReportsPanel";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { MockBadge } from "./components/MockBadge";
 import { QuotaProvider } from "./hooks/useQuota";
+
+// F5 — Lazy-loadable panel chunks.
+// Each major panel is split into its own bundle so the initial download only
+// contains the shell (sidebar / header / status bar). The shared Suspense
+// fallback inside <PanelBoundary /> renders while a chunk is fetched.
+const StatusDashboard = lazy(() =>
+  import("./components/dashboard/StatusDashboard").then((m) => ({ default: m.StatusDashboard }))
+);
+const ChannelPanel = lazy(() =>
+  import("./components/channel/ChannelPanel").then((m) => ({ default: m.ChannelPanel }))
+);
+const VirtualKeysPanel = lazy(() =>
+  import("./components/virtualkeys/VirtualKeysPanel").then((m) => ({ default: m.VirtualKeysPanel }))
+);
+const McpServersPanel = lazy(() =>
+  import("./components/mcp/McpServersPanel").then((m) => ({ default: m.McpServersPanel }))
+);
+const LogViewer = lazy(() =>
+  import("./components/LogViewer").then((m) => ({ default: m.LogViewer }))
+);
+const CostDashboard = lazy(() =>
+  import("./components/CostDashboard").then((m) => ({ default: m.CostDashboard }))
+);
+const QuotaPanel = lazy(() =>
+  import("./components/quota/QuotaPanel").then((m) => ({ default: m.QuotaPanel }))
+);
+const SettingsPanel = lazy(() =>
+  import("./components/SettingsPanel").then((m) => ({ default: m.SettingsPanel }))
+);
+const AuditLogPanel = lazy(() =>
+  import("./components/AuditLogPanel").then((m) => ({ default: m.AuditLogPanel }))
+);
+const GuardrailsPanel = lazy(() =>
+  import("./components/GuardrailsPanel").then((m) => ({ default: m.GuardrailsPanel }))
+);
+const RedemptionCodesPanel = lazy(() =>
+  import("./components/RedemptionCodesPanel").then((m) => ({ default: m.RedemptionCodesPanel }))
+);
+const MetricsPanel = lazy(() =>
+  import("./components/MetricsPanel").then((m) => ({ default: m.MetricsPanel }))
+);
+const ModelRegistryPanel = lazy(() =>
+  import("./components/ModelRegistryPanel").then((m) => ({ default: m.ModelRegistryPanel }))
+);
+const NotificationPanel = lazy(() =>
+  import("./components/NotificationPanel").then((m) => ({ default: m.NotificationPanel }))
+);
+const ReportsPanel = lazy(() =>
+  import("./components/ReportsPanel").then((m) => ({ default: m.ReportsPanel }))
+);
 
 type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "logs" | "cost" | "quota" | "settings" | "audit" | "redemption" | "metrics" | "guardrails" | "notifications" | "registry" | "reports";
 type Theme = "light" | "dark";
@@ -81,6 +116,45 @@ function getInitialLang(): "en" | "zh" {
   const stored = localStorage.getItem("lang");
   if (stored === "en" || stored === "zh") return stored;
   return navigator.language.startsWith("zh") ? "zh" : "en";
+}
+
+/**
+ * F6 — Per-panel error fallback. Rendered by the inner <ErrorBoundary> when a
+ * single panel throws during render, so a crash in one panel does not take
+ * down the whole admin console.
+ */
+function PanelErrorFallback({ name }: { name: string }) {
+  const { t } = useTranslation();
+  return (
+    <div className="panel-error" role="alert">
+      <h3 className="panel-error-title">{t("error.panelLoadTitle", { name })}</h3>
+      <p className="panel-error-message">{t("error.panelLoadMessage")}</p>
+      <div className="panel-error-actions">
+        <button
+          className="btn btn-primary"
+          onClick={() => window.location.reload()}
+        >
+          {t("error.retry")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Wraps a panel in its own Suspense + ErrorBoundary. The ErrorBoundary sits
+ * OUTSIDE the Suspense boundary so it can catch errors from lazily-loaded
+ * components. Each panel is isolated — a failure or pending chunk only
+ * affects this panel, not the sidebar or status bar.
+ */
+function PanelBoundary({ name, children }: { name: string; children: ReactNode }) {
+  return (
+    <ErrorBoundary fallback={<PanelErrorFallback name={name} />}>
+      <Suspense fallback={<div className="panel-loading">Loading…</div>}>
+        {children}
+      </Suspense>
+    </ErrorBoundary>
+  );
 }
 
 function AppInner() {
@@ -264,21 +338,81 @@ function AppInner() {
           </div>
         </nav>
         <main className="main">
-          {activeTab === "dashboard" && <StatusDashboard />}
-          {activeTab === "channels" && <ChannelPanel />}
-          {activeTab === "virtualKeys" && <VirtualKeysPanel />}
-          {activeTab === "mcp" && <McpServersPanel />}
-          {activeTab === "logs" && <LogViewer />}
-          {activeTab === "cost" && <CostDashboard />}
-          {activeTab === "quota" && <QuotaPanel />}
-          {activeTab === "settings" && <SettingsPanel />}
-          {activeTab === "audit" && <AuditLogPanel />}
-          {activeTab === "guardrails" && <GuardrailsPanel />}
-          {activeTab === "redemption" && <RedemptionCodesPanel />}
-          {activeTab === "metrics" && <MetricsPanel />}
-          {activeTab === "notifications" && <NotificationPanel />}
-          {activeTab === "registry" && <ModelRegistryPanel />}
-          {activeTab === "reports" && <ReportsPanel />}
+          {activeTab === "dashboard" && (
+            <PanelBoundary name="Dashboard">
+              <StatusDashboard />
+            </PanelBoundary>
+          )}
+          {activeTab === "channels" && (
+            <PanelBoundary name="Channels">
+              <ChannelPanel />
+            </PanelBoundary>
+          )}
+          {activeTab === "virtualKeys" && (
+            <PanelBoundary name="Virtual Keys">
+              <VirtualKeysPanel />
+            </PanelBoundary>
+          )}
+          {activeTab === "mcp" && (
+            <PanelBoundary name="MCP Servers">
+              <McpServersPanel />
+            </PanelBoundary>
+          )}
+          {activeTab === "logs" && (
+            <PanelBoundary name="Logs">
+              <LogViewer />
+            </PanelBoundary>
+          )}
+          {activeTab === "cost" && (
+            <PanelBoundary name="Cost">
+              <CostDashboard />
+            </PanelBoundary>
+          )}
+          {activeTab === "quota" && (
+            <PanelBoundary name="Quota">
+              <QuotaPanel />
+            </PanelBoundary>
+          )}
+          {activeTab === "settings" && (
+            <PanelBoundary name="Settings">
+              <SettingsPanel />
+            </PanelBoundary>
+          )}
+          {activeTab === "audit" && (
+            <PanelBoundary name="Audit Log">
+              <AuditLogPanel />
+            </PanelBoundary>
+          )}
+          {activeTab === "guardrails" && (
+            <PanelBoundary name="Guardrails">
+              <GuardrailsPanel />
+            </PanelBoundary>
+          )}
+          {activeTab === "redemption" && (
+            <PanelBoundary name="Redemption Codes">
+              <RedemptionCodesPanel />
+            </PanelBoundary>
+          )}
+          {activeTab === "metrics" && (
+            <PanelBoundary name="Metrics">
+              <MetricsPanel />
+            </PanelBoundary>
+          )}
+          {activeTab === "notifications" && (
+            <PanelBoundary name="Notifications">
+              <NotificationPanel />
+            </PanelBoundary>
+          )}
+          {activeTab === "registry" && (
+            <PanelBoundary name="Model Registry">
+              <ModelRegistryPanel />
+            </PanelBoundary>
+          )}
+          {activeTab === "reports" && (
+            <PanelBoundary name="Reports">
+              <ReportsPanel />
+            </PanelBoundary>
+          )}
         </main>
       </div>
       <StatusBar />
