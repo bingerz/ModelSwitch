@@ -1,7 +1,7 @@
 import { centsToUSD, formatTime, computeProgressState } from "./portal-utils";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { API_BASE } from "../lib/runtime";
+import { createRequestFn } from "../lib/api/client";
 
 // ─── Types ─────────────────────────────────────────────
 
@@ -35,30 +35,14 @@ interface PortalLog {
 
 // ─── Helpers ───────────────────────────────────────────
 
-
-
-async function portalFetch<T>(
-  path: string,
-  token: string
-): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-  });
-  if (res.status === 401) {
-    throw new Error("INVALID_KEY");
-  }
-  if (!res.ok) {
-    throw new Error(`API error: ${res.status}`);
-  }
-  const json = await res.json();
-  if (json && typeof json === "object" && "ok" in json && "data" in json) {
-    return json.data as T;
-  }
-  return json as T;
-}
+// Portal transport: reads the portal token from sessionStorage and drops it
+// on 401 so the next render cycle falls back to the login screen without
+// forcing a full page reload.
+const portalRequest = createRequestFn(() => sessionStorage.getItem("portal_token"), {
+  onUnauthorized: () => {
+    sessionStorage.removeItem("portal_token");
+  },
+});
 
 // ─── Progress Bar ──────────────────────────────────────
 
@@ -104,7 +88,7 @@ function ProgressBar({ label, spent, budget }: ProgressBarProps) {
 
 // ─── Portal Dashboard ──────────────────────────────────
 
-function PortalDashboard({ token, onLogout }: { token: string; onLogout: () => void }) {
+function PortalDashboard({ onLogout }: { token: string; onLogout: () => void }) {
   const { t } = useTranslation();
   const [usage, setUsage] = useState<PortalUsage | null>(null);
   const [logs, setLogs] = useState<PortalLog[]>([]);
@@ -114,14 +98,14 @@ function PortalDashboard({ token, onLogout }: { token: string; onLogout: () => v
   const fetchData = useCallback(async () => {
     try {
       const [u, l] = await Promise.all([
-        portalFetch<PortalUsage>("/api/portal/usage", token),
-        portalFetch<PortalLog[]>("/api/portal/logs?limit=10", token),
+        portalRequest<PortalUsage>("/api/portal/usage"),
+        portalRequest<PortalLog[]>("/api/portal/logs?limit=10"),
       ]);
       setUsage(u);
       setLogs(l);
       setError("");
     } catch (err) {
-      if (err instanceof Error && err.message === "INVALID_KEY") {
+      if (err instanceof Error && err.message === "Unauthorized") {
         onLogout();
       } else {
         setError(err instanceof Error ? err.message : "Unknown error");
@@ -129,7 +113,7 @@ function PortalDashboard({ token, onLogout }: { token: string; onLogout: () => v
     } finally {
       setLoading(false);
     }
-  }, [token, onLogout]);
+  }, [onLogout]);
 
   useEffect(() => {
     fetchData();
@@ -325,7 +309,13 @@ function PortalLogin({ onSuccess }: { onSuccess: (token: string) => void }) {
     setError("");
 
     try {
-      await portalFetch<{ message: string }>("/api/portal/test", trimmed);
+      // One-shot transport bound to the candidate token so we can verify
+      // it before persisting to sessionStorage. onUnauthorized is a no-op
+      // because the login flow handles the "Invalid key" path itself.
+      const verifyRequest = createRequestFn(() => trimmed, {
+        onUnauthorized: () => {},
+      });
+      await verifyRequest<{ message: string }>("/api/portal/test");
       onSuccess(trimmed);
     } catch {
       setError(t("portal.invalidKey"));
