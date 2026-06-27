@@ -560,3 +560,258 @@ fn build_infra(config_path: Option<std::path::PathBuf>) -> (AppConfig, crate::ht
 
     (config, http_pool)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::router::RoutingStrategyType;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use uuid::Uuid;
+
+    /// Counter for unique temp-file names per test process.
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// Write `content` to a uniquely named temp file and return its path.
+    ///
+    /// Each test gets a unique file to avoid races between parallel tests.
+    /// Callers are responsible for cleaning up via `std::fs::remove_file`.
+    fn write_temp_config(content: &str) -> std::path::PathBuf {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch_services_test_{}_{}.toml",
+            std::process::id(),
+            id
+        ));
+        std::fs::write(&path, content).expect("write temp config file");
+        path
+    }
+
+    /// Minimal TOML exercising serde defaults for the gateway table.
+    const MINIMAL_TOML: &str = "channels = []\n\n[gateway]\n";
+
+    // ── build_infra tests ─────────────────────────────────
+
+    #[test]
+    fn build_infra_loads_default_config() {
+        // We pass an explicit temp file instead of `None` because
+        // `build_infra(None)` calls `AppConfig::load()` which may read the
+        // developer's real `~/.config/modelswitch/config.toml` (or write one
+        // if absent). A minimal `[gateway]` table exercises the same
+        // serde-default mechanism without touching user state.
+        let path = write_temp_config(MINIMAL_TOML);
+        let (config, _pool) = build_infra(Some(path.clone()));
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(config.gateway.port, 8080);
+        assert_eq!(config.gateway.host, "127.0.0.1");
+        assert_eq!(config.gateway.max_retries, 3);
+        assert_eq!(config.gateway.cache_ttl_secs, 300);
+        assert_eq!(config.gateway.drain_timeout_secs, 30);
+        assert!(config.channels.is_empty());
+        assert!(config.mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn build_infra_loads_custom_config() {
+        let toml = r#"
+channels = []
+
+[gateway]
+port = 9999
+host = "0.0.0.0"
+max_retries = 7
+cache_mode = "off"
+"#;
+        let path = write_temp_config(toml);
+        let (config, _pool) = build_infra(Some(path.clone()));
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(config.gateway.port, 9999);
+        assert_eq!(config.gateway.host, "0.0.0.0");
+        assert_eq!(config.gateway.max_retries, 7);
+        assert_eq!(config.gateway.cache_mode, "off");
+    }
+
+    // ── start_gateway_services tests ──────────────────────
+    //
+    // These tests spawn background tasks (health probes, persistence loops,
+    // etc.). Under `#[tokio::test]` those tasks live on the per-test
+    // runtime; dropping the runtime when the test returns cancels them.
+
+    #[tokio::test]
+    async fn start_gateway_services_creates_handles() {
+        let path = write_temp_config(MINIMAL_TOML);
+        let handles = start_gateway_services(Some(path.clone()));
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(handles.port, 8080);
+        assert_eq!(handles.host, "127.0.0.1");
+        assert_eq!(handles.drain_timeout_secs, 30);
+        // Drain timeout and web console defaults
+        assert!(handles.web_console_dir.is_none());
+        // TLS disabled by default
+        assert!(!handles.tls.enable);
+    }
+
+    #[tokio::test]
+    async fn start_gateway_services_maps_gateway_params() {
+        let toml = r#"
+channels = []
+
+[gateway]
+max_retries = 5
+retry_base_ms = 250
+retry_max_ms = 10000
+routing_strategy = "latency"
+disable_image_generation = true
+
+[gateway.model_aliases]
+"gpt4" = "gpt-4-turbo"
+
+[gateway.model_fallbacks]
+"gpt-4" = ["gpt-4-turbo", "gpt-4o"]
+"#;
+        let path = write_temp_config(toml);
+        let handles = start_gateway_services(Some(path.clone()));
+        let _ = std::fs::remove_file(&path);
+
+        let gw = &handles.state.gateway;
+        assert_eq!(gw.max_retries, 5);
+        assert_eq!(gw.retry_base_ms, 250);
+        assert_eq!(gw.retry_max_ms, 10000);
+        assert_eq!(gw.routing_strategy, RoutingStrategyType::Latency);
+        assert!(gw.disable_image_generation);
+        assert_eq!(
+            gw.model_aliases.get("gpt4"),
+            Some(&"gpt-4-turbo".to_string()),
+            "model_aliases should be mapped to state.gateway.model_aliases"
+        );
+        assert_eq!(
+            gw.model_fallbacks.get("gpt-4"),
+            Some(&vec!["gpt-4-turbo".to_string(), "gpt-4o".to_string()]),
+            "model_fallbacks should be mapped to state.gateway.model_fallbacks"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_gateway_services_registers_channels() {
+        let toml = r#"
+[[channels]]
+id = "00000000-0000-0000-0000-000000000001"
+name = "Channel A"
+provider = "openai"
+credential_type = "api_key"
+credential_ref = "ref-a"
+base_url = "https://a.example.com"
+enabled = true
+
+[[channels]]
+id = "00000000-0000-0000-0000-000000000002"
+name = "Channel B"
+provider = "anthropic"
+credential_type = "api_key"
+credential_ref = "ref-b"
+base_url = "https://b.example.com"
+enabled = false
+
+[gateway]
+"#;
+        let path = write_temp_config(toml);
+        let handles = start_gateway_services(Some(path.clone()));
+        let _ = std::fs::remove_file(&path);
+
+        let channels = handles.state.channel_mgr.list().await;
+        assert_eq!(
+            channels.len(),
+            2,
+            "both configured channels should be registered"
+        );
+
+        let id_a = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let id_b = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
+        let ids: Vec<Uuid> = channels.iter().map(|c| c.id).collect();
+        assert!(ids.contains(&id_a), "channel A id should be preserved");
+        assert!(ids.contains(&id_b), "channel B id should be preserved");
+
+        // Disabled channels are still registered (enabled only affects routing)
+        let ch_b = channels.iter().find(|c| c.id == id_b).expect("channel B");
+        assert!(!ch_b.enabled, "channel B should retain its disabled flag");
+    }
+
+    #[tokio::test]
+    async fn start_gateway_services_configures_rate_limits() {
+        let toml = r#"
+[[channels]]
+id = "00000000-0000-0000-0000-000000000010"
+name = "Limited"
+provider = "openai"
+credential_type = "api_key"
+credential_ref = "ref"
+base_url = "https://api.openai.com"
+enabled = true
+rpm_limit = 100
+tpm_limit = 50000
+
+[gateway]
+"#;
+        let path = write_temp_config(toml);
+        let handles = start_gateway_services(Some(path.clone()));
+        let _ = std::fs::remove_file(&path);
+
+        let ch_id = Uuid::parse_str("00000000-0000-0000-0000-000000000010").unwrap();
+        let tpm = handles.state.limits.rate_limiter.tpm_limit(ch_id);
+        assert_eq!(
+            tpm,
+            Some(50000),
+            "channel tpm_limit should be propagated to the rate limiter"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_gateway_services_propagates_tls_config() {
+        let toml = r#"
+channels = []
+
+[gateway.tls]
+enable = true
+cert = "/tmp/test-cert.pem"
+key = "/tmp/test-key.pem"
+"#;
+        let path = write_temp_config(toml);
+        let handles = start_gateway_services(Some(path.clone()));
+        let _ = std::fs::remove_file(&path);
+
+        assert!(
+            handles.tls.enable,
+            "TLS enable flag should propagate to GatewayHandles"
+        );
+        assert_eq!(handles.tls.cert, "/tmp/test-cert.pem");
+        assert_eq!(handles.tls.key, "/tmp/test-key.pem");
+    }
+
+    #[tokio::test]
+    async fn start_gateway_services_maps_mcp_settings() {
+        let toml = r#"
+channels = []
+
+[gateway]
+mcp_max_iterations = 10
+mcp_auto_inject = false
+mcp_gateway_enabled = false
+"#;
+        let path = write_temp_config(toml);
+        let handles = start_gateway_services(Some(path.clone()));
+        let _ = std::fs::remove_file(&path);
+
+        let mcp = &handles.state.mcp;
+        assert_eq!(mcp.mcp_max_iterations, 10);
+        assert!(
+            !mcp.mcp_auto_inject,
+            "mcp_auto_inject=false should propagate"
+        );
+        assert!(
+            !mcp.mcp_gateway_enabled,
+            "mcp_gateway_enabled=false should propagate"
+        );
+    }
+}
