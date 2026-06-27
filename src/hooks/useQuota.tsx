@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { api, type Channel, type QuotaInfo, type UsageHistory } from "../lib/api";
 import {
   computeTotalBalance,
@@ -49,53 +50,49 @@ export function useQuota() {
 }
 
 export function QuotaProvider({ children }: { children: React.ReactNode }) {
-  const [quotas, setQuotas] = useState<QuotaInfo[]>([]);
-  const [channels, setChannels] = useState<Channel[]>([]);
-  const [usageHistory, setUsageHistory] = useState<UsageHistory | null>(null);
-  const [fetchError, setFetchError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [usageHours, setUsageHours] = useState(24);
+
+  const quotasQuery = useQuery({
+    queryKey: ["quota"],
+    queryFn: () => api.quota(),
+    refetchInterval: 10_000,
+  });
+
+  const channelsQuery = useQuery({
+    queryKey: ["channels"],
+    queryFn: () => api.listChannels(),
+    refetchInterval: 10_000,
+  });
+
+  const usageQuery = useQuery({
+    queryKey: ["usageHistory", usageHours],
+    queryFn: () => api.usageHistory(usageHours),
+    refetchInterval: 30_000,
+  });
+
+  const quotas = quotasQuery.data ?? [];
+  const channels = channelsQuery.data ?? [];
+  const usageHistory = usageQuery.data ?? null;
 
   const refresh = useCallback(async () => {
-    try {
-      const [quotaData, channelData] = await Promise.all([
-        api.quota(),
-        api.listChannels(),
-      ]);
-      setQuotas(quotaData);
-      setChannels(channelData);
-      setFetchError(null);
-    } catch (e) {
-      setFetchError(e instanceof Error ? e.message : "Failed to fetch quota data");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    await Promise.all([quotasQuery.refetch(), channelsQuery.refetch()]);
+  }, [quotasQuery, channelsQuery]);
 
+  // Changing `usageHours` updates the queryKey, which triggers a fresh fetch.
+  // React Query clears data when the key changes (no keepPreviousData), so
+  // stale data from the previous window does not flash.
   const fetchUsageHistory = useCallback(async (hours: number) => {
-    setUsageHistory(null); // Clear stale data to avoid wrong-window flash
-    try {
-      const historyData = await api.usageHistory(hours);
-      setUsageHistory(historyData);
-    } catch {
-      // Usage history is non-critical, keep existing data
-    }
+    setUsageHours(hours);
   }, []);
-
-  useEffect(() => {
-    refresh();
-    fetchUsageHistory(24);
-    const interval = setInterval(refresh, 10000);
-    const usageInterval = setInterval(() => fetchUsageHistory(24), 30000);
-    return () => {
-      clearInterval(interval);
-      clearInterval(usageInterval);
-    };
-  }, [refresh, fetchUsageHistory]);
 
   const totalBalance = useMemo(() => computeTotalBalance(quotas), [quotas]);
   const channelsWithData = useMemo(() => countChannelsWithData(quotas), [quotas]);
   const lowBalanceCount = useMemo(() => countLowBalance(quotas), [quotas]);
   const errorCount = useMemo(() => countErrors(quotas), [quotas]);
+
+  const fetchError =
+    quotasQuery.error?.message ?? channelsQuery.error?.message ?? null;
+  const loading = quotasQuery.isLoading || channelsQuery.isLoading;
 
   const value = useMemo(
     () => ({

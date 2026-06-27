@@ -399,3 +399,244 @@ impl Default for GatewayConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Default value tests ───────────────────────────────
+
+    #[test]
+    fn gateway_config_default_has_correct_port() {
+        assert_eq!(GatewayConfig::default().port, 8080);
+    }
+
+    #[test]
+    fn gateway_config_default_has_correct_host() {
+        assert_eq!(GatewayConfig::default().host, "127.0.0.1");
+    }
+
+    #[test]
+    fn gateway_config_default_circuit_breaker_minutes() {
+        assert_eq!(GatewayConfig::default().circuit_breaker_minutes, 30);
+    }
+
+    #[test]
+    fn gateway_config_default_max_retries() {
+        assert_eq!(GatewayConfig::default().max_retries, 3);
+    }
+
+    #[test]
+    fn gateway_config_default_cache_ttl() {
+        assert_eq!(GatewayConfig::default().cache_ttl_secs, 300);
+    }
+
+    #[test]
+    fn gateway_config_default_cache_mode() {
+        assert_eq!(GatewayConfig::default().cache_mode, "on");
+    }
+
+    #[test]
+    fn gateway_config_default_http_timeout() {
+        assert_eq!(GatewayConfig::default().http_timeout_secs, 300);
+    }
+
+    #[test]
+    fn gateway_config_default_http_pool_size() {
+        assert_eq!(GatewayConfig::default().http_pool_size, 8);
+    }
+
+    #[test]
+    fn gateway_config_default_log_max_entries() {
+        assert_eq!(GatewayConfig::default().log_max_entries, 1000);
+    }
+
+    #[test]
+    fn gateway_config_default_mcp_settings() {
+        let c = GatewayConfig::default();
+        assert_eq!(c.mcp_max_iterations, 5);
+        assert!(c.mcp_auto_inject);
+        assert!(c.mcp_gateway_enabled);
+    }
+
+    #[test]
+    fn gateway_config_default_stream_ttft_timeout() {
+        assert_eq!(
+            GatewayConfig::default().stream_ttft_timeout_secs,
+            Some(30)
+        );
+    }
+
+    #[test]
+    fn gateway_config_default_retry_settings() {
+        let c = GatewayConfig::default();
+        assert_eq!(c.retry_base_ms, 100);
+        assert_eq!(c.retry_max_ms, 5000);
+    }
+
+    #[test]
+    fn gateway_config_default_log_rotation() {
+        let c = GatewayConfig::default();
+        assert_eq!(c.log_max_file_size_mb, 100);
+        assert_eq!(c.log_max_files, 5);
+    }
+
+    #[test]
+    fn gateway_config_default_quota_poll_interval() {
+        assert_eq!(
+            GatewayConfig::default().quota_poll_interval_secs,
+            60
+        );
+    }
+
+    #[test]
+    fn gateway_config_default_drain_timeout() {
+        assert_eq!(GatewayConfig::default().drain_timeout_secs, 30);
+    }
+
+    #[test]
+    fn gateway_config_default_affinity_ttl() {
+        assert_eq!(GatewayConfig::default().affinity_ttl_secs, 1800);
+    }
+
+    // ── resolve_model_group tests ─────────────────────────
+
+    #[test]
+    fn resolve_model_group_returns_single_for_unknown() {
+        let c = GatewayConfig::default();
+        assert_eq!(c.resolve_model_group("gpt-4"), vec!["gpt-4"]);
+    }
+
+    #[test]
+    fn resolve_model_group_returns_group_members() {
+        let mut c = GatewayConfig::default();
+        c.model_groups.insert(
+            "reasoning".to_string(),
+            vec!["o1".to_string(), "o3".to_string()],
+        );
+        assert_eq!(c.resolve_model_group("reasoning"), vec!["o1", "o3"]);
+    }
+
+    #[test]
+    fn resolve_model_group_empty_group_returns_empty() {
+        let mut c = GatewayConfig::default();
+        c.model_groups.insert("empty".to_string(), vec![]);
+        assert!(c.resolve_model_group("empty").is_empty());
+    }
+
+    // ── effective_passthrough_headers tests ───────────────
+
+    #[test]
+    fn effective_passthrough_headers_defaults_when_empty() {
+        let c = GatewayConfig::default();
+        let headers = c.effective_passthrough_headers();
+        assert!(headers.contains(&"x-request-id".to_string()));
+        assert!(headers.contains(&"x-ratelimit-remaining".to_string()));
+        assert!(!headers.is_empty());
+    }
+
+    #[test]
+    fn effective_passthrough_headers_uses_configured_when_set() {
+        let c = GatewayConfig {
+            passthrough_headers: vec!["x-custom".to_string()],
+            ..Default::default()
+        };
+        let headers = c.effective_passthrough_headers();
+        assert_eq!(headers, vec!["x-custom"]);
+        // Should NOT contain defaults when custom list is set
+        assert!(!headers.contains(&"x-request-id".to_string()));
+    }
+
+    // ── Serde deserialization tests ───────────────────────
+
+    #[test]
+    fn gateway_config_deserializes_from_minimal_json() {
+        let json = r#"{}"#;
+        let c: GatewayConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(c.port, 8080);
+        assert_eq!(c.host, "127.0.0.1");
+        assert!(c.health_check_enabled);
+    }
+
+    #[test]
+    fn gateway_config_deserializes_overrides() {
+        let json = r#"{"port": 9090, "host": "0.0.0.0", "max_retries": 5, "cache_mode": "off"}"#;
+        let c: GatewayConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(c.port, 9090);
+        assert_eq!(c.host, "0.0.0.0");
+        assert_eq!(c.max_retries, 5);
+        assert_eq!(c.cache_mode, "off");
+    }
+
+    #[test]
+    fn gateway_config_deserializes_model_pricing() {
+        let json = r#"{"model_pricing": {"gpt-4": {"input_cost_per_mtok": 10.0, "output_cost_per_mtok": 30.0}}}"#;
+        let c: GatewayConfig = serde_json::from_str(json).unwrap();
+        let pricing = c.model_pricing.get("gpt-4").unwrap();
+        assert_eq!(pricing.input_cost_per_mtok, Some(10.0));
+        assert_eq!(pricing.output_cost_per_mtok, Some(30.0));
+    }
+
+    #[test]
+    fn gateway_config_deserializes_model_groups() {
+        let json = r#"{"model_groups": {"fast": ["gpt-4o-mini", "claude-3-haiku"]}}"#;
+        let c: GatewayConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            c.resolve_model_group("fast"),
+            vec!["gpt-4o-mini", "claude-3-haiku"]
+        );
+    }
+
+    #[test]
+    fn gateway_config_deserializes_tls_config() {
+        let json = r#"{"tls": {"enable": true, "cert": "/path/cert.pem", "key": "/path/key.pem"}}"#;
+        let c: GatewayConfig = serde_json::from_str(json).unwrap();
+        assert!(c.tls.enable);
+        assert_eq!(c.tls.cert, "/path/cert.pem");
+    }
+
+    #[test]
+    fn gateway_config_deserializes_completion_ratios() {
+        let json = r#"{"completion_ratios": {"gpt-4": 2.0, "claude-3": 1.5}}"#;
+        let c: GatewayConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(c.completion_ratios.get("gpt-4"), Some(&2.0));
+        assert_eq!(c.completion_ratios.get("claude-3"), Some(&1.5));
+    }
+
+    #[test]
+    fn gateway_config_deserializes_model_aliases() {
+        let json = r#"{"model_aliases": {"gpt4": "gpt-4-turbo"}}"#;
+        let c: GatewayConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            c.model_aliases.get("gpt4"),
+            Some(&"gpt-4-turbo".to_string())
+        );
+    }
+
+    #[test]
+    fn gateway_config_deserializes_disabled_features() {
+        let json = r#"{"disable_cooling": true, "disable_image_generation": true}"#;
+        let c: GatewayConfig = serde_json::from_str(json).unwrap();
+        assert!(c.disable_cooling);
+        assert!(c.disable_image_generation);
+    }
+
+    // ── TlsConfig default test ────────────────────────────
+
+    #[test]
+    fn tls_config_default_is_disabled() {
+        let tls = TlsConfig::default();
+        assert!(!tls.enable);
+        assert!(tls.cert.is_empty());
+        assert!(tls.key.is_empty());
+    }
+
+    // ── ModelPricing default test ─────────────────────────
+
+    #[test]
+    fn model_pricing_default_is_none() {
+        let p = ModelPricing::default();
+        assert!(p.input_cost_per_mtok.is_none());
+        assert!(p.output_cost_per_mtok.is_none());
+    }
+}

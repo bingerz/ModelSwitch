@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, type Channel, type DispatchLog, type DispatchStats, type UsageHistory } from "../../lib/api";
 import { useQuota } from "../../hooks/useQuota";
@@ -26,71 +27,98 @@ const LOG_LIMIT = 50;
 
 export function StatusDashboard() {
   const { t } = useTranslation();
-  const [channels, setChannels] = useState<Channel[]>([]);
-  const [stats, setStats] = useState<DispatchStats | null>(null);
-  const [logs, setLogs] = useState<DispatchLog[]>([]);
-  const [usage, setUsage] = useState<UsageHistory | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
-  const [refreshing, setRefreshing] = useState(false);
-  const loadingRef = useRef(true);
   const { totalBalance, channelsWithData, lowBalanceCount, errorCount, totalChannels } =
     useQuota();
 
-  const fetchData = useCallback(async () => {
-    try {
-      const [ch, st, lg, us] = await Promise.all([
-        api.listChannels(),
-        api.stats(),
-        api.logs(0, LOG_LIMIT),
-        api.usageHistory(24),
-      ]);
-      setChannels(ch);
-      setStats(st);
-      setLogs([...lg].reverse());
-      setUsage(us);
-      setError(null);
-      if (loadingRef.current) {
-        loadingRef.current = false;
-        setLoading(false);
-      }
-      setLastUpdated(new Date());
-    } catch {
-      // Only show error if we previously had data (connection lost).
-      // During initial gateway startup, keep showing the loading spinner.
-      if (!loadingRef.current) {
-        setError(t("dashboard.connectionLost"));
-      }
-    } finally {
-      setRefreshing(false);
-    }
-  }, [t]);
+  // Adaptive polling: retry every 1.5s while waiting for the gateway,
+  // then poll every 5s once data arrives.
+  const adaptiveInterval = (query: { state: { data: unknown } }) =>
+    query.state.data === undefined ? 1500 : 5000;
 
-  useEffect(() => {
-    let cancelled = false;
-    let timeoutId: ReturnType<typeof setTimeout>;
+  const channelsQuery = useQuery({
+    queryKey: ["channels"],
+    queryFn: () => api.listChannels(),
+    refetchInterval: adaptiveInterval,
+    retry: false,
+  });
+  const statsQuery = useQuery({
+    queryKey: ["stats"],
+    queryFn: () => api.stats(),
+    refetchInterval: adaptiveInterval,
+    retry: false,
+  });
+  const logsQuery = useQuery<DispatchLog[]>({
+    queryKey: ["logs", LOG_LIMIT],
+    queryFn: async () => {
+      const lg = await api.logs(0, LOG_LIMIT);
+      return [...lg].reverse();
+    },
+    refetchInterval: adaptiveInterval,
+    retry: false,
+  });
+  const usageQuery = useQuery({
+    queryKey: ["usageHistory", 24],
+    queryFn: () => api.usageHistory(24),
+    refetchInterval: adaptiveInterval,
+    retry: false,
+  });
 
-    const poll = async () => {
-      await fetchData();
-      if (!cancelled) {
-        // Retry faster while waiting for gateway, slower once connected
-        const delay = loadingRef.current ? 1500 : 5000;
-        timeoutId = setTimeout(poll, delay);
-      }
-    };
+  const channels: Channel[] = channelsQuery.data ?? [];
+  const stats: DispatchStats | null = statsQuery.data ?? null;
+  const logs: DispatchLog[] = logsQuery.data ?? [];
+  const usage: UsageHistory | null = usageQuery.data ?? null;
 
-    poll();
+  // Show loading spinner until all critical queries have delivered data.
+  const loading =
+    channelsQuery.data === undefined ||
+    statsQuery.data === undefined ||
+    logsQuery.data === undefined;
 
-    return () => {
-      cancelled = true;
-      clearTimeout(timeoutId);
-    };
-  }, [fetchData]);
+  // Only show error if we previously had data (connection lost).
+  // During initial gateway startup, keep showing the loading spinner.
+  const error = loading
+    ? null
+    : channelsQuery.isError || statsQuery.isError || logsQuery.isError
+      ? t("dashboard.connectionLost")
+      : null;
 
-  const handleRefresh = () => {
+  const [refreshing, setRefreshing] = useState(false);
+
+  const lastUpdated = useMemo(() => {
+    const timestamps = [
+      channelsQuery.dataUpdatedAt,
+      statsQuery.dataUpdatedAt,
+      logsQuery.dataUpdatedAt,
+      usageQuery.dataUpdatedAt,
+    ].filter((ts) => ts > 0);
+    return timestamps.length > 0
+      ? new Date(Math.max(...timestamps))
+      : new Date();
+  }, [
+    channelsQuery.dataUpdatedAt,
+    statsQuery.dataUpdatedAt,
+    logsQuery.dataUpdatedAt,
+    usageQuery.dataUpdatedAt,
+  ]);
+
+  const handleRefresh = async () => {
     setRefreshing(true);
-    fetchData();
+    await Promise.all([
+      channelsQuery.refetch(),
+      statsQuery.refetch(),
+      logsQuery.refetch(),
+      usageQuery.refetch(),
+    ]);
+    setRefreshing(false);
+  };
+
+  const handleRetry = () => {
+    Promise.all([
+      channelsQuery.refetch(),
+      statsQuery.refetch(),
+      logsQuery.refetch(),
+      usageQuery.refetch(),
+    ]);
   };
 
   const hourPoints = useMemo(
@@ -150,7 +178,7 @@ export function StatusDashboard() {
             <TriangleAlert size={24} />
           </span>
           <div className="dsh-error-text">{error}</div>
-          <button className="dsh-error-btn" onClick={fetchData}>
+          <button className="dsh-error-btn" onClick={handleRetry}>
             {t("common.retry")}
           </button>
         </div>

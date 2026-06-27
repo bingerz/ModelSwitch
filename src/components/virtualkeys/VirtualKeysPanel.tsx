@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { KeyRound, CheckCircle, DollarSign, Search, ChevronLeft, ChevronRight, Layers, FileUp } from "lucide-react";
 import {
@@ -23,8 +24,9 @@ const PAGE_SIZE = 20;
 export function VirtualKeysPanel() {
   const { t } = useTranslation();
   const toast = useToast();
-  const [keys, setKeys] = useState<VirtualKey[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
+  // UI state
   const [showAddForm, setShowAddForm] = useState(false);
   const [showBatchModal, setShowBatchModal] = useState(false);
   const [showCsvModal, setShowCsvModal] = useState(false);
@@ -36,16 +38,34 @@ export function VirtualKeysPanel() {
 
   // Pagination + search state
   const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
   const [searchInput, setSearchInput] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const limit = PAGE_SIZE;
-  const totalPages = Math.max(1, Math.ceil(total / limit));
 
   // Group filter state
-  const [groups, setGroups] = useState<string[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<string>("");
+
+  // ── Queries ────────────────────────────────────────────
+
+  const keysQuery = useQuery({
+    queryKey: ["virtualKeys", page, limit, activeSearch],
+    queryFn: () =>
+      api.virtualKeys.list({ page, limit, search: activeSearch || undefined }),
+    refetchInterval: 5_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const groupsQuery = useQuery({
+    queryKey: ["virtualKeyGroups"],
+    queryFn: () => api.virtualKeys.groups(),
+  });
+
+  const keys = keysQuery.data?.data ?? [];
+  const total = keysQuery.data?.total ?? 0;
+  const loading = keysQuery.isLoading;
+  const groups = groupsQuery.data ?? [];
+  const totalPages = Math.max(1, Math.ceil(total / limit));
 
   // Client-side filtered keys (group filter is applied locally to the current page)
   const displayedKeys =
@@ -53,28 +73,16 @@ export function VirtualKeysPanel() {
       ? keys
       : keys.filter((k) => (k.group ?? "") === selectedGroup);
 
-  const refreshGroups = useCallback(async () => {
-    try {
-      const result = await api.virtualKeys.groups();
-      setGroups(result);
-    } catch {
-      // Non-fatal — group filter just stays empty
-    }
-  }, []);
-
-  const refresh = useCallback(async () => {
-    try {
-      const res = await api.virtualKeys.list({ page, limit, search: activeSearch || undefined });
-      setKeys(res.data);
-      setTotal(res.total);
-    } catch (err) {
+  // Surface fetch errors via toast
+  useEffect(() => {
+    if (keysQuery.error) {
       toast.error(
-        err instanceof Error ? err.message : t("virtualKeys.loadFailed"),
+        keysQuery.error instanceof Error
+          ? keysQuery.error.message
+          : t("virtualKeys.loadFailed"),
       );
-    } finally {
-      setLoading(false);
     }
-  }, [toast, t, page, limit, activeSearch]);
+  }, [keysQuery.error, t, toast]);
 
   // Debounced search: when searchInput changes, debounce then commit to activeSearch + reset page
   useEffect(() => {
@@ -97,20 +105,38 @@ export function VirtualKeysPanel() {
     };
   }, [searchInput]);
 
-  useEffect(() => {
-    refresh();
-    refreshGroups();
-  }, [refresh, refreshGroups]);
+  // ── Mutations ──────────────────────────────────────────
+
+  const invalidateKeys = () =>
+    queryClient.invalidateQueries({ queryKey: ["virtualKeys"] });
+  const invalidateGroups = () =>
+    queryClient.invalidateQueries({ queryKey: ["virtualKeyGroups"] });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.virtualKeys.delete(id),
+    onSuccess: () => {
+      invalidateKeys();
+      invalidateGroups();
+    },
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      api.virtualKeys.update(id, { enabled }),
+    onSuccess: () => {
+      invalidateKeys();
+    },
+  });
 
   const handleCreated = (response: CreateVirtualKeyResponse) => {
     setCreatedResponse(response);
     setShowAddForm(false);
-    refresh();
+    invalidateKeys();
   };
 
   const handleBatchCreated = () => {
-    refresh();
-    refreshGroups();
+    invalidateKeys();
+    invalidateGroups();
   };
 
   const handleDelete = async (id: string) => {
@@ -121,9 +147,8 @@ export function VirtualKeysPanel() {
     setConfirmDeleteId(null);
     setActionLoading(id);
     try {
-      await api.virtualKeys.delete(id);
+      await deleteMutation.mutateAsync(id);
       toast.success(t("virtualKeys.deleted"));
-      await refresh();
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : t("virtualKeys.deleteFailed"),
@@ -136,9 +161,10 @@ export function VirtualKeysPanel() {
   const handleToggleEnabled = async (vk: VirtualKey) => {
     setActionLoading(vk.id);
     try {
-      await api.virtualKeys.update(vk.id, { enabled: !vk.enabled });
-      toast.success(vk.enabled ? t("virtualKeys.keyDisabled") : t("virtualKeys.keyEnabled"));
-      await refresh();
+      await toggleMutation.mutateAsync({ id: vk.id, enabled: !vk.enabled });
+      toast.success(
+        vk.enabled ? t("virtualKeys.keyDisabled") : t("virtualKeys.keyEnabled"),
+      );
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : t("virtualKeys.updateFailed"),
@@ -205,7 +231,7 @@ export function VirtualKeysPanel() {
               handleCreated(resp);
             } else {
               setShowAddForm(false);
-              refresh();
+              invalidateKeys();
             }
           }}
           onCancel={() => setShowAddForm(false)}
@@ -329,7 +355,7 @@ export function VirtualKeysPanel() {
                   existingKey={vk}
                   onSave={() => {
                     setEditingId(null);
-                    refresh();
+                    invalidateKeys();
                   }}
                   onCancel={() => setEditingId(null)}
                 />

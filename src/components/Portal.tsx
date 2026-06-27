@@ -1,5 +1,6 @@
 import { centsToUSD, formatTime, computeProgressState } from "./portal-utils";
 import { useCallback, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { createRequestFn } from "../lib/api/client";
 
@@ -90,36 +91,36 @@ function ProgressBar({ label, spent, budget }: ProgressBarProps) {
 
 function PortalDashboard({ onLogout }: { token: string; onLogout: () => void }) {
   const { t } = useTranslation();
-  const [usage, setUsage] = useState<PortalUsage | null>(null);
-  const [logs, setLogs] = useState<PortalLog[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
 
-  const fetchData = useCallback(async () => {
-    try {
-      const [u, l] = await Promise.all([
-        portalRequest<PortalUsage>("/api/portal/usage"),
-        portalRequest<PortalLog[]>("/api/portal/logs?limit=10"),
-      ]);
-      setUsage(u);
-      setLogs(l);
-      setError("");
-    } catch (err) {
-      if (err instanceof Error && err.message === "Unauthorized") {
-        onLogout();
-      } else {
-        setError(err instanceof Error ? err.message : "Unknown error");
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [onLogout]);
+  const usageQuery = useQuery({
+    queryKey: ["portal", "usage"],
+    queryFn: () => portalRequest<PortalUsage>("/api/portal/usage"),
+    refetchInterval: 30_000,
+    retry: false,
+  });
 
+  const logsQuery = useQuery({
+    queryKey: ["portal", "logs"],
+    queryFn: () => portalRequest<PortalLog[]>("/api/portal/logs?limit=10"),
+    refetchInterval: 30_000,
+    retry: false,
+  });
+
+  // Handle 401 (expired/invalid token): the portalRequest onUnauthorized
+  // callback already cleared sessionStorage; trigger parent logout to
+  // re-render the login screen.
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 30_000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+    const err = usageQuery.error ?? logsQuery.error;
+    if (err instanceof Error && err.message === "Unauthorized") {
+      onLogout();
+    }
+  }, [usageQuery.error, logsQuery.error, onLogout]);
+
+  const usage = usageQuery.data ?? null;
+  const logs = logsQuery.data ?? [];
+  const loading = usageQuery.isLoading;
+  const error =
+    usageQuery.error?.message ?? logsQuery.error?.message ?? "";
 
   if (loading && !usage) {
     return <div className="portal-loading">{t("common.loading")}</div>;
