@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { isMockMode } from "../lib/mock";
+import { isMockMode } from "../lib/mock-flag";
 
 export function MockBadge() {
   const { t } = useTranslation();

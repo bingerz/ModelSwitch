@@ -27,7 +27,7 @@ import { reportsFlatApi, reportsApi, logs } from "./reports";
 import { guardrailsApi } from "./guardrails";
 import { configApi } from "./config";
 
-import { isMockMode, mockApi } from "../mock";
+import { isMockMode } from "../mock-flag";
 
 export interface Api {
   // Channels (flat)
@@ -104,8 +104,13 @@ export const api: Api = {
 
 // ─── Mock mode ──────────────────────────────────────────
 // When mock mode is enabled, replace api methods with mock implementations.
-// This allows zero changes to consumer code — all existing imports of { api }
-// automatically pick up mock data.
+// The mock module is loaded dynamically so the 1.6k lines of mock data + mock
+// API stay in a separate chunk and out of the production bundle. The dynamic
+// import is kicked off at module init; in dev the chunk resolves within a
+// few milliseconds (fast loopback fetch), and by the time any React effect
+// fires an API call the mock methods are installed on `api`.
 if (isMockMode()) {
-  Object.assign(api, mockApi);
+  void import("../mock").then(({ mockApi }) => {
+    Object.assign(api, mockApi);
+  });
 }

@@ -13,7 +13,7 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-vi.mock("../lib/mock", () => ({
+vi.mock("../lib/mock-flag", () => ({
   isMockMode: () => false,
   setMockMode: vi.fn(),
 }));

@@ -1,5 +1,6 @@
-// Mock mode: when enabled, all api calls return realistic mock data.
-// Zero changes needed in consumer code — api.ts augments itself.
+// Mock API implementation. Dynamically imported by ./api/index.ts only when
+// mock mode is active so the heavy mock data stays out of the production
+// bundle. The flag itself (isMockMode/setMockMode) lives in ./mock-flag.ts.
 
 import type { api } from "./api";
 import type {
@@ -40,36 +41,6 @@ function uuid(): string {
     const v = c === "x" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
-}
-
-// ─── Mock mode detection / toggle ───────────────────────
-
-export function isMockMode(): boolean {
-  try {
-    const url = new URL(window.location.href);
-    const mockParam = url.searchParams.get("mock");
-    if (mockParam === "true" || mockParam === "1" || mockParam === "") return true;
-  } catch {
-    // SSR or non-browser env
-  }
-  try {
-    return localStorage.getItem("msw-mock") === "1";
-  } catch {
-    return false;
-  }
-}
-
-export function setMockMode(enabled: boolean): void {
-  try {
-    if (enabled) {
-      localStorage.setItem("msw-mock", "1");
-    } else {
-      localStorage.removeItem("msw-mock");
-    }
-  } catch {
-    // localStorage not available
-  }
-  window.location.reload();
 }
 
 // ─── Mock API ───────────────────────────────────────────

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FlaskConical, RotateCcw } from "lucide-react";
 import { api } from "../../lib/api";
-import { isMockMode, setMockMode } from "../../lib/mock";
+import { isMockMode, setMockMode } from "../../lib/mock-flag";
 import { useToast } from "../Toast";
 
 interface GeneralSettingsProps {
