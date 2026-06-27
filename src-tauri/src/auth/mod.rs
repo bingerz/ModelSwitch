@@ -1,6 +1,7 @@
 //! Enterprise authentication module.
 //!
-//! Supports LDAP/Active Directory bind authentication and OIDC SSO (scaffold).
+//! Supports LDAP/Active Directory bind authentication and OIDC SSO
+//! (authorization code flow with discovery + ID token claims).
 
 pub mod ldap;
 pub mod oidc;

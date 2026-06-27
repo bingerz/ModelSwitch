@@ -1513,6 +1513,7 @@ mod tests {
             )),
             completion_ratios: Arc::new(parking_lot::RwLock::new(HashMap::new())),
             ldap_config: None,
+            oidc_config: None,
             started_at: std::time::Instant::now(),
         })
     }

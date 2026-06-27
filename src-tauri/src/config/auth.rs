@@ -53,7 +53,7 @@ impl LdapConfig {
     }
 }
 
-/// OIDC / OAuth2 SSO configuration (scaffold — not yet wired to token validation).
+/// OIDC / OAuth2 SSO configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OidcConfig {
     /// Issuer URL (e.g., `https://login.microsoftonline.com/{tenant}/v2.0`).

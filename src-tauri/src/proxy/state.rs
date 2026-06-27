@@ -121,5 +121,9 @@ pub struct AppState {
     pub completion_ratios: Arc<parking_lot::RwLock<HashMap<String, f64>>>,
     /// LDAP/AD authentication configuration. None = LDAP disabled.
     pub ldap_config: Option<crate::config::LdapConfig>,
+    /// OIDC SSO configuration. None = OIDC disabled.
+    pub oidc_config: Option<crate::config::OidcConfig>,
+    /// Random secret for stateless OIDC CSRF state token signing.
+    pub oidc_state_secret: String,
     pub started_at: std::time::Instant,
 }

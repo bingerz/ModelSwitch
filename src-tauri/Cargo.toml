@@ -94,6 +94,7 @@ lettre = { version = "0.11", default-features = false, features = [
 
 # Enterprise authentication
 ldap3 = "0.11"
+base64 = "0.22"
 
 [dev-dependencies]
 wiremock = "0.6"

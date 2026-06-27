@@ -247,6 +247,8 @@ fn auth_routes(state: Arc<AppState>) -> Router {
     let auth_rate_limit_state = Arc::clone(&state);
     Router::new()
         .route("/api/auth/ldap/login", post(admin::auth::ldap_login))
+        .route("/api/auth/oidc/login", get(admin::auth::oidc_login))
+        .route("/api/auth/oidc/callback", get(admin::auth::oidc_callback))
         .layer(axum::middleware::from_fn_with_state(
             auth_rate_limit_state,
             middleware::auth::auth_rate_limit_middleware,

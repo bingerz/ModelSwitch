@@ -256,6 +256,7 @@ fn build_test_state_with_opts(
         completion_ratios: Arc::new(parking_lot::RwLock::new(HashMap::new())),
         model_registry,
         ldap_config: None,
+        oidc_config: None,
         started_at: std::time::Instant::now(),
     })
 }

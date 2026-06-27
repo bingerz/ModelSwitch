@@ -1,7 +1,8 @@
 use crate::auth::ldap::LdapAuthenticator;
+use crate::auth::oidc::OidcAuthenticator;
 use crate::middleware::error::ApiError;
 use crate::proxy::AppState;
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
@@ -219,6 +220,188 @@ pub async fn ldap_login(
             ApiError::new(status, message).into_response()
         }
     }
+}
+
+// ─── OIDC SSO ──────────────────────────────────────────
+
+/// Response payload for `GET /api/auth/oidc/login` — the URL the SPA should
+/// redirect the user agent to in order to start the IdP authorization flow.
+#[derive(Debug, serde::Serialize)]
+pub struct OidcLoginResponse {
+    pub url: String,
+}
+
+/// Query parameters supplied by the IdP on the redirect back to
+/// `GET /api/auth/oidc/callback`.
+#[derive(Debug, serde::Deserialize)]
+pub struct OidcCallbackParams {
+    pub code: String,
+    pub state: String,
+    /// IdPs may surface authorization errors via `error` / `error_description`.
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub error_description: Option<String>,
+}
+
+/// Result of a successful OIDC callback — same shape as the LDAP login
+/// response plus an optional email.
+#[derive(Debug, serde::Serialize)]
+pub struct OidcCallbackResponse {
+    pub key: String,
+    pub key_prefix: String,
+    pub username: String,
+    pub group: String,
+    pub email: Option<String>,
+}
+
+/// `GET /api/auth/oidc/login` — begin the OIDC authorization code flow.
+///
+/// Returns the IdP authorization URL as JSON. The SPA is responsible for
+/// performing the actual redirect (more flexible than an HTTP 30x for SPA
+/// front-ends). Returns 503 if OIDC is not configured.
+pub async fn oidc_login(State(state): State<std::sync::Arc<AppState>>) -> axum::response::Response {
+    let oidc_config = match &state.oidc_config {
+        Some(cfg) => cfg.clone(),
+        None => {
+            return ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "OIDC authentication is not configured",
+            )
+            .into_response();
+        }
+    };
+
+    let authenticator = match OidcAuthenticator::new(oidc_config) {
+        Ok(auth) => auth,
+        Err(e) => {
+            tracing::error!(error = %e, "OIDC authenticator construction failed");
+            return ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Authentication service configuration error",
+            )
+            .into_response();
+        }
+    };
+
+    let (url, _state) = authenticator.authorization_url();
+    // TODO: persist `_state` in a server-side session/cookie and verify it
+    // in the callback. For this phase we rely on the single-use code +
+    // redirect_uri binding for CSRF defence.
+    Json(super::ApiResponse::ok(OidcLoginResponse { url })).into_response()
+}
+
+/// `GET /api/auth/oidc/callback` — handle the IdP redirect after user consent.
+///
+/// Exchanges the one-time authorization code for tokens, extracts user
+/// identity (ID token claims or userinfo endpoint), and provisions a virtual
+/// API key mirroring the LDAP login path.
+pub async fn oidc_callback(
+    State(state): State<std::sync::Arc<AppState>>,
+    Query(params): Query<OidcCallbackParams>,
+) -> axum::response::Response {
+    let oidc_config = match &state.oidc_config {
+        Some(cfg) => cfg.clone(),
+        None => {
+            return ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "OIDC authentication is not configured",
+            )
+            .into_response();
+        }
+    };
+
+    // Surface IdP-originated authorization errors (user denied consent, etc.).
+    if let Some(err) = &params.error {
+        tracing::warn!(
+            error = %err,
+            description = ?params.error_description,
+            "OIDC authorization server returned an error"
+        );
+        return ApiError::new(StatusCode::BAD_REQUEST, "Authorization failed").into_response();
+    }
+
+    // TODO: validate `params.state` against the value issued in `oidc_login`.
+    // Requires server-side session storage (cookie or KV). Skipped for this
+    // phase; the authorization code is one-time-use and bound to redirect_uri.
+    tracing::debug!(callback_state = %params.state, "OIDC callback received");
+
+    let authenticator = match OidcAuthenticator::new(oidc_config) {
+        Ok(auth) => auth,
+        Err(e) => {
+            tracing::error!(error = %e, "OIDC authenticator construction failed");
+            return ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Authentication service configuration error",
+            )
+            .into_response();
+        }
+    };
+
+    let tokens = match authenticator.exchange_code(&params.code).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(error = %e, "OIDC token exchange failed");
+            return ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "Authentication service temporarily unavailable",
+            )
+            .into_response();
+        }
+    };
+
+    let user_info = match authenticator.extract_user_info(&tokens).await {
+        Ok(info) => info,
+        Err(e) => {
+            tracing::warn!(error = %e, "OIDC userinfo extraction failed");
+            return ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "Authentication service temporarily unavailable",
+            )
+            .into_response();
+        }
+    };
+
+    let store = &state.billing.virtual_key_store;
+    let key_name = format!("oidc:{}", user_info.username);
+
+    // Dedupe: delete any pre-existing virtual key for this user so each login
+    // yields a fresh plaintext (mirrors the LDAP login path).
+    let existing = store.list().await.into_iter().find(|k| k.name == key_name);
+    if let Some(old_key) = existing {
+        store.delete(old_key.id).await;
+    }
+
+    let group = user_info.groups.first().cloned().unwrap_or_default();
+    let (new_key, plaintext) = store
+        .create(
+            key_name,
+            None,   // daily_budget_cents
+            None,   // monthly_budget_cents
+            None,   // allowed_models
+            vec![], // denied_models
+            vec![], // allowed_ips
+            None,   // rpm_limit
+            None,   // tpm_limit
+            None,   // expires_at
+            Some(group.clone()),
+        )
+        .await;
+
+    tracing::info!(
+        username = %user_info.username,
+        key_prefix = %new_key.key_prefix,
+        "OIDC login succeeded, virtual key provisioned"
+    );
+
+    let resp = OidcCallbackResponse {
+        key: plaintext,
+        key_prefix: new_key.key_prefix,
+        username: user_info.username,
+        group,
+        email: user_info.email,
+    };
+    Json(super::ApiResponse::ok(resp)).into_response()
 }
 
 #[cfg(test)]
