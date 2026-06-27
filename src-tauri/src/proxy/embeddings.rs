@@ -6,6 +6,8 @@
 //! forwards the request to the upstream `/v1/embeddings` endpoint and
 //! returns the response.
 
+use crate::channel::Channel;
+use crate::proxy::error_response;
 use crate::proxy::stream::json_response;
 use crate::proxy::AppState;
 use crate::proxy::SKIP_HEADERS;
@@ -16,74 +18,57 @@ use axum::Json;
 use reqwest::StatusCode;
 use serde_json::Value;
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// Upstream path for OpenAI-compatible embeddings.
 const EMBEDDINGS_UPSTREAM_PATH: &str = "v1/embeddings";
 
-/// Handle `POST /v1/embeddings` requests.
+/// Estimated token count used for embeddings rate limiting (conservative).
+const EMBEDDINGS_ESTIMATED_TOKENS: u64 = 1000;
+
+// ── Helper functions ──────────────────────────────────────────────────────
+
+/// Validate that the request body contains non-empty `model` and `input` fields.
 ///
-/// Selects a healthy channel for the requested model, forwards the request
-/// to the upstream embeddings endpoint, and returns the response.
-/// Supports gateway-level model aliases, tag-based routing via the
-/// `x-account-group` header, per-channel rate limiting, circuit breaker,
-/// and per-provider budget enforcement.
-pub async fn handle_embeddings(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(body): Json<Value>,
-) -> axum::response::Response {
-    // ── Validate request ────────────────────────────────────────────────
+/// Returns the requested model string on success, or an OpenAI-compatible error
+/// response on failure.
+#[allow(clippy::result_large_err)]
+fn validate_embedding_request(body: &Value) -> Result<String, axum::response::Response> {
     let requested_model = match body.get("model").and_then(|m| m.as_str()) {
         Some(m) if !m.is_empty() => m.to_string(),
         _ => {
-            return json_response(
+            return Err(error_response(
                 StatusCode::BAD_REQUEST,
-                serde_json::json!({
-                    "error": {
-                        "message": "Missing required field: model",
-                        "type": "invalid_request_error",
-                        "code": "missing_model"
-                    }
-                })
-                .to_string(),
-            );
+                "Missing required field: model",
+                "invalid_request_error",
+                "missing_model",
+            ));
         }
     };
 
     if body.get("input").is_none() {
-        return json_response(
+        return Err(error_response(
             StatusCode::BAD_REQUEST,
-            serde_json::json!({
-                "error": {
-                    "message": "Missing required field: input",
-                    "type": "invalid_request_error",
-                    "code": "missing_input"
-                }
-            })
-            .to_string(),
-        );
+            "Missing required field: input",
+            "invalid_request_error",
+            "missing_input",
+        ));
     }
 
-    // ── Resolve gateway-level model alias ──────────────────────────────
-    // Per-channel model_mapping is applied after channel selection.
-    let resolved_model = state
-        .gateway
-        .model_aliases
-        .get(&requested_model)
-        .cloned()
-        .unwrap_or(requested_model.clone());
+    Ok(requested_model)
+}
 
-    // ── Account-group routing filter ───────────────────────────────────
-    let account_group = headers
-        .get("x-account-group")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
-
-    // Channel selection uses select_channel's built-in account_group
-    // filtering (matching tag or universal/None), consistent with dispatch.rs.
+/// Select a channel for the embedding request via `router::select_channel`.
+///
+/// Returns the selected channel on success, or a 503 error response when no
+/// channel is available for the requested model.
+#[allow(clippy::result_large_err)]
+async fn select_embedding_channel(
+    state: &AppState,
+    model: &str,
+    account_group: Option<&str>,
+) -> Result<Channel, axum::response::Response> {
     let channels = state.channel_mgr.channels();
-
-    // ── Channel selection ──────────────────────────────────────────────
     let ctx = RoutingContext {
         active_requests: &state.router.active_requests,
         rate_limiter: &state.limits.rate_limiter,
@@ -91,35 +76,34 @@ pub async fn handle_embeddings(
         cooldown_tracker: &state.router.cooldown_tracker,
     };
 
-    let channel = match router::select_channel(
-        channels,
-        &resolved_model,
-        state.gateway.routing_strategy,
-        &ctx,
-        account_group.as_deref(),
-    )
-    .await
-    {
-        Some(ch) => ch,
-        None => {
-            return json_response(
-                StatusCode::SERVICE_UNAVAILABLE,
-                serde_json::json!({
-                    "error": {
-                        "message": format!("No available channel for model: {}", resolved_model),
-                        "type": "server_error",
-                        "code": "no_channel_available"
-                    }
-                })
-                .to_string(),
-            );
-        }
-    };
+    match router::select_channel(channels, model, state.gateway.routing_strategy, &ctx, account_group).await {
+        Some(ch) => Ok(ch),
+        None => Err(json_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            serde_json::json!({
+                "error": {
+                    "message": format!("No available channel for model: {}", model),
+                    "type": "server_error",
+                    "code": "no_channel_available"
+                }
+            })
+            .to_string(),
+        )),
+    }
+}
 
-    // ── Track active request via RAII guard ───────────────────────────
-    let _active_guard = state.router.active_requests.acquire(channel.id);
-
-    // ── Provider budget check ──────────────────────────────────────────
+/// Check provider budget and rate limiter before dispatching the request.
+///
+/// Returns `Ok(())` if all checks pass, or an error response (402 for budget
+/// exceeded, 429 for rate limited) on failure.
+#[allow(clippy::result_large_err)]
+async fn check_embedding_pre_dispatch(
+    state: &AppState,
+    channel: &Channel,
+    channel_id: Uuid,
+    estimated_tokens: u64,
+) -> Result<(), axum::response::Response> {
+    // ── Provider budget check ──
     let provider_name = channel.provider.as_str().to_string();
     if !state
         .billing
@@ -132,7 +116,7 @@ pub async fn handle_embeddings(
             channel = %channel.name,
             "Provider budget exceeded, rejecting embeddings request"
         );
-        return json_response(
+        return Err(json_response(
             StatusCode::PAYMENT_REQUIRED,
             serde_json::json!({
                 "error": {
@@ -142,24 +126,21 @@ pub async fn handle_embeddings(
                 }
             })
             .to_string(),
-        );
+        ));
     }
 
-    // ── Rate limiter ───────────────────────────────────────────────────
-    // Embeddings requests typically have small token counts; use a conservative
-    // estimate of 1000 tokens for the rate limiter check.
-    let estimated_tokens: u64 = 1000;
+    // ── Rate limiter check ──
     let (allowed, rate_reason) = state
         .limits
         .rate_limiter
-        .check(channel.id, estimated_tokens);
+        .check(channel_id, estimated_tokens);
     if !allowed {
         tracing::warn!(
             channel = %channel.name,
             reason = rate_reason,
             "Embeddings request rate limited"
         );
-        return json_response(
+        return Err(json_response(
             StatusCode::TOO_MANY_REQUESTS,
             serde_json::json!({
                 "error": {
@@ -169,10 +150,28 @@ pub async fn handle_embeddings(
                 }
             })
             .to_string(),
-        );
+        ));
     }
 
-    // ── Credential lookup ──────────────────────────────────────────────
+    Ok(())
+}
+
+/// Look up the channel credential, build the upstream URL, apply model
+/// mapping, forward client headers, and attach provider-specific auth.
+///
+/// Returns the `RequestBuilder` (ready to send) plus the `channel_id`,
+/// `channel_name`, and `provider_label` needed for subsequent logging and
+/// metrics recording.
+#[allow(clippy::result_large_err)]
+async fn build_embedding_request(
+    state: &AppState,
+    headers: &HeaderMap,
+    channel: &Channel,
+    body: Value,
+    resolved_model: &str,
+    estimated_tokens: u64,
+) -> Result<(reqwest::RequestBuilder, Uuid, String, String), axum::response::Response> {
+    // ── Credential lookup ──
     let api_key = match state.channel_mgr.get_credential(channel.id).await {
         Some(key) => key,
         None => {
@@ -182,7 +181,7 @@ pub async fn handle_embeddings(
                 .rate_limiter
                 .record(channel.id, estimated_tokens);
             state.channel_mgr.mark_circuit_open(channel.id).await;
-            return json_response(
+            return Err(json_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 serde_json::json!({
                     "error": {
@@ -192,12 +191,12 @@ pub async fn handle_embeddings(
                     }
                 })
                 .to_string(),
-            );
+            ));
         }
     };
 
-    // ── Build upstream request ─────────────────────────────────────────
-    let upstream_model = channel.map_model(&resolved_model);
+    // ── Model mapping ──
+    let upstream_model = channel.map_model(resolved_model);
     let model_needs_change = upstream_model != resolved_model;
     let mut upstream_body = body;
     if model_needs_change {
@@ -206,26 +205,27 @@ pub async fn handle_embeddings(
         }
     }
 
+    // ── Build URL ──
     let url = format!(
         "{}/{}",
         channel.base_url.trim_end_matches('/'),
         EMBEDDINGS_UPSTREAM_PATH
     );
 
-    let pool_guard = state.http_pool.get();
-    let mut req_builder = pool_guard.post(&url).json(&upstream_body);
+    // ── Build reqwest request ──
+    let _pool_guard = state.http_pool.get();
+    let mut req_builder = _pool_guard.post(&url).json(&upstream_body);
 
-    // Forward client headers (excluding hop-by-hop and auth headers that the
-    // gateway manages).
+    // Forward client headers (excluding hop-by-hop and auth headers)
     for (name, value) in headers.iter() {
         if !SKIP_HEADERS.contains(&name.as_str()) {
             req_builder = req_builder.header(name.clone(), value.clone());
         }
     }
 
-    // Apply provider-specific auth. Embeddings are OpenAI-compatible, so we
-    // use Bearer auth for all providers except web-session channels.
-    let is_web_session = channel.credential.cred_type == crate::channel::CredentialType::WebSession;
+    // Apply provider-specific auth
+    let is_web_session =
+        channel.credential.cred_type == crate::channel::CredentialType::WebSession;
     req_builder = if is_web_session {
         req_builder
             .header("Cookie", &api_key)
@@ -240,76 +240,53 @@ pub async fn handle_embeddings(
     let channel_id = channel.id;
     let channel_name = channel.name.clone();
 
-    // ── Send upstream request ──────────────────────────────────────────
-    let resp = match req_builder.send().await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!(
-                channel = %channel_name,
-                error = %e,
-                "Embeddings upstream request failed"
-            );
-            state
-                .limits
-                .rate_limiter
-                .record(channel.id, estimated_tokens);
-            state.channel_mgr.mark_circuit_open(channel_id).await;
+    Ok((req_builder, channel_id, channel_name, provider_label))
+}
 
-            crate::metrics::requests_total()
-                .with_label_values(&[&provider_label, &resolved_model, "error"])
-                .inc();
-
-            return json_response(
-                StatusCode::BAD_GATEWAY,
-                serde_json::json!({
-                    "error": {
-                        "message": format!("Upstream connection error: {}", e),
-                        "type": "server_error",
-                        "code": "upstream_connection_error"
-                    }
-                })
-                .to_string(),
-            );
-        }
-    };
-
-    // ── Process response ───────────────────────────────────────────────
-    let status = resp.status();
-    let body_text = resp.text().await.unwrap_or_default();
-
-    // Record rate limiter usage (the request was sent)
+/// Process the upstream response: record rate limiter usage, emit metrics,
+/// trip the circuit breaker on error statuses (429, 5xx), log the dispatch
+/// event, and return the body to the client.
+async fn handle_embedding_response(
+    status: StatusCode,
+    body_text: String,
+    state: &AppState,
+    channel: &Channel,
+    provider_label: &str,
+    resolved_model: &str,
+    estimated_tokens: u64,
+) -> axum::response::Response {
+    // ── Record rate limiter usage ──
     state
         .limits
         .rate_limiter
         .record(channel.id, estimated_tokens);
 
-    // Active-request decrement handled by `_active_guard` drop at function end.
-
-    // Record metrics
+    // ── Record metrics ──
     let status_label = if status.is_success() {
         "success"
     } else {
         "error"
     };
     crate::metrics::requests_total()
-        .with_label_values(&[&provider_label, &resolved_model, status_label])
+        .with_label_values(&[provider_label, resolved_model, status_label])
         .inc();
 
-    // Handle upstream rate-limit and server errors by tripping the circuit
-    // breaker so subsequent requests pick a different channel.
+    // ── Circuit breaker for upstream errors ──
     if status == StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
         tracing::warn!(
-            channel = %channel_name,
+            channel = %channel.name,
             status = %status,
             "Embeddings upstream returned error, marking circuit open"
         );
-        state.channel_mgr.mark_circuit_open(channel_id).await;
+        state.channel_mgr.mark_circuit_open(channel.id).await;
     }
 
-    // Log dispatch
+    // ── Log dispatch ──
     let logger = Arc::clone(&state.logger);
-    let model_for_log = resolved_model.clone();
+    let model_for_log = resolved_model.to_string();
     let status_for_log = status;
+    let channel_name_for_log = channel.name.clone();
+    let channel_id_for_log = channel.id;
     tokio::spawn(async move {
         let reason = if status_for_log.is_success() {
             None
@@ -319,8 +296,8 @@ pub async fn handle_embeddings(
         logger
             .log(crate::proxy::make_log(
                 &model_for_log,
-                channel_id,
-                &channel_name,
+                channel_id_for_log,
+                &channel_name_for_log,
                 1,
                 1,
                 reason.as_deref(),
@@ -338,6 +315,124 @@ pub async fn handle_embeddings(
     });
 
     json_response(status, body_text)
+}
+
+// ── Main handler ──────────────────────────────────────────────────────────
+
+/// Handle `POST /v1/embeddings` requests.
+///
+/// Selects a healthy channel for the requested model, forwards the request
+/// to the upstream embeddings endpoint, and returns the response.
+/// Supports gateway-level model aliases, tag-based routing via the
+/// `x-account-group` header, per-channel rate limiting, circuit breaker,
+/// and per-provider budget enforcement.
+pub async fn handle_embeddings(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> axum::response::Response {
+    // ── Validate request ──
+    let requested_model = match validate_embedding_request(&body) {
+        Ok(m) => m,
+        Err(e) => return e,
+    };
+
+    // ── Resolve gateway-level model alias ──
+    let resolved_model = state
+        .gateway
+        .model_aliases
+        .get(&requested_model)
+        .cloned()
+        .unwrap_or(requested_model);
+
+    // ── Account-group routing filter ──
+    let account_group = headers
+        .get("x-account-group")
+        .and_then(|v| v.to_str().ok());
+
+    // ── Channel selection ──
+    let channel = match select_embedding_channel(&state, &resolved_model, account_group).await {
+        Ok(ch) => ch,
+        Err(e) => return e,
+    };
+
+    // ── Track active request via RAII guard ──
+    let _active_guard = state.router.active_requests.acquire(channel.id);
+
+    // ── Pre-dispatch checks (budget + rate limiter) ──
+    if let Err(e) = check_embedding_pre_dispatch(
+        &state,
+        &channel,
+        channel.id,
+        EMBEDDINGS_ESTIMATED_TOKENS,
+    )
+    .await
+    {
+        return e;
+    }
+
+    // ── Build upstream request ──
+    let (req_builder, channel_id, channel_name, provider_label) = match build_embedding_request(
+        &state,
+        &headers,
+        &channel,
+        body,
+        &resolved_model,
+        EMBEDDINGS_ESTIMATED_TOKENS,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    // ── Send upstream request ──
+    let resp = match req_builder.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(
+                channel = %channel_name,
+                error = %e,
+                "Embeddings upstream request failed"
+            );
+            state
+                .limits
+                .rate_limiter
+                .record(channel_id, EMBEDDINGS_ESTIMATED_TOKENS);
+            state.channel_mgr.mark_circuit_open(channel_id).await;
+
+            crate::metrics::requests_total()
+                .with_label_values(&[&provider_label, &resolved_model, "error"])
+                .inc();
+
+            return json_response(
+                StatusCode::BAD_GATEWAY,
+                serde_json::json!({
+                    "error": {
+                        "message": "Upstream connection error".to_string(),
+                        "type": "server_error",
+                        "code": "upstream_connection_error"
+                    }
+                })
+                .to_string(),
+            );
+        }
+    };
+
+    // ── Process response ──
+    let status = resp.status();
+    let body_text = resp.text().await.unwrap_or_default();
+
+    handle_embedding_response(
+        status,
+        body_text,
+        &state,
+        &channel,
+        &provider_label,
+        &resolved_model,
+        EMBEDDINGS_ESTIMATED_TOKENS,
+    )
+    .await
 }
 
 #[cfg(test)]
