@@ -13,6 +13,7 @@ use crate::http_pool::PooledClient;
 use crate::proxy::stream::json_response;
 use crate::router::active_requests::ActiveRequestGuard;
 
+use super::payload_rules::ChannelPayloadRules;
 use super::provider::ProviderAdaptor;
 use super::response::{extract_passthrough_headers, handle_json_success, handle_streaming_success};
 use super::translate::translate_request;
@@ -591,39 +592,163 @@ async fn bootstrap_sse_stream(
     }
 }
 
-/// Attempt to dispatch a request to a single channel.
-/// Returns `Respond(response)` if a final response is ready, or `Retry` to try next.
-pub(super) async fn try_channel_attempt(
-    state: &Arc<crate::proxy::AppState>,
-    ctx: &DispatchContext<'_>,
-) -> AttemptOutcome {
-    // ── 1. Body preparation (model mapping, payload rules, stream usage) ──
-    let upstream_model = ctx.channel.map_model(ctx.current_model);
-    let upstream_format = ctx.provider.provider_request_format();
-    let has_payload_rules = state.limits.payload_rules.has_rules(ctx.channel.id);
-    let model_needs_change = upstream_model != ctx.current_model;
+/// Apply model mapping and payload rules to produce the upstream request body.
+fn prepare_upstream_body<'a>(
+    body: &'a Value,
+    channel: &Channel,
+    current_model: &str,
+    payload_rules: &ChannelPayloadRules,
+) -> (String, Cow<'a, Value>) {
+    let upstream_model = channel.map_model(current_model);
+    let has_payload_rules = payload_rules.has_rules(channel.id);
+    let model_needs_change = upstream_model != current_model;
 
     let needs_mutation = model_needs_change || has_payload_rules;
 
-    let mut upstream_body: Cow<'_, Value> = if needs_mutation {
-        let mut cloned = ctx.body.clone();
+    let upstream_body: Cow<'a, Value> = if needs_mutation {
+        let mut cloned = body.clone();
         if let Some(obj) = cloned.as_object_mut() {
             if model_needs_change {
                 obj.insert("model".to_string(), Value::String(upstream_model.clone()));
             }
         }
         if has_payload_rules {
-            cloned = state.limits.payload_rules.apply_for_model(
-                ctx.channel.id,
+            cloned = payload_rules.apply_for_model(
+                channel.id,
                 cloned,
-                ctx.current_model,
-                ctx.channel.provider.as_str(),
+                current_model,
+                channel.provider.as_str(),
             );
         }
         Cow::Owned(cloned)
     } else {
-        Cow::Borrowed(ctx.body)
+        Cow::Borrowed(body)
     };
+
+    (upstream_model, upstream_body)
+}
+
+/// Returns Ok(()) if the request passes pre-flight checks, or ContextOverflow if the
+/// body exceeds the upstream model's context window.
+async fn check_pre_flight_guards(
+    state: &Arc<crate::proxy::AppState>,
+    ctx: &DispatchContext<'_>,
+    upstream_body: &mut Value,
+) -> Result<(), AttemptOutcome> {
+    let preflight_max_context = {
+        let registry = state.model_registry.read();
+        let caps = registry.get(ctx.current_model);
+
+        if !caps.supports_thinking {
+            if let Some(obj) = upstream_body.as_object_mut() {
+                obj.remove("thinking");
+                obj.remove("reasoning_effort");
+                obj.remove("reasoning");
+            }
+            if let Some(gen_config) = upstream_body
+                .get_mut("generationConfig")
+                .and_then(|gc| gc.as_object_mut())
+            {
+                gen_config.remove("thinkingConfig");
+            }
+        }
+
+        if !caps.supports_tools {
+            if let Some(obj) = upstream_body.as_object_mut() {
+                obj.remove("tools");
+                obj.remove("tool_choice");
+            }
+        }
+
+        caps.max_context_tokens
+    };
+
+    if let Some(max_context) = preflight_max_context {
+        let body_len = serde_json::to_string(&upstream_body)
+            .unwrap_or_default()
+            .len();
+        let preflight_tokens = (body_len / 4) as u64;
+        if preflight_tokens > max_context {
+            tracing::warn!(
+                channel = %ctx.channel.name,
+                model = %ctx.current_model,
+                estimated_tokens = preflight_tokens,
+                max_context,
+                "Pre-flight context check failed — skipping upstream call"
+            );
+            log_attempt_failure(
+                &state.logger,
+                ctx.current_model,
+                ctx.channel,
+                ctx.attempt,
+                FailureReason::ContextOverflow,
+                ctx.start,
+                ctx.request_id,
+                ctx.vk_id.map(|id| id.to_string()),
+            )
+            .await;
+            return Err(AttemptOutcome::ContextOverflow);
+        }
+    }
+
+    Ok(())
+}
+
+/// Record success metrics, latency, and dispatch log after a successful upstream response.
+async fn record_success_side_effects(
+    state: &Arc<crate::proxy::AppState>,
+    ctx: &DispatchContext<'_>,
+    resp: &reqwest::Response,
+) -> Vec<(String, String)> {
+    state
+        .router
+        .cooldown_tracker
+        .record_attempt(ctx.channel.id, true);
+    if let Some(ref sid) = ctx.session_id {
+        state
+            .router
+            .session_affinity
+            .set_channel(sid, ctx.channel.id)
+            .await;
+    }
+
+    let upstream_headers = extract_passthrough_headers(resp, &state.gateway.passthrough_headers);
+
+    // Passive rate-limit extraction — update quota store from response headers
+    if let Some(qh) = crate::quota::collectors::response_header::QuotaHeaders::extract(
+        ctx.channel.provider.as_str(),
+        resp.headers(),
+    ) {
+        state
+            .billing
+            .quota_store
+            .update_rate_limits(
+                ctx.channel.id,
+                qh.remaining_requests,
+                qh.limit_requests,
+                qh.remaining_tokens,
+                qh.limit_tokens,
+            )
+            .await;
+    }
+
+    upstream_headers
+}
+
+/// Attempt to dispatch a request to a single channel.
+/// Returns `Respond(response)` if a final response is ready, or `Retry` to try next.
+pub(super) async fn try_channel_attempt(
+    state: &Arc<crate::proxy::AppState>,
+    ctx: &DispatchContext<'_>,
+) -> AttemptOutcome {
+    // ── 1. Body preparation (model mapping, payload rules) ──
+    let (upstream_model, mut upstream_body) = prepare_upstream_body(
+        ctx.body,
+        ctx.channel,
+        ctx.current_model,
+        &state.limits.payload_rules,
+    );
+    let upstream_format = ctx.provider.provider_request_format();
 
     // ── 2. Rate limit check ──
     let estimated_tokens = estimate_tokens(&upstream_body, ctx.is_stream);
@@ -721,60 +846,8 @@ pub(super) async fn try_channel_attempt(
     }
 
     // ── 5. Model registry guards + pre-flight context check ──
-    let preflight_max_context = {
-        let registry = state.model_registry.read();
-        let caps = registry.get(ctx.current_model);
-
-        if !caps.supports_thinking {
-            if let Some(obj) = upstream_body.as_object_mut() {
-                obj.remove("thinking");
-                obj.remove("reasoning_effort");
-                obj.remove("reasoning");
-            }
-            if let Some(gen_config) = upstream_body
-                .get_mut("generationConfig")
-                .and_then(|gc| gc.as_object_mut())
-            {
-                gen_config.remove("thinkingConfig");
-            }
-        }
-
-        if !caps.supports_tools {
-            if let Some(obj) = upstream_body.as_object_mut() {
-                obj.remove("tools");
-                obj.remove("tool_choice");
-            }
-        }
-
-        caps.max_context_tokens
-    }; // registry guard dropped here
-
-    if let Some(max_context) = preflight_max_context {
-        let body_len = serde_json::to_string(&upstream_body)
-            .unwrap_or_default()
-            .len();
-        let preflight_tokens = (body_len / 4) as u64;
-        if preflight_tokens > max_context {
-            tracing::warn!(
-                channel = %ctx.channel.name,
-                model = %ctx.current_model,
-                estimated_tokens = preflight_tokens,
-                max_context,
-                "Pre-flight context check failed — skipping upstream call"
-            );
-            log_attempt_failure(
-                &state.logger,
-                ctx.current_model,
-                ctx.channel,
-                ctx.attempt,
-                FailureReason::ContextOverflow,
-                ctx.start,
-                ctx.request_id,
-                ctx.vk_id.map(|id| id.to_string()),
-            )
-            .await;
-            return AttemptOutcome::ContextOverflow;
-        }
+    if let Err(outcome) = check_pre_flight_guards(state, ctx, &mut upstream_body).await {
+        return outcome;
     }
 
     // ── 6. Build and send request ──
@@ -799,39 +872,7 @@ pub(super) async fn try_channel_attempt(
     };
 
     // ── 8. Success — record cooldown, affinity, quota headers, passthrough headers ──
-    state
-        .router
-        .cooldown_tracker
-        .record_attempt(ctx.channel.id, true);
-    if let Some(ref sid) = ctx.session_id {
-        state
-            .router
-            .session_affinity
-            .set_channel(sid, ctx.channel.id)
-            .await;
-    }
-
-    let upstream_headers = extract_passthrough_headers(&resp, &state.gateway.passthrough_headers);
-
-    // Passive rate-limit extraction — update quota store from response headers
-    {
-        if let Some(qh) = crate::quota::collectors::response_header::QuotaHeaders::extract(
-            ctx.channel.provider.as_str(),
-            resp.headers(),
-        ) {
-            state
-                .billing
-                .quota_store
-                .update_rate_limits(
-                    ctx.channel.id,
-                    qh.remaining_requests,
-                    qh.limit_requests,
-                    qh.remaining_tokens,
-                    qh.limit_tokens,
-                )
-                .await;
-        }
-    }
+    let upstream_headers = record_success_side_effects(state, ctx, &resp).await;
 
     let trigger_reason: Option<&str> = if ctx.current_model != ctx.original_model {
         Some("model_fallback")
