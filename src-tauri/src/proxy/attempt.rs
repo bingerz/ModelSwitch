@@ -1,5 +1,6 @@
 use axum::http::HeaderMap;
 use axum::response::Response;
+use bytes::Bytes;
 use futures::StreamExt;
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -8,12 +9,40 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::channel::Channel;
+use crate::http_pool::PooledClient;
 use crate::proxy::stream::json_response;
+use crate::router::active_requests::ActiveRequestGuard;
 
 use super::provider::ProviderAdaptor;
 use super::response::{extract_passthrough_headers, handle_json_success, handle_streaming_success};
 use super::translate::translate_request;
 use super::{estimate_tokens, make_log, FailureReason, RequestFormat, SKIP_HEADERS};
+
+/// Context bundle for channel dispatch — eliminates the 17-parameter signature.
+///
+/// Constructed by the dispatch loop and passed to `try_channel_attempt` and the
+/// extracted helpers (`build_and_send_request`, `check_error_status`,
+/// `check_sse_bootstrap`). All fields are references or `Copy` types, so the
+/// struct itself is `Copy` and can be passed by value without cloning.
+#[derive(Clone, Copy)]
+pub(super) struct DispatchContext<'a> {
+    pub original_headers: &'a HeaderMap,
+    pub body: &'a Value,
+    pub provider: &'a dyn ProviderAdaptor,
+    pub channel: &'a Channel,
+    pub current_model: &'a str,
+    pub original_model: &'a str,
+    pub is_stream: bool,
+    pub session_id: &'a Option<String>,
+    pub start: std::time::Instant,
+    pub attempt: u32,
+    pub request_id: Option<&'a str>,
+    pub vk_id: Option<Uuid>,
+    pub reserved_cents: u64,
+    pub cache_key: u128,
+    pub cache_key_material: &'a str,
+    pub request_format: RequestFormat,
+}
 
 /// Outcome of a single channel dispatch attempt.
 pub(super) enum AttemptOutcome {
@@ -91,92 +120,481 @@ async fn fail_and_retry(
     AttemptOutcome::Retry
 }
 
+/// Headers denied when injecting per-channel custom headers.
+///
+/// Security-sensitive headers are denied to prevent credential leakage
+/// or proxy metadata injection.
+const CUSTOM_HEADER_DENYLIST: &[&str] = &[
+    "host",
+    "transfer-encoding",
+    "content-length",
+    "connection",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "authorization",
+    "x-api-key",
+    "cookie",
+    "forwarded",
+];
+
+/// Build the upstream HTTP request, inject headers/auth, and send with TTFT timeout.
+///
+/// Returns the upstream response on success alongside the RAII guards (pool
+/// client + active request tracker) that must outlive the response body, or
+/// an `AttemptOutcome` (always `Retry`) on failure.
+async fn build_and_send_request(
+    state: &Arc<crate::proxy::AppState>,
+    ctx: &DispatchContext<'_>,
+    upstream_body: &Value,
+    upstream_model: &str,
+    api_key: &str,
+    estimated_tokens: u64,
+) -> Result<(reqwest::Response, PooledClient, ActiveRequestGuard), AttemptOutcome> {
+    // Build URL via provider (Gemini embeds model in URL; others use base_url + path)
+    let url = ctx
+        .provider
+        .build_url(&ctx.channel.base_url, upstream_model, ctx.is_stream);
+
+    let pool_guard = if let Some(ref proxy_url) = ctx.channel.proxy_url {
+        match state.http_pool.proxied_pooled_client(proxy_url) {
+            Ok(guard) => guard,
+            Err(e) => {
+                tracing::error!(
+                    channel = %ctx.channel.name,
+                    proxy_url = %proxy_url,
+                    error = %e,
+                    "Failed to build proxied client"
+                );
+                return Err(fail_and_retry(
+                    state,
+                    ctx.channel,
+                    ctx.current_model,
+                    ctx.attempt,
+                    FailureReason::ConnectionError,
+                    ctx.start,
+                    ctx.request_id,
+                    ctx.vk_id,
+                )
+                .await);
+            }
+        }
+    } else {
+        state.http_pool.get()
+    };
+    let mut req_builder = pool_guard.post(&url).json(upstream_body);
+
+    // Forward original request headers (excluding hop-by-hop and auth headers)
+    for (name, value) in ctx.original_headers.iter() {
+        if !SKIP_HEADERS.contains(&name.as_str()) {
+            req_builder = req_builder.header(name.clone(), value.clone());
+        }
+    }
+
+    // Set provider-specific auth headers
+    let is_web_session =
+        ctx.channel.credential.cred_type == crate::channel::CredentialType::WebSession;
+    req_builder = ctx
+        .provider
+        .apply_auth(req_builder, api_key, is_web_session);
+
+    // Inject per-channel custom headers.
+    for (name, value) in &ctx.channel.headers {
+        let name_lower = name.to_lowercase();
+        if CUSTOM_HEADER_DENYLIST.contains(&name_lower.as_str()) {
+            tracing::warn!(header = %name, "Skipping denylisted custom header");
+            continue;
+        }
+        if let (Ok(hn), Ok(hv)) = (
+            axum::http::HeaderName::from_bytes(name.as_bytes()),
+            axum::http::HeaderValue::from_str(value),
+        ) {
+            req_builder = req_builder.header(hn, hv);
+        }
+    }
+
+    if ctx.is_stream {
+        req_builder = req_builder.header("Accept", "text/event-stream");
+    }
+
+    // Track active request count for least-busy routing via RAII guard.
+    let active_guard = state.router.active_requests.acquire(ctx.channel.id);
+
+    let resp_result = if ctx.is_stream {
+        match state.gateway.stream_ttft_timeout_secs {
+            Some(secs) if secs > 0 => {
+                let send_future = req_builder.send();
+                match tokio::time::timeout(std::time::Duration::from_secs(secs), send_future).await {
+                    Ok(result) => result,
+                    Err(_elapsed) => {
+                        tracing::warn!(
+                            channel = %ctx.channel.name,
+                            ttft_timeout_secs = secs,
+                            "TTFT timeout exceeded — aborting channel"
+                        );
+                        state
+                            .limits
+                            .rate_limiter
+                            .record(ctx.channel.id, estimated_tokens);
+                        return Err(fail_and_retry(
+                            state,
+                            ctx.channel,
+                            ctx.current_model,
+                            ctx.attempt,
+                            FailureReason::Timeout,
+                            ctx.start,
+                            ctx.request_id,
+                            ctx.vk_id,
+                        )
+                        .await);
+                    }
+                }
+            }
+            _ => req_builder.send().await,
+        }
+    } else {
+        req_builder.send().await
+    };
+
+    // Record rate limiter usage — the request was sent regardless of outcome
+    state
+        .limits
+        .rate_limiter
+        .record(ctx.channel.id, estimated_tokens);
+
+    match resp_result {
+        Ok(r) => Ok((r, pool_guard, active_guard)),
+        Err(e) => {
+            tracing::error!(channel = %ctx.channel.name, error = %e, "Request failed");
+            Err(fail_and_retry(
+                state,
+                ctx.channel,
+                ctx.current_model,
+                ctx.attempt,
+                FailureReason::ConnectionError,
+                ctx.start,
+                ctx.request_id,
+                ctx.vk_id,
+            )
+            .await)
+        }
+    }
+}
+
+/// Check for non-success HTTP status codes and return the appropriate AttemptOutcome.
+///
+/// Returns `Ok(resp)` when the status is successful and the caller should
+/// continue with success handling. Returns `Err(outcome)` when the status
+/// indicates an error (429, 5xx, 4xx context overflow, or generic 4xx).
+async fn check_error_status(
+    state: &Arc<crate::proxy::AppState>,
+    ctx: &DispatchContext<'_>,
+    resp: reqwest::Response,
+) -> Result<reqwest::Response, AttemptOutcome> {
+    let status = resp.status();
+
+    // Record TTFT — time from dispatch start to first byte from upstream
+    crate::metrics::ttft_seconds()
+        .with_label_values(&[ctx.channel.provider.as_str(), ctx.current_model])
+        .observe(ctx.start.elapsed().as_secs_f64());
+
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        let retry_after_secs = resp
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok());
+        tracing::warn!(channel = %ctx.channel.name, retry_after_secs, "Rate limited (429)");
+        // Record per-model cooldown so other models on this channel remain available
+        state
+            .channel_mgr
+            .mark_model_rate_limited(ctx.channel.id, ctx.current_model, retry_after_secs)
+            .await;
+        // Also open the channel circuit breaker (existing behavior — may be refined later)
+        state
+            .channel_mgr
+            .mark_circuit_open_with_retry(ctx.channel.id, retry_after_secs)
+            .await;
+        state
+            .router
+            .cooldown_tracker
+            .record_attempt(ctx.channel.id, false);
+        log_attempt_failure(
+            &state.logger,
+            ctx.current_model,
+            ctx.channel,
+            ctx.attempt,
+            FailureReason::RateLimited,
+            ctx.start,
+            ctx.request_id,
+            ctx.vk_id.map(|id| id.to_string()),
+        )
+        .await;
+        return Err(AttemptOutcome::Retry);
+    }
+
+    if status.is_server_error() {
+        tracing::warn!(channel = %ctx.channel.name, status = %status, "Server error");
+        return Err(fail_and_retry(
+            state,
+            ctx.channel,
+            ctx.current_model,
+            ctx.attempt,
+            FailureReason::ServerError,
+            ctx.start,
+            ctx.request_id,
+            ctx.vk_id,
+        )
+        .await);
+    }
+
+    if !status.is_success() {
+        let status_code = status;
+        let body_text = resp.text().await.unwrap_or_default();
+
+        // Check for context window exceeded error before falling back to the
+        // generic client-error path. When detected, signal the dispatch loop
+        // to skip remaining retries for this model and try the next model in
+        // the fallback chain (which may include larger-context models via
+        // `context_window_fallbacks`).
+        if is_context_window_error(status_code, &body_text) {
+            tracing::info!(
+                channel = %ctx.channel.name,
+                model = %ctx.current_model,
+                "Context window exceeded — trying context fallback"
+            );
+            log_attempt_failure(
+                &state.logger,
+                ctx.current_model,
+                ctx.channel,
+                ctx.attempt,
+                FailureReason::ContextOverflow,
+                ctx.start,
+                ctx.request_id,
+                ctx.vk_id.map(|id| id.to_string()),
+            )
+            .await;
+            return Err(AttemptOutcome::ContextOverflow);
+        }
+
+        log_attempt_failure(
+            &state.logger,
+            ctx.current_model,
+            ctx.channel,
+            ctx.attempt,
+            FailureReason::ClientError(status_code.as_u16()),
+            ctx.start,
+            ctx.request_id,
+            ctx.vk_id.map(|id| id.to_string()),
+        )
+        .await;
+        return Err(AttemptOutcome::Respond(json_response(status_code, body_text)));
+    }
+
+    Ok(resp)
+}
+
+/// Peek at the first SSE chunk to decide whether to proceed or retry.
+///
+/// When bootstrap retries are enabled, reads the first chunk from the stream
+/// to check for upstream errors before committing to this channel's stream.
+/// Returns `Ok((stream, first_chunk))` when the stream looks healthy, or
+/// `Err(AttemptOutcome::Retry)` when the first chunk indicates an error.
+async fn check_sse_bootstrap(
+    state: &Arc<crate::proxy::AppState>,
+    ctx: &DispatchContext<'_>,
+    resp: reqwest::Response,
+    estimated_tokens: u64,
+) -> Result<
+    (
+        futures::stream::BoxStream<'static, Result<Bytes, reqwest::Error>>,
+        Option<Bytes>,
+    ),
+    AttemptOutcome,
+> {
+    let bootstrap_retries = state.gateway.stream_bootstrap_retries;
+    if bootstrap_retries > 0 && ctx.attempt <= bootstrap_retries {
+        let mut stream = resp.bytes_stream();
+        let ttft_secs = state.gateway.stream_ttft_timeout_secs.unwrap_or(30).max(1);
+        let first_result =
+            tokio::time::timeout(std::time::Duration::from_secs(ttft_secs), stream.next()).await;
+
+        match first_result {
+            Ok(Some(Ok(bytes))) => {
+                let preview = String::from_utf8_lossy(&bytes);
+                if is_stream_error_chunk(&preview) {
+                    tracing::warn!(
+                        channel = %ctx.channel.name,
+                        "Bootstrap retry: first SSE chunk indicates upstream error"
+                    );
+                    state.channel_mgr.mark_circuit_open(ctx.channel.id).await;
+                    state
+                        .router
+                        .cooldown_tracker
+                        .record_attempt(ctx.channel.id, false);
+                    log_attempt_failure(
+                        &state.logger,
+                        ctx.current_model,
+                        ctx.channel,
+                        ctx.attempt,
+                        FailureReason::ServerError,
+                        ctx.start,
+                        ctx.request_id,
+                        ctx.vk_id.map(|id| id.to_string()),
+                    )
+                    .await;
+                    return Err(AttemptOutcome::Retry);
+                }
+                tracing::debug!(
+                    channel = %ctx.channel.name,
+                    bytes = bytes.len(),
+                    "Bootstrap check passed — first chunk is clean"
+                );
+                Ok((stream.boxed(), Some(bytes)))
+            }
+            Ok(Some(Err(_e))) => {
+                tracing::warn!(
+                    channel = %ctx.channel.name,
+                    error = %_e,
+                    "Bootstrap retry: stream error on first chunk"
+                );
+                state
+                    .router
+                    .cooldown_tracker
+                    .record_attempt(ctx.channel.id, false);
+                log_attempt_failure(
+                    &state.logger,
+                    ctx.current_model,
+                    ctx.channel,
+                    ctx.attempt,
+                    FailureReason::ConnectionError,
+                    ctx.start,
+                    ctx.request_id,
+                    ctx.vk_id.map(|id| id.to_string()),
+                )
+                .await;
+                Err(AttemptOutcome::Retry)
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    channel = %ctx.channel.name,
+                    "Bootstrap retry: upstream stream ended before first chunk"
+                );
+                state
+                    .router
+                    .cooldown_tracker
+                    .record_attempt(ctx.channel.id, false);
+                log_attempt_failure(
+                    &state.logger,
+                    ctx.current_model,
+                    ctx.channel,
+                    ctx.attempt,
+                    FailureReason::ServerError,
+                    ctx.start,
+                    ctx.request_id,
+                    ctx.vk_id.map(|id| id.to_string()),
+                )
+                .await;
+                Err(AttemptOutcome::Retry)
+            }
+            Err(_elapsed) => {
+                tracing::warn!(
+                    channel = %ctx.channel.name,
+                    ttft_secs,
+                    "Bootstrap retry: TTFT timeout waiting for first chunk"
+                );
+                state
+                    .limits
+                    .rate_limiter
+                    .record(ctx.channel.id, estimated_tokens);
+                state.channel_mgr.mark_circuit_open(ctx.channel.id).await;
+                state
+                    .router
+                    .cooldown_tracker
+                    .record_attempt(ctx.channel.id, false);
+                log_attempt_failure(
+                    &state.logger,
+                    ctx.current_model,
+                    ctx.channel,
+                    ctx.attempt,
+                    FailureReason::Timeout,
+                    ctx.start,
+                    ctx.request_id,
+                    ctx.vk_id.map(|id| id.to_string()),
+                )
+                .await;
+                Err(AttemptOutcome::Retry)
+            }
+        }
+    } else {
+        Ok((resp.bytes_stream().boxed(), None))
+    }
+}
+
 /// Attempt to dispatch a request to a single channel.
 /// Returns `Respond(response)` if a final response is ready, or `Retry` to try next.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn try_channel_attempt(
     state: &Arc<crate::proxy::AppState>,
-    original_headers: &HeaderMap,
-    body: &Value,
-    provider: &dyn ProviderAdaptor,
-    channel: &Channel,
-    current_model: &str,
-    original_model: &str,
-    is_stream: bool,
-    session_id: &Option<String>,
-    start: std::time::Instant,
-    attempt: u32,
-    request_id: Option<&str>,
-    vk_id: Option<Uuid>,
-    reserved_cents: u64,
-    cache_key: u128,
-    cache_key_material: &str,
-    request_format: RequestFormat,
+    ctx: &DispatchContext<'_>,
 ) -> AttemptOutcome {
-    let upstream_model = channel.map_model(current_model);
-    let upstream_format = provider.provider_request_format();
-    let has_payload_rules = state.limits.payload_rules.has_rules(channel.id);
-    let model_needs_change = upstream_model != current_model;
+    // ── 1. Body preparation (model mapping, payload rules, stream usage) ──
+    let upstream_model = ctx.channel.map_model(ctx.current_model);
+    let upstream_format = ctx.provider.provider_request_format();
+    let has_payload_rules = state.limits.payload_rules.has_rules(ctx.channel.id);
+    let model_needs_change = upstream_model != ctx.current_model;
 
-    // Determine if any mutation is needed — avoid cloning a potentially large
-    // body when no modifications are required (copy-on-write via Cow).
     let needs_mutation = model_needs_change || has_payload_rules;
 
     let mut upstream_body: Cow<'_, Value> = if needs_mutation {
-        let mut cloned = body.clone();
+        let mut cloned = ctx.body.clone();
         if let Some(obj) = cloned.as_object_mut() {
             if model_needs_change {
                 obj.insert("model".to_string(), Value::String(upstream_model.clone()));
             }
         }
-        // Apply per-channel payload rules (defaults, overrides, strip),
-        // including any per-model rules whose glob/protocol match.
         if has_payload_rules {
             cloned = state.limits.payload_rules.apply_for_model(
-                channel.id,
+                ctx.channel.id,
                 cloned,
-                current_model,
-                channel.provider.as_str(),
+                ctx.current_model,
+                ctx.channel.provider.as_str(),
             );
         }
         Cow::Owned(cloned)
     } else {
-        Cow::Borrowed(body)
+        Cow::Borrowed(ctx.body)
     };
 
-    // Estimate tokens and check rate limiter before sending
-    let estimated_tokens = estimate_tokens(&upstream_body, is_stream);
+    // ── 2. Rate limit check ──
+    let estimated_tokens = estimate_tokens(&upstream_body, ctx.is_stream);
     let (allowed, rate_reason) = state
         .limits
         .rate_limiter
-        .check(channel.id, estimated_tokens);
+        .check(ctx.channel.id, estimated_tokens);
     if !allowed {
         tracing::warn!(
-            channel = %channel.name,
+            channel = %ctx.channel.name,
             reason = rate_reason,
             tokens = estimated_tokens,
             "Rate limited, skipping channel"
         );
         log_attempt_failure(
             &state.logger,
-            current_model,
-            channel,
-            attempt,
+            ctx.current_model,
+            ctx.channel,
+            ctx.attempt,
             FailureReason::RateLimited,
-            start,
-            request_id,
-            vk_id.map(|id| id.to_string()),
+            ctx.start,
+            ctx.request_id,
+            ctx.vk_id.map(|id| id.to_string()),
         )
         .await;
         return AttemptOutcome::Retry;
     }
 
-    // Determine whether to use cookie-based auth (web session) or native provider auth
-    let is_web_session = channel.credential.cred_type == crate::channel::CredentialType::WebSession;
-
     // Inject stream_options.include_usage for providers that support it (OpenAI-compatible)
     // to ensure upstream returns token usage in the final SSE chunk
-    if is_stream && provider.inject_stream_usage() {
+    if ctx.is_stream && ctx.provider.inject_stream_usage() {
         let needs_injection = upstream_body
             .get("stream_options")
             .and_then(|v| v.as_object())
@@ -199,68 +617,54 @@ pub(super) async fn try_channel_attempt(
         }
     }
 
-    let api_key = match state.channel_mgr.get_credential(channel.id).await {
+    // ── 3. Credential lookup ──
+    let api_key = match state.channel_mgr.get_credential(ctx.channel.id).await {
         Some(key) => key,
         None => {
-            tracing::error!(channel = %channel.name, "No credential found");
+            tracing::error!(channel = %ctx.channel.name, "No credential found");
             return fail_and_retry(
                 state,
-                channel,
-                current_model,
-                attempt,
+                ctx.channel,
+                ctx.current_model,
+                ctx.attempt,
                 FailureReason::NoCredential,
-                start,
-                request_id,
-                vk_id,
+                ctx.start,
+                ctx.request_id,
+                ctx.vk_id,
             )
             .await;
         }
     };
 
-    // If the request format differs from the channel's upstream provider format,
-    // translate the body before provider-specific transformation.
-    if request_format != upstream_format {
+    // ── 4. Format translation + provider transform + thinking normalization ──
+    if ctx.request_format != upstream_format {
         tracing::info!(
-            from = ?request_format,
+            from = ?ctx.request_format,
             to = ?upstream_format,
-            channel = %channel.name,
+            channel = %ctx.channel.name,
             "Translating request body"
         );
         upstream_body = Cow::Owned(translate_request(
             &upstream_body,
-            request_format,
+            ctx.request_format,
             upstream_format,
         ));
     }
 
-    // Transform request body for provider-specific format (e.g., Gemini)
-    let mut upstream_body = provider.transform_request(&upstream_body);
+    let mut upstream_body = ctx.provider.transform_request(&upstream_body);
 
-    // P0-1: Normalize thinking parameters for the target provider format.
-    // Converts between provider thinking formats (e.g., OpenAI reasoning_effort
-    // → Anthropic thinking.budget_tokens) so the upstream receives params in its
-    // native shape.
     if upstream_body.is_object() {
         crate::proxy::thinking::normalize_for_provider(
             &mut upstream_body,
-            channel.provider.as_str(),
+            ctx.channel.provider.as_str(),
         );
     }
 
-    // P0-2: Query the model registry and (a) strip parameters the target model
-    // does not support, then (b) perform a pre-flight context check to avoid
-    // wasting an upstream call on a request that will definitely exceed the
-    // model's context window.
-    //
-    // The registry guard is `!Send` (parking_lot without `send_guard` feature),
-    // so it must be dropped before any `.await` point. We extract
-    // `max_context_tokens` inside the inner block and run the async
-    // pre-flight check after the guard is released.
+    // ── 5. Model registry guards + pre-flight context check ──
     let preflight_max_context = {
         let registry = state.model_registry.read();
-        let caps = registry.get(current_model);
+        let caps = registry.get(ctx.current_model);
 
-        // Strip thinking / reasoning params when the model doesn't support them.
         if !caps.supports_thinking {
             if let Some(obj) = upstream_body.as_object_mut() {
                 obj.remove("thinking");
@@ -275,7 +679,6 @@ pub(super) async fn try_channel_attempt(
             }
         }
 
-        // Strip tool params when the model doesn't support function calling.
         if !caps.supports_tools {
             if let Some(obj) = upstream_body.as_object_mut() {
                 obj.remove("tools");
@@ -286,307 +689,81 @@ pub(super) async fn try_channel_attempt(
         caps.max_context_tokens
     }; // registry guard dropped here
 
-    // Pre-flight context check — rough chars/4 token estimate.
-    // If the serialized body already exceeds the model's context window,
-    // skip the upstream call entirely and signal context overflow so the
-    // dispatch loop can try a larger-context fallback model.
     if let Some(max_context) = preflight_max_context {
         let body_len = serde_json::to_string(&upstream_body)
             .unwrap_or_default()
             .len();
-        let estimated_tokens = (body_len / 4) as u64;
-        if estimated_tokens > max_context {
+        let preflight_tokens = (body_len / 4) as u64;
+        if preflight_tokens > max_context {
             tracing::warn!(
-                channel = %channel.name,
-                model = %current_model,
-                estimated_tokens,
+                channel = %ctx.channel.name,
+                model = %ctx.current_model,
+                estimated_tokens = preflight_tokens,
                 max_context,
                 "Pre-flight context check failed — skipping upstream call"
             );
             log_attempt_failure(
                 &state.logger,
-                current_model,
-                channel,
-                attempt,
+                ctx.current_model,
+                ctx.channel,
+                ctx.attempt,
                 FailureReason::ContextOverflow,
-                start,
-                request_id,
-                vk_id.map(|id| id.to_string()),
+                ctx.start,
+                ctx.request_id,
+                ctx.vk_id.map(|id| id.to_string()),
             )
             .await;
             return AttemptOutcome::ContextOverflow;
         }
     }
 
-    // Build URL via provider (Gemini embeds model in URL; others use base_url + path)
-    let url = provider.build_url(&channel.base_url, &upstream_model, is_stream);
-
-    let pool_guard = if let Some(ref proxy_url) = channel.proxy_url {
-        match state.http_pool.proxied_pooled_client(proxy_url) {
-            Ok(guard) => guard,
-            Err(e) => {
-                tracing::error!(
-                    channel = %channel.name,
-                    proxy_url = %proxy_url,
-                    error = %e,
-                    "Failed to build proxied client"
-                );
-                return fail_and_retry(
-                    state,
-                    channel,
-                    current_model,
-                    attempt,
-                    FailureReason::ConnectionError,
-                    start,
-                    request_id,
-                    vk_id,
-                )
-                .await;
-            }
-        }
-    } else {
-        state.http_pool.get()
-    };
-    let mut req_builder = pool_guard.post(&url).json(&upstream_body);
-
-    // Forward original request headers (excluding hop-by-hop and auth headers)
-    for (name, value) in original_headers.iter() {
-        if !SKIP_HEADERS.contains(&name.as_str()) {
-            req_builder = req_builder.header(name.clone(), value.clone());
-        }
-    }
-
-    // Set provider-specific auth headers
-    req_builder = provider.apply_auth(req_builder, &api_key, is_web_session);
-
-    // Inject per-channel custom headers.
-    // Security-sensitive headers are denied to prevent credential leakage
-    // or proxy metadata injection.
-    for (name, value) in &channel.headers {
-        const DENYLIST: &[&str] = &[
-            "host",
-            "transfer-encoding",
-            "content-length",
-            "connection",
-            "x-forwarded-for",
-            "x-forwarded-host",
-            "x-forwarded-proto",
-            "authorization",
-            "x-api-key",
-            "cookie",
-            "forwarded",
-        ];
-        let name_lower = name.to_lowercase();
-        if DENYLIST.contains(&name_lower.as_str()) {
-            tracing::warn!(header = %name, "Skipping denylisted custom header");
-            continue;
-        }
-        if let (Ok(hn), Ok(hv)) = (
-            axum::http::HeaderName::from_bytes(name.as_bytes()),
-            axum::http::HeaderValue::from_str(value),
-        ) {
-            req_builder = req_builder.header(hn, hv);
-        }
-    }
-
-    if is_stream {
-        req_builder = req_builder.header("Accept", "text/event-stream");
-    }
-
-    // Track active request count for least-busy routing via RAII guard.
-    // The guard decrements automatically on drop — no manual decrement needed.
-    let _active_guard = state.router.active_requests.acquire(channel.id);
-
-    let resp_result = if is_stream {
-        match state.gateway.stream_ttft_timeout_secs {
-            Some(secs) if secs > 0 => {
-                let send_future = req_builder.send();
-                match tokio::time::timeout(std::time::Duration::from_secs(secs), send_future).await
-                {
-                    Ok(result) => result,
-                    Err(_elapsed) => {
-                        tracing::warn!(
-                            channel = %channel.name,
-                            ttft_timeout_secs = secs,
-                            "TTFT timeout exceeded — aborting channel"
-                        );
-                        state
-                            .limits
-                            .rate_limiter
-                            .record(channel.id, estimated_tokens);
-                        return fail_and_retry(
-                            state,
-                            channel,
-                            current_model,
-                            attempt,
-                            FailureReason::Timeout,
-                            start,
-                            request_id,
-                            vk_id,
-                        )
-                        .await;
-                    }
-                }
-            }
-            _ => req_builder.send().await,
-        }
-    } else {
-        req_builder.send().await
+    // ── 6. Build and send request ──
+    let (resp, pool_guard, active_guard) = match build_and_send_request(
+        state,
+        ctx,
+        &upstream_body,
+        &upstream_model,
+        &api_key,
+        estimated_tokens,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(outcome) => return outcome,
     };
 
-    // Record rate limiter usage — the request was sent regardless of outcome
-    state
-        .limits
-        .rate_limiter
-        .record(channel.id, estimated_tokens);
-
-    let resp = match resp_result {
+    // ── 7. Check error status ──
+    let resp = match check_error_status(state, ctx, resp).await {
         Ok(r) => r,
-        Err(e) => {
-            tracing::error!(channel = %channel.name, error = %e, "Request failed");
-            return fail_and_retry(
-                state,
-                channel,
-                current_model,
-                attempt,
-                FailureReason::ConnectionError,
-                start,
-                request_id,
-                vk_id,
-            )
-            .await;
-        }
+        Err(outcome) => return outcome,
     };
 
-    let status = resp.status();
-
-    // Record TTFT — time from dispatch start to first byte from upstream
-    crate::metrics::ttft_seconds()
-        .with_label_values(&[channel.provider.as_str(), current_model])
-        .observe(start.elapsed().as_secs_f64());
-
-    if status == StatusCode::TOO_MANY_REQUESTS {
-        let retry_after_secs = resp
-            .headers()
-            .get("retry-after")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<u64>().ok());
-        tracing::warn!(channel = %channel.name, retry_after_secs, "Rate limited (429)");
-        // Record per-model cooldown so other models on this channel remain available
-        state
-            .channel_mgr
-            .mark_model_rate_limited(channel.id, current_model, retry_after_secs)
-            .await;
-        // Also open the channel circuit breaker (existing behavior — may be refined later)
-        state
-            .channel_mgr
-            .mark_circuit_open_with_retry(channel.id, retry_after_secs)
-            .await;
-        state
-            .router
-            .cooldown_tracker
-            .record_attempt(channel.id, false);
-        log_attempt_failure(
-            &state.logger,
-            current_model,
-            channel,
-            attempt,
-            FailureReason::RateLimited,
-            start,
-            request_id,
-            vk_id.map(|id| id.to_string()),
-        )
-        .await;
-        return AttemptOutcome::Retry;
-    }
-
-    if status.is_server_error() {
-        tracing::warn!(channel = %channel.name, status = %status, "Server error");
-        return fail_and_retry(
-            state,
-            channel,
-            current_model,
-            attempt,
-            FailureReason::ServerError,
-            start,
-            request_id,
-            vk_id,
-        )
-        .await;
-    }
-
-    if !status.is_success() {
-        let status_code = status;
-        let body_text = resp.text().await.unwrap_or_default();
-
-        // Check for context window exceeded error before falling back to the
-        // generic client-error path. When detected, signal the dispatch loop
-        // to skip remaining retries for this model and try the next model in
-        // the fallback chain (which may include larger-context models via
-        // `context_window_fallbacks`).
-        if is_context_window_error(status_code, &body_text) {
-            tracing::info!(
-                channel = %channel.name,
-                model = %current_model,
-                "Context window exceeded — trying context fallback"
-            );
-            log_attempt_failure(
-                &state.logger,
-                current_model,
-                channel,
-                attempt,
-                FailureReason::ContextOverflow,
-                start,
-                request_id,
-                vk_id.map(|id| id.to_string()),
-            )
-            .await;
-            return AttemptOutcome::ContextOverflow;
-        }
-
-        log_attempt_failure(
-            &state.logger,
-            current_model,
-            channel,
-            attempt,
-            FailureReason::ClientError(status_code.as_u16()),
-            start,
-            request_id,
-            vk_id.map(|id| id.to_string()),
-        )
-        .await;
-        return AttemptOutcome::Respond(json_response(status_code, body_text));
-    }
-
-    // Success — record for cooldown tracking and session affinity
+    // ── 8. Success — record cooldown, affinity, quota headers, passthrough headers ──
     state
         .router
         .cooldown_tracker
-        .record_attempt(channel.id, true);
-    if let Some(ref sid) = session_id {
+        .record_attempt(ctx.channel.id, true);
+    if let Some(ref sid) = ctx.session_id {
         state
             .router
             .session_affinity
-            .set_channel(sid, channel.id)
+            .set_channel(sid, ctx.channel.id)
             .await;
     }
 
-    // Extract upstream response headers for passthrough before consuming body.
-    // Uses the configurable list from gateway state (falls back to built-in
-    // defaults when the user hasn't customized it).
     let upstream_headers = extract_passthrough_headers(&resp, &state.gateway.passthrough_headers);
 
     // Passive rate-limit extraction — update quota store from response headers
     {
         if let Some(qh) = crate::quota::collectors::response_header::QuotaHeaders::extract(
-            channel.provider.as_str(),
+            ctx.channel.provider.as_str(),
             resp.headers(),
         ) {
             state
                 .billing
                 .quota_store
                 .update_rate_limits(
-                    channel.id,
+                    ctx.channel.id,
                     qh.remaining_requests,
                     qh.limit_requests,
                     qh.remaining_tokens,
@@ -596,171 +773,54 @@ pub(super) async fn try_channel_attempt(
         }
     }
 
-    let trigger_reason = if current_model != original_model {
-        Some("model_fallback".to_string())
+    let trigger_reason: Option<&str> = if ctx.current_model != ctx.original_model {
+        Some("model_fallback")
     } else {
         None
     };
 
-    if is_stream {
+    // ── 9. Handle streaming or JSON success ──
+    if ctx.is_stream {
         let needs_proto_translate =
-            request_format != upstream_format && !provider.is_gemini_stream();
+            ctx.request_format != upstream_format && !ctx.provider.is_gemini_stream();
         let protocol_translation = if needs_proto_translate {
-            Some((request_format, upstream_format))
+            Some((ctx.request_format, upstream_format))
         } else {
             None
         };
 
-        // Bootstrap retry: peek at the first SSE chunk before committing to
-        // this stream. If the first chunk indicates an upstream error (e.g.,
-        // an error event in the SSE stream), silently retry on the next
-        // channel instead of forwarding the error to the client.
-        let bootstrap_retries = state.gateway.stream_bootstrap_retries;
         let (upstream_stream, first_chunk) =
-            if bootstrap_retries > 0 && attempt <= bootstrap_retries {
-                let mut stream = resp.bytes_stream();
-                let ttft_secs = state.gateway.stream_ttft_timeout_secs.unwrap_or(30).max(1);
-                let first_result =
-                    tokio::time::timeout(std::time::Duration::from_secs(ttft_secs), stream.next())
-                        .await;
-
-                match first_result {
-                    Ok(Some(Ok(bytes))) => {
-                        let preview = String::from_utf8_lossy(&bytes);
-                        if is_stream_error_chunk(&preview) {
-                            tracing::warn!(
-                                channel = %channel.name,
-                                "Bootstrap retry: first SSE chunk indicates upstream error"
-                            );
-                            state.channel_mgr.mark_circuit_open(channel.id).await;
-                            state
-                                .router
-                                .cooldown_tracker
-                                .record_attempt(channel.id, false);
-                            log_attempt_failure(
-                                &state.logger,
-                                current_model,
-                                channel,
-                                attempt,
-                                FailureReason::ServerError,
-                                start,
-                                request_id,
-                                vk_id.map(|id| id.to_string()),
-                            )
-                            .await;
-                            return AttemptOutcome::Retry;
-                        }
-                        tracing::debug!(
-                            channel = %channel.name,
-                            bytes = bytes.len(),
-                            "Bootstrap check passed — first chunk is clean"
-                        );
-                        (stream.boxed(), Some(bytes))
-                    }
-                    Ok(Some(Err(_e))) => {
-                        tracing::warn!(
-                            channel = %channel.name,
-                            error = %_e,
-                            "Bootstrap retry: stream error on first chunk"
-                        );
-                        state
-                            .router
-                            .cooldown_tracker
-                            .record_attempt(channel.id, false);
-                        log_attempt_failure(
-                            &state.logger,
-                            current_model,
-                            channel,
-                            attempt,
-                            FailureReason::ConnectionError,
-                            start,
-                            request_id,
-                            vk_id.map(|id| id.to_string()),
-                        )
-                        .await;
-                        return AttemptOutcome::Retry;
-                    }
-                    Ok(None) => {
-                        tracing::warn!(
-                            channel = %channel.name,
-                            "Bootstrap retry: upstream stream ended before first chunk"
-                        );
-                        state
-                            .router
-                            .cooldown_tracker
-                            .record_attempt(channel.id, false);
-                        log_attempt_failure(
-                            &state.logger,
-                            current_model,
-                            channel,
-                            attempt,
-                            FailureReason::ServerError,
-                            start,
-                            request_id,
-                            vk_id.map(|id| id.to_string()),
-                        )
-                        .await;
-                        return AttemptOutcome::Retry;
-                    }
-                    Err(_elapsed) => {
-                        tracing::warn!(
-                            channel = %channel.name,
-                            ttft_secs,
-                            "Bootstrap retry: TTFT timeout waiting for first chunk"
-                        );
-                        state
-                            .limits
-                            .rate_limiter
-                            .record(channel.id, estimated_tokens);
-                        state.channel_mgr.mark_circuit_open(channel.id).await;
-                        state
-                            .router
-                            .cooldown_tracker
-                            .record_attempt(channel.id, false);
-                        log_attempt_failure(
-                            &state.logger,
-                            current_model,
-                            channel,
-                            attempt,
-                            FailureReason::Timeout,
-                            start,
-                            request_id,
-                            vk_id.map(|id| id.to_string()),
-                        )
-                        .await;
-                        return AttemptOutcome::Retry;
-                    }
-                }
-            } else {
-                (resp.bytes_stream().boxed(), None)
+            match check_sse_bootstrap(state, ctx, resp, estimated_tokens).await {
+                Ok(v) => v,
+                Err(outcome) => return outcome,
             };
 
         let response = {
-            let ctx = super::response::ResponseContext {
-                channel,
-                body,
-                current_model,
+            let resp_ctx = super::response::ResponseContext {
+                channel: ctx.channel,
+                body: ctx.body,
+                current_model: ctx.current_model,
                 upstream_model: &upstream_model,
-                original_model,
-                attempt,
-                trigger_reason: trigger_reason.as_deref(),
-                start,
-                request_id,
+                original_model: ctx.original_model,
+                attempt: ctx.attempt,
+                trigger_reason,
+                start: ctx.start,
+                request_id: ctx.request_id,
                 upstream_headers: &upstream_headers,
-                vk_id,
-                reserved_cents,
-                cache_key,
-                cache_key_material,
+                vk_id: ctx.vk_id,
+                reserved_cents: ctx.reserved_cents,
+                cache_key: ctx.cache_key,
+                cache_key_material: ctx.cache_key_material,
             };
             handle_streaming_success(
                 state,
-                ctx,
-                provider,
+                resp_ctx,
+                ctx.provider,
                 upstream_stream,
                 first_chunk,
                 super::response::ResponseGuards {
                     pool: pool_guard,
-                    active: _active_guard,
+                    active: active_guard,
                 },
                 protocol_translation,
             )
@@ -769,32 +829,32 @@ pub(super) async fn try_channel_attempt(
         AttemptOutcome::Respond(response)
     } else {
         let response = {
-            let ctx = super::response::ResponseContext {
-                channel,
-                body,
-                current_model,
+            let resp_ctx = super::response::ResponseContext {
+                channel: ctx.channel,
+                body: ctx.body,
+                current_model: ctx.current_model,
                 upstream_model: &upstream_model,
-                original_model,
-                attempt,
-                trigger_reason: trigger_reason.as_deref(),
-                start,
-                request_id,
+                original_model: ctx.original_model,
+                attempt: ctx.attempt,
+                trigger_reason,
+                start: ctx.start,
+                request_id: ctx.request_id,
                 upstream_headers: &upstream_headers,
-                vk_id,
-                reserved_cents,
-                cache_key,
-                cache_key_material,
+                vk_id: ctx.vk_id,
+                reserved_cents: ctx.reserved_cents,
+                cache_key: ctx.cache_key,
+                cache_key_material: ctx.cache_key_material,
             };
             handle_json_success(
                 state,
-                ctx,
-                provider,
+                resp_ctx,
+                ctx.provider,
                 resp,
                 super::response::ResponseGuards {
                     pool: pool_guard,
-                    active: _active_guard,
+                    active: active_guard,
                 },
-                request_format,
+                ctx.request_format,
                 upstream_format,
             )
             .await

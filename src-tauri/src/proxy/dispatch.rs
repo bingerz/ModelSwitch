@@ -15,7 +15,7 @@ use crate::router;
 use crate::router::RoutingContext;
 use crate::virtual_key::ReserveResult;
 
-use super::attempt::{try_channel_attempt, AttemptOutcome};
+use super::attempt::{try_channel_attempt, AttemptOutcome, DispatchContext};
 use super::provider::ProviderAdaptor;
 use super::request_meta::{extract_request_meta, extract_virtual_key_id, RequestMeta};
 use super::{estimate_tokens, make_log, FailureReason, RequestFormat};
@@ -507,27 +507,25 @@ pub(crate) async fn dispatch(
                 "Attempting request"
             );
 
-            match try_channel_attempt(
-                state,
+            let dispatch_ctx = DispatchContext {
                 original_headers,
                 body,
                 provider,
-                &channel,
+                channel: &channel,
                 current_model,
-                &original_model,
+                original_model: &original_model,
                 is_stream,
-                &session_id,
+                session_id: &session_id,
                 start,
                 attempt,
                 request_id,
                 vk_id,
                 reserved_cents,
                 cache_key,
-                &cache_key_material,
+                cache_key_material: &cache_key_material,
                 request_format,
-            )
-            .await
-            {
+            };
+            match try_channel_attempt(state, &dispatch_ctx).await {
                 AttemptOutcome::Respond(response) => return response,
                 AttemptOutcome::Retry => {
                     crate::metrics::retries_total()
