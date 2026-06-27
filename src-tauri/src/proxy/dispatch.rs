@@ -18,7 +18,9 @@ use crate::virtual_key::ReserveResult;
 use super::attempt::{try_channel_attempt, AttemptOutcome, DispatchContext};
 use super::provider::ProviderAdaptor;
 use super::request_meta::{extract_request_meta, extract_virtual_key_id, RequestMeta};
-use super::{error_response, estimate_tokens, make_log, FailureReason, RequestFormat};
+use super::{
+    error_response, estimate_tokens, make_log, DispatchLogInput, FailureReason, RequestFormat,
+};
 
 /// Check if a model is allowed for a virtual key, with model group awareness.
 /// A model is allowed if:
@@ -81,26 +83,25 @@ async fn log_all_exhausted(
     // Complete in-flight entry (no-op if not registered) so coalesced waiters
     // can proceed and re-check the cache.
     state.cache.in_flight.complete(cache_key);
-    state
-        .logger
-        .log(make_log(
-            original_model,
-            Uuid::nil(),
-            "none",
-            0,
-            total_attempts,
-            Some(&FailureReason::AllExhausted.log_str()),
-            start.elapsed().as_millis() as u64,
-            false,
-            None,
-            None,
-            None,
-            None,
-            None,
-            request_id,
-            virtual_key_id,
-        ))
-        .await;
+    let reason_str = FailureReason::AllExhausted.log_str();
+    let log_input = DispatchLogInput {
+        model: original_model,
+        channel_id: Uuid::nil(),
+        channel_name: "none",
+        channel_priority: 0,
+        retry_count: total_attempts,
+        reason: Some(&reason_str),
+        latency_ms: start.elapsed().as_millis() as u64,
+        success: false,
+        estimated_cost: None,
+        input_tokens: None,
+        output_tokens: None,
+        cache_hit_tokens: None,
+        cache_miss_tokens: None,
+        request_id,
+        virtual_key_id,
+    };
+    state.logger.log(make_log(&log_input)).await;
     crate::metrics::requests_total()
         .with_label_values(&["none", original_model, "error"])
         .inc();
@@ -196,6 +197,120 @@ async fn select_channel_for_attempt(
         account_group,
     )
     .await
+}
+
+/// Build the fallback model chain: group expansion (if group request),
+/// normal fallback chain, then context-window fallbacks appended.
+///
+/// Deduplicates context-window fallbacks that are already present in the
+/// chain (whether from the group expansion or the regular fallback list).
+fn build_fallback_chain(
+    original_model: &str,
+    is_group_request: bool,
+    model_groups: &HashMap<String, Vec<String>>,
+    model_fallbacks: &HashMap<String, Vec<String>>,
+    context_window_fallbacks: &HashMap<String, Vec<String>>,
+) -> Vec<String> {
+    let mut chain = if is_group_request {
+        model_groups
+            .get(original_model)
+            .cloned()
+            .unwrap_or_else(|| vec![original_model.to_string()])
+    } else {
+        router::fallback::resolve_fallback_chain(original_model, model_fallbacks)
+    };
+
+    // Append context-window fallbacks that aren't already in the chain.
+    // When a request fails due to context length exceeded, the dispatch loop
+    // moves to the next model in the chain — appending context fallbacks here
+    // means a context overflow on any model naturally proceeds to larger-context
+    // models without a separate retry loop.
+    if let Some(ctx_fallbacks) = context_window_fallbacks.get(original_model) {
+        for fb in ctx_fallbacks {
+            if !chain.contains(fb) {
+                chain.push(fb.clone());
+            }
+        }
+    }
+
+    chain
+}
+
+/// Compute per-model retry counts from the fallback chain, applying
+/// per-model overrides (with wildcard support) and falling back to the
+/// global default when no override matches.
+fn resolve_model_retry_counts(
+    fallback_chain: &[String],
+    overrides: &HashMap<String, crate::config::ModelRetryConfig>,
+    default_max_retries: u32,
+) -> Vec<u32> {
+    fallback_chain
+        .iter()
+        .map(|m| {
+            resolve_model_retry_config(m, overrides)
+                .max_retries
+                .unwrap_or(default_max_retries)
+        })
+        .collect()
+}
+
+/// Pre-flight checks that determine whether a model should be skipped before
+/// entering the retry loop. Returns `true` if the model cannot serve the
+/// request, either because:
+///   - the request body is too large for the model's context window, or
+///   - no enabled, available, non-cooldown channel can serve this model.
+///
+/// The context check is a fast heuristic (chars / 4 ≈ tokens); the per-attempt
+/// check in `attempt.rs` provides a more accurate check after body mutation.
+async fn pre_flight_skip_model(
+    state: &Arc<crate::proxy::AppState>,
+    current_model: &str,
+    body_str_len: usize,
+    channels: &crate::channel::SharedChannels,
+) -> bool {
+    // P2-8: Pre-flight context validation — skip models whose context window
+    // is definitely too small for the request body. This avoids wasting retry
+    // budget on a model that cannot possibly fit the request.
+    {
+        let registry = state.model_registry.read();
+        let caps = registry.get(current_model);
+        if let Some(max_ctx) = caps.max_context_tokens {
+            let estimated_tokens = (body_str_len / 4) as u64;
+            if estimated_tokens > max_ctx {
+                tracing::warn!(
+                    model = %current_model,
+                    estimated_tokens,
+                    max_context = max_ctx,
+                    "Pre-flight: request likely exceeds model context window, skipping model"
+                );
+                return true;
+            }
+        }
+    }
+
+    // P2-9: Fallback negative caching — skip models with no available channel.
+    // If no enabled, available channel can serve this model, there is no point
+    // entering the retry loop (channel selection will fail immediately anyway).
+    {
+        let guard = channels.read().await;
+        let has_channel = guard.values().any(|ch_arc| {
+            let ch = ch_arc.read();
+            ch.enabled
+                && ch.is_available()
+                && !ch.is_model_excluded(current_model)
+                && (ch.model_mapping.is_empty() || ch.model_mapping.contains_key(current_model))
+                && !state.router.cooldown_tracker.is_in_cooldown(ch.id)
+        });
+        if !has_channel {
+            tracing::debug!(
+                model = %current_model,
+                "Skipping fallback model — no available channel"
+            );
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Shared dispatch logic for both OpenAI and Anthropic proxy handlers.
@@ -325,39 +440,20 @@ pub(crate) async fn dispatch(
     // to the group's member models — the dispatch loop tries each in order
     // until one has an available channel. Otherwise use the normal chain:
     // [original_model, fallback1, fallback2, ...]
-    let mut fallback_chain = if is_group_request {
-        state
-            .gateway
-            .model_groups
-            .get(&original_model)
-            .cloned()
-            .unwrap_or_else(|| vec![original_model.clone()])
-    } else {
-        router::fallback::resolve_fallback_chain(&original_model, &state.gateway.model_fallbacks)
-    };
-
-    // Append context window fallbacks to the chain. When a request fails due
-    // to context length exceeded, the dispatch loop moves to the next model
-    // in the chain. Appending context fallbacks here means a context overflow
-    // on the original model (or any regular fallback) will naturally proceed
-    // to the larger-context models without a separate retry loop.
-    if let Some(ctx_fallbacks) = state.gateway.context_window_fallbacks.get(&original_model) {
-        for fb in ctx_fallbacks {
-            if !fallback_chain.contains(fb) {
-                fallback_chain.push(fb.clone());
-            }
-        }
-    }
+    let fallback_chain = build_fallback_chain(
+        &original_model,
+        is_group_request,
+        &state.gateway.model_groups,
+        &state.gateway.model_fallbacks,
+        &state.gateway.context_window_fallbacks,
+    );
 
     // Compute per-model retry counts, falling back to the global default
-    let model_retry_counts: Vec<u32> = fallback_chain
-        .iter()
-        .map(|m| {
-            resolve_model_retry_config(m, &state.gateway.model_retry_overrides)
-                .max_retries
-                .unwrap_or(max_retries)
-        })
-        .collect();
+    let model_retry_counts: Vec<u32> = resolve_model_retry_counts(
+        &fallback_chain,
+        &state.gateway.model_retry_overrides,
+        max_retries,
+    );
     let max_total_attempts: u32 = model_retry_counts.iter().sum();
     let mut total_attempts: u32 = 0;
     let deadline =
@@ -377,48 +473,11 @@ pub(crate) async fn dispatch(
             .unwrap_or(state.gateway.retry_base_ms);
         let model_max_ms = model_cfg.retry_max_ms.unwrap_or(state.gateway.retry_max_ms);
 
-        // P2-8: Pre-flight context validation — skip models whose context window
-        // is definitely too small for the request body. This avoids wasting retry
-        // budget on a model that cannot possibly fit the request. The per-attempt
-        // check in attempt.rs provides a more accurate check after body mutation;
-        // this dispatch-level check is a fast early-exit heuristic.
-        {
-            let registry = state.model_registry.read();
-            let caps = registry.get(current_model);
-            if let Some(max_ctx) = caps.max_context_tokens {
-                let estimated_tokens = (body_str_len / 4) as u64;
-                if estimated_tokens > max_ctx {
-                    tracing::warn!(
-                        model = %current_model,
-                        estimated_tokens,
-                        max_context = max_ctx,
-                        "Pre-flight: request likely exceeds model context window, skipping model"
-                    );
-                    continue;
-                }
-            }
-        }
-
-        // P2-9: Fallback negative caching — skip models with no available channel.
-        // If no enabled, available channel can serve this model, there is no point
-        // entering the retry loop (channel selection will fail immediately anyway).
-        {
-            let guard = channels.read().await;
-            let has_channel = guard.values().any(|ch_arc| {
-                let ch = ch_arc.read();
-                ch.enabled
-                    && ch.is_available()
-                    && !ch.is_model_excluded(current_model)
-                    && (ch.model_mapping.is_empty() || ch.model_mapping.contains_key(current_model))
-                    && !state.router.cooldown_tracker.is_in_cooldown(ch.id)
-            });
-            if !has_channel {
-                tracing::debug!(
-                    model = %current_model,
-                    "Skipping fallback model — no available channel"
-                );
-                continue;
-            }
+        // P2-8 + P2-9: Pre-flight checks — skip models whose context window is
+        // too small or that have no available channel. This avoids wasting retry
+        // budget on models that cannot possibly succeed.
+        if pre_flight_skip_model(state, current_model, body_str_len, &channels).await {
+            continue;
         }
 
         let mut attempt: u32 = 0;
@@ -1123,5 +1182,396 @@ mod tests {
         let mut groups = HashMap::new();
         groups.insert("empty-group".to_string(), vec![]);
         assert!(!is_model_allowed_with_groups(&vk, "gpt-4", &groups));
+    }
+
+    // ── build_fallback_chain tests ─────────────────────────────────────────
+
+    #[test]
+    fn build_fallback_chain_normal_uses_resolve_fallback_chain() {
+        // Non-group request: chain starts with the model itself, then any
+        // configured fallbacks from model_fallbacks.
+        let mut model_fallbacks = HashMap::new();
+        model_fallbacks.insert(
+            "gpt-4o".to_string(),
+            vec!["gpt-4-turbo".to_string(), "gpt-4".to_string()],
+        );
+        let groups = HashMap::new();
+        let ctx_fallbacks = HashMap::new();
+
+        let chain =
+            build_fallback_chain("gpt-4o", false, &groups, &model_fallbacks, &ctx_fallbacks);
+        assert_eq!(chain, vec!["gpt-4o", "gpt-4-turbo", "gpt-4"]);
+    }
+
+    #[test]
+    fn build_fallback_chain_group_request_expands_members() {
+        // Group request: chain is the group's member list.
+        let mut groups = HashMap::new();
+        groups.insert(
+            "reasoning".to_string(),
+            vec!["o1".to_string(), "o3".to_string()],
+        );
+        let model_fallbacks = HashMap::new();
+        let ctx_fallbacks = HashMap::new();
+
+        let chain =
+            build_fallback_chain("reasoning", true, &groups, &model_fallbacks, &ctx_fallbacks);
+        assert_eq!(chain, vec!["o1", "o3"]);
+    }
+
+    #[test]
+    fn build_fallback_chain_group_not_in_map_falls_back_to_model() {
+        // Group request but the model is not actually a group key — should
+        // fall back to a single-element chain containing the model name.
+        let groups = HashMap::new();
+        let model_fallbacks = HashMap::new();
+        let ctx_fallbacks = HashMap::new();
+
+        let chain = build_fallback_chain(
+            "unknown-group",
+            true,
+            &groups,
+            &model_fallbacks,
+            &ctx_fallbacks,
+        );
+        assert_eq!(chain, vec!["unknown-group"]);
+    }
+
+    #[test]
+    fn build_fallback_chain_appends_context_window_fallbacks() {
+        // Context-window fallbacks are appended after the regular chain.
+        let model_fallbacks = HashMap::new();
+        let groups = HashMap::new();
+        let mut ctx_fallbacks = HashMap::new();
+        ctx_fallbacks.insert(
+            "gpt-4".to_string(),
+            vec!["gpt-4-128k".to_string(), "gpt-4-turbo".to_string()],
+        );
+
+        let chain = build_fallback_chain("gpt-4", false, &groups, &model_fallbacks, &ctx_fallbacks);
+        assert_eq!(chain, vec!["gpt-4", "gpt-4-128k", "gpt-4-turbo"]);
+    }
+
+    #[test]
+    fn build_fallback_chain_dedups_context_fallbacks() {
+        // If a context-window fallback is already in the regular chain, it
+        // should not be appended again.
+        let mut model_fallbacks = HashMap::new();
+        model_fallbacks.insert("gpt-4".to_string(), vec!["gpt-4-turbo".to_string()]);
+        let groups = HashMap::new();
+        let mut ctx_fallbacks = HashMap::new();
+        ctx_fallbacks.insert(
+            "gpt-4".to_string(),
+            // gpt-4-turbo is already in the chain — should be deduped.
+            vec!["gpt-4-turbo".to_string(), "claude-long-context".to_string()],
+        );
+
+        let chain = build_fallback_chain("gpt-4", false, &groups, &model_fallbacks, &ctx_fallbacks);
+        assert_eq!(chain, vec!["gpt-4", "gpt-4-turbo", "claude-long-context"]);
+    }
+
+    #[test]
+    fn build_fallback_chain_no_fallbacks_returns_single_element() {
+        // No group, no fallbacks, no context fallbacks — chain is just the model.
+        let model_fallbacks = HashMap::new();
+        let groups = HashMap::new();
+        let ctx_fallbacks = HashMap::new();
+
+        let chain = build_fallback_chain(
+            "claude-3-opus",
+            false,
+            &groups,
+            &model_fallbacks,
+            &ctx_fallbacks,
+        );
+        assert_eq!(chain, vec!["claude-3-opus"]);
+    }
+
+    #[test]
+    fn build_fallback_chain_group_with_context_append() {
+        // Group request with context fallbacks appended after the group members.
+        let mut groups = HashMap::new();
+        groups.insert(
+            "fast".to_string(),
+            vec!["gpt-4o-mini".to_string(), "claude-3-haiku".to_string()],
+        );
+        let model_fallbacks = HashMap::new();
+        let mut ctx_fallbacks = HashMap::new();
+        ctx_fallbacks.insert("fast".to_string(), vec!["gpt-4o".to_string()]);
+
+        let chain = build_fallback_chain("fast", true, &groups, &model_fallbacks, &ctx_fallbacks);
+        assert_eq!(chain, vec!["gpt-4o-mini", "claude-3-haiku", "gpt-4o"]);
+    }
+
+    // ── resolve_model_retry_counts tests ──────────────────────────────────
+
+    #[test]
+    fn resolve_retry_counts_uses_default_when_no_overrides() {
+        let chain = vec!["gpt-4".to_string(), "claude-3".to_string()];
+        let overrides = HashMap::new();
+
+        let counts = resolve_model_retry_counts(&chain, &overrides, 3);
+        assert_eq!(counts, vec![3, 3]);
+    }
+
+    #[test]
+    fn resolve_retry_counts_uses_override_when_present() {
+        let chain = vec!["gpt-4".to_string(), "claude-3".to_string()];
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "gpt-4".to_string(),
+            ModelRetryConfig {
+                max_retries: Some(5),
+                ..Default::default()
+            },
+        );
+
+        let counts = resolve_model_retry_counts(&chain, &overrides, 3);
+        assert_eq!(counts, vec![5, 3]);
+    }
+
+    #[test]
+    fn resolve_retry_counts_wildcard_override_applies() {
+        // Wildcard pattern "gpt-*" should match "gpt-4-turbo".
+        let chain = vec!["gpt-4-turbo".to_string(), "claude-3-opus".to_string()];
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "gpt-*".to_string(),
+            ModelRetryConfig {
+                max_retries: Some(7),
+                ..Default::default()
+            },
+        );
+
+        let counts = resolve_model_retry_counts(&chain, &overrides, 2);
+        assert_eq!(counts, vec![7, 2]);
+    }
+
+    #[test]
+    fn resolve_retry_counts_exact_match_beats_wildcard() {
+        // Both an exact and a wildcard match exist — exact should win.
+        let chain = vec!["gpt-4o".to_string()];
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "gpt-4o".to_string(),
+            ModelRetryConfig {
+                max_retries: Some(10),
+                ..Default::default()
+            },
+        );
+        overrides.insert(
+            "gpt-*".to_string(),
+            ModelRetryConfig {
+                max_retries: Some(1),
+                ..Default::default()
+            },
+        );
+
+        let counts = resolve_model_retry_counts(&chain, &overrides, 3);
+        assert_eq!(counts, vec![10]);
+    }
+
+    #[test]
+    fn resolve_retry_counts_empty_chain() {
+        let chain: Vec<String> = vec![];
+        let overrides = HashMap::new();
+        let counts = resolve_model_retry_counts(&chain, &overrides, 3);
+        assert!(counts.is_empty());
+    }
+
+    #[test]
+    fn resolve_retry_counts_date_suffix_stripped_match() {
+        // "claude-3-opus-20240229" should match override keyed on
+        // "claude-3-opus" via date-suffix stripping.
+        let chain = vec!["claude-3-opus-20240229".to_string()];
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "claude-3-opus".to_string(),
+            ModelRetryConfig {
+                max_retries: Some(4),
+                ..Default::default()
+            },
+        );
+
+        let counts = resolve_model_retry_counts(&chain, &overrides, 2);
+        assert_eq!(counts, vec![4]);
+    }
+
+    // ── pre_flight_skip_model tests ───────────────────────────────────────
+    //
+    // These tests construct a minimal AppState to exercise the two skip paths:
+    // context-window-too-small and no-available-channel.
+
+    use crate::channel::manager::ChannelManager;
+    use crate::config::{AppConfig, ChannelConfig, GatewayConfig, SanitizerConfig};
+    use crate::credential::{create_credential_store, SharedCredentialStore};
+    use crate::log::DispatchLogger;
+    use crate::mcp::McpManager;
+    use crate::model_registry::ModelRegistry;
+    use crate::proxy::cache::{CacheMode, InFlightRequests, RequestCache};
+    use crate::proxy::payload_rules::ChannelPayloadRules;
+    use crate::proxy::{
+        AppState, BillingState, CacheState, LimitsState, McpState, ProxyParams, RouterState,
+        SecurityState,
+    };
+    use crate::quota::QuotaStore;
+    use crate::router::affinity::SessionAffinity;
+    use crate::virtual_key::VirtualKeyStore;
+
+    /// Build a minimal `AppState` for pre-flight skip tests. The model
+    /// registry uses built-in defaults (e.g. gpt-4 has 8192 max context).
+    fn build_skip_test_state() -> Arc<AppState> {
+        let config = AppConfig {
+            gateway: GatewayConfig {
+                max_retries: 3,
+                health_check_enabled: false,
+                ..GatewayConfig::default()
+            },
+            channels: vec![],
+            mcp_servers: vec![],
+        };
+        let credential_store: SharedCredentialStore = create_credential_store();
+        let channel_mgr = Arc::new(ChannelManager::new(&config, Arc::clone(&credential_store)));
+        let logger = Arc::new(DispatchLogger::new(1000));
+        let http_pool = crate::http_pool::HttpPool::new(1, || {
+            reqwest::Client::builder().timeout(std::time::Duration::from_secs(30))
+        })
+        .expect("Failed to build HTTP client pool");
+
+        let model_registry = Arc::new(parking_lot::RwLock::new(ModelRegistry::new()));
+
+        Arc::new(AppState {
+            channel_mgr,
+            credential_store,
+            logger,
+            audit_log: Arc::new(crate::admin::audit::AuditLog::with_default_capacity()),
+            http_pool,
+            model_registry,
+            gateway: ProxyParams {
+                request_timeout_secs: Some(30),
+                stream_keepalive_secs: None,
+                stream_ttft_timeout_secs: Some(30),
+                max_retries: config.gateway.max_retries,
+                model_fallbacks: HashMap::new(),
+                context_window_fallbacks: HashMap::new(),
+                model_aliases: HashMap::new(),
+                routing_strategy: crate::router::RoutingStrategyType::WeightedRandom,
+                retry_base_ms: config.gateway.retry_base_ms,
+                retry_max_ms: config.gateway.retry_max_ms,
+                model_retry_overrides: HashMap::new(),
+                nonstream_keepalive_interval_secs: 0,
+                passthrough_headers: vec![],
+                stream_bootstrap_retries: 0,
+                disable_image_generation: false,
+                model_groups: HashMap::new(),
+                model_pricing: HashMap::new(),
+                completion_ratios: HashMap::new(),
+            },
+            router: RouterState {
+                session_affinity: SessionAffinity::default(),
+                active_requests: Arc::new(ActiveRequests::new()),
+                latency_tracker: Arc::new(LatencyTracker::new()),
+                cooldown_tracker: Arc::new(crate::router::cooldown::CooldownTracker::new()),
+            },
+            cache: CacheState {
+                request_cache: Arc::new(RequestCache::new(
+                    std::time::Duration::from_secs(300),
+                    1000,
+                    CacheMode::On,
+                )),
+                in_flight: Arc::new(InFlightRequests::new()),
+            },
+            limits: LimitsState {
+                payload_rules: Arc::new(ChannelPayloadRules::new()),
+                rate_limiter: Arc::new(RateLimiter::new(None)),
+            },
+            billing: BillingState {
+                quota_store: Arc::new(QuotaStore::new()),
+                virtual_key_store: Arc::new(VirtualKeyStore::new()),
+                provider_budgets: Arc::new(crate::provider_budget::ProviderBudgetStore::new()),
+                key_rate_limiter: Arc::new(crate::proxy::rate_limiter::KeyRateLimiter::new()),
+            },
+            mcp: McpState {
+                mcp_manager: Arc::new(McpManager::new()),
+                mcp_max_iterations: 5,
+                mcp_auto_inject: false,
+                mcp_gateway_enabled: false,
+            },
+            security: SecurityState {
+                admin_token: None,
+                admin_roles: vec![],
+                sanitizer_config: SanitizerConfig::default(),
+                allowed_origins: None,
+                trust_forwarded_headers: false,
+            },
+            guardrails: Arc::new(crate::guardrails::GuardrailsChecker::new(
+                crate::guardrails::GuardrailsConfig::default(),
+            )),
+            redemption_codes: Arc::new(crate::quota::RedemptionCodeStore::new()),
+            notifications: Arc::new(crate::notification::NotificationService::new(
+                crate::notification::NotificationConfig::default(),
+            )),
+            completion_ratios: Arc::new(parking_lot::RwLock::new(HashMap::new())),
+            ldap_config: None,
+            started_at: std::time::Instant::now(),
+        })
+    }
+
+    #[tokio::test]
+    async fn pre_flight_skip_model_context_window_too_small() {
+        // gpt-4 has max_context_tokens = 8192 in the built-in registry.
+        // body_str_len = 40_000 → estimated_tokens = 10_000 > 8192 → skip.
+        let state = build_skip_test_state();
+        let channels: SharedChannels = make_shared_channels(vec![]);
+
+        let skip = pre_flight_skip_model(&state, "gpt-4", 40_000, &channels).await;
+        assert!(
+            skip,
+            "model should be skipped when estimated tokens exceed context window"
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_flight_skip_model_context_window_ok_small_body() {
+        // Small body — context check passes, but empty channels means no
+        // available channel → should still skip.
+        let state = build_skip_test_state();
+        let channels: SharedChannels = make_shared_channels(vec![]);
+
+        let skip = pre_flight_skip_model(&state, "gpt-4", 100, &channels).await;
+        assert!(
+            skip,
+            "model should be skipped when no available channel exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_flight_skip_model_returns_false_with_available_channel() {
+        // Small body + a channel that can serve the model → should NOT skip.
+        let state = build_skip_test_state();
+        let mut model_mapping = HashMap::new();
+        model_mapping.insert("gpt-4".to_string(), "gpt-4".to_string());
+        let channel = make_test_channel(Uuid::new_v4(), model_mapping);
+        let channels: SharedChannels = make_shared_channels(vec![channel]);
+
+        let skip = pre_flight_skip_model(&state, "gpt-4", 100, &channels).await;
+        assert!(
+            !skip,
+            "model should not be skipped when context is fine and a channel is available"
+        );
+    }
+
+    #[tokio::test]
+    async fn pre_flight_skip_model_unknown_model_no_context_limit() {
+        // Unknown model has max_context_tokens = None (no limit) → context
+        // check is skipped. With empty channels → skip (no channel).
+        let state = build_skip_test_state();
+        let channels: SharedChannels = make_shared_channels(vec![]);
+
+        let skip = pre_flight_skip_model(&state, "totally-unknown-model", 999_999, &channels).await;
+        assert!(
+            skip,
+            "unknown model with no context limit should still be skipped when no channel"
+        );
     }
 }
