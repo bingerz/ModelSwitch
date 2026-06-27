@@ -16,7 +16,9 @@ use crate::router::active_requests::ActiveRequestGuard;
 use super::provider::ProviderAdaptor;
 use super::response::{extract_passthrough_headers, handle_json_success, handle_streaming_success};
 use super::translate::translate_request;
-use super::{estimate_tokens, make_log, FailureReason, RequestFormat, SKIP_HEADERS};
+use super::{
+    estimate_tokens, make_log, DispatchLogInput, FailureReason, RequestFormat, SKIP_HEADERS,
+};
 
 /// Context bundle for channel dispatch — eliminates the 17-parameter signature.
 ///
@@ -69,25 +71,24 @@ async fn log_attempt_failure(
     virtual_key_id: Option<String>,
 ) {
     let reason_str = reason.log_str();
-    logger
-        .log(make_log(
-            model,
-            channel.id,
-            &channel.name,
-            channel.priority,
-            attempt,
-            Some(&reason_str),
-            start.elapsed().as_millis() as u64,
-            false,
-            None,
-            None,
-            None,
-            None,
-            None,
-            request_id,
-            virtual_key_id,
-        ))
-        .await;
+    let log_input = DispatchLogInput {
+        model,
+        channel_id: channel.id,
+        channel_name: &channel.name,
+        channel_priority: channel.priority,
+        retry_count: attempt,
+        reason: Some(&reason_str),
+        latency_ms: start.elapsed().as_millis() as u64,
+        success: false,
+        estimated_cost: None,
+        input_tokens: None,
+        output_tokens: None,
+        cache_hit_tokens: None,
+        cache_miss_tokens: None,
+        request_id,
+        virtual_key_id,
+    };
+    logger.log(make_log(&log_input)).await;
 }
 
 /// Record a channel failure (circuit breaker + cooldown + log) and return `Retry`.

@@ -461,10 +461,7 @@ mod tests {
 
     #[test]
     fn gateway_config_default_stream_ttft_timeout() {
-        assert_eq!(
-            GatewayConfig::default().stream_ttft_timeout_secs,
-            Some(30)
-        );
+        assert_eq!(GatewayConfig::default().stream_ttft_timeout_secs, Some(30));
     }
 
     #[test]
@@ -483,10 +480,7 @@ mod tests {
 
     #[test]
     fn gateway_config_default_quota_poll_interval() {
-        assert_eq!(
-            GatewayConfig::default().quota_poll_interval_secs,
-            60
-        );
+        assert_eq!(GatewayConfig::default().quota_poll_interval_secs, 60);
     }
 
     #[test]

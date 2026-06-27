@@ -20,8 +20,8 @@ use crate::proxy::{
     AppState, BillingState, CacheState, LimitsState, McpState, ProxyParams, RouterState,
     SecurityState,
 };
-use crate::quota::{self, QuotaStore, RedemptionCodeStore};
 use crate::quota::registry::QuotaProviderRegistry;
+use crate::quota::{self, QuotaStore, RedemptionCodeStore};
 use crate::router::active_requests::ActiveRequests;
 use crate::router::affinity::SessionAffinity;
 use crate::spawn_bg;

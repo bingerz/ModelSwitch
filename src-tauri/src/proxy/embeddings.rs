@@ -76,7 +76,15 @@ async fn select_embedding_channel(
         cooldown_tracker: &state.router.cooldown_tracker,
     };
 
-    match router::select_channel(channels, model, state.gateway.routing_strategy, &ctx, account_group).await {
+    match router::select_channel(
+        channels,
+        model,
+        state.gateway.routing_strategy,
+        &ctx,
+        account_group,
+    )
+    .await
+    {
         Some(ch) => Ok(ch),
         None => Err(json_response(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -224,8 +232,7 @@ async fn build_embedding_request(
     }
 
     // Apply provider-specific auth
-    let is_web_session =
-        channel.credential.cred_type == crate::channel::CredentialType::WebSession;
+    let is_web_session = channel.credential.cred_type == crate::channel::CredentialType::WebSession;
     req_builder = if is_web_session {
         req_builder
             .header("Cookie", &api_key)
@@ -293,25 +300,24 @@ async fn handle_embedding_response(
         } else {
             Some(format!("embeddings_{}", status_for_log.as_u16()))
         };
-        logger
-            .log(crate::proxy::make_log(
-                &model_for_log,
-                channel_id_for_log,
-                &channel_name_for_log,
-                1,
-                1,
-                reason.as_deref(),
-                0,
-                status_for_log.is_success(),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            ))
-            .await;
+        let log_input = crate::proxy::DispatchLogInput {
+            model: &model_for_log,
+            channel_id: channel_id_for_log,
+            channel_name: &channel_name_for_log,
+            channel_priority: 1,
+            retry_count: 1,
+            reason: reason.as_deref(),
+            latency_ms: 0,
+            success: status_for_log.is_success(),
+            estimated_cost: None,
+            input_tokens: None,
+            output_tokens: None,
+            cache_hit_tokens: None,
+            cache_miss_tokens: None,
+            request_id: None,
+            virtual_key_id: None,
+        };
+        logger.log(crate::proxy::make_log(&log_input)).await;
     });
 
     json_response(status, body_text)
@@ -346,9 +352,7 @@ pub async fn handle_embeddings(
         .unwrap_or(requested_model);
 
     // ── Account-group routing filter ──
-    let account_group = headers
-        .get("x-account-group")
-        .and_then(|v| v.to_str().ok());
+    let account_group = headers.get("x-account-group").and_then(|v| v.to_str().ok());
 
     // ── Channel selection ──
     let channel = match select_embedding_channel(&state, &resolved_model, account_group).await {
@@ -360,13 +364,9 @@ pub async fn handle_embeddings(
     let _active_guard = state.router.active_requests.acquire(channel.id);
 
     // ── Pre-dispatch checks (budget + rate limiter) ──
-    if let Err(e) = check_embedding_pre_dispatch(
-        &state,
-        &channel,
-        channel.id,
-        EMBEDDINGS_ESTIMATED_TOKENS,
-    )
-    .await
+    if let Err(e) =
+        check_embedding_pre_dispatch(&state, &channel, channel.id, EMBEDDINGS_ESTIMATED_TOKENS)
+            .await
     {
         return e;
     }

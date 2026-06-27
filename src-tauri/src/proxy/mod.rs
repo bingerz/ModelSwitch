@@ -50,43 +50,48 @@ pub(crate) enum RequestFormat {
     OpenAIResponses,
 }
 
+/// Input fields for constructing a DispatchLog entry.
+///
+/// Bundles the 15 positional parameters of the former `make_log` signature into
+/// a single struct, reducing the risk of argument-order mistakes at call sites.
+pub(crate) struct DispatchLogInput<'a> {
+    pub model: &'a str,
+    pub channel_id: Uuid,
+    pub channel_name: &'a str,
+    pub channel_priority: u8,
+    pub retry_count: u32,
+    pub reason: Option<&'a str>,
+    pub latency_ms: u64,
+    pub success: bool,
+    pub estimated_cost: Option<f64>,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub cache_hit_tokens: Option<u64>,
+    pub cache_miss_tokens: Option<u64>,
+    pub request_id: Option<&'a str>,
+    pub virtual_key_id: Option<String>,
+}
+
 /// Build a DispatchLog entry.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn make_log(
-    model: &str,
-    channel_id: Uuid,
-    channel_name: &str,
-    channel_priority: u8,
-    retry_count: u32,
-    reason: Option<&str>,
-    latency_ms: u64,
-    success: bool,
-    estimated_cost: Option<f64>,
-    input_tokens: Option<u64>,
-    output_tokens: Option<u64>,
-    cache_hit_tokens: Option<u64>,
-    cache_miss_tokens: Option<u64>,
-    request_id: Option<&str>,
-    virtual_key_id: Option<String>,
-) -> DispatchLog {
+pub(crate) fn make_log(input: &DispatchLogInput<'_>) -> DispatchLog {
     DispatchLog {
         id: Uuid::new_v4(),
         timestamp: Utc::now(),
-        request_model: model.to_string(),
-        channel_id,
-        channel_name: channel_name.to_string(),
-        channel_priority,
-        retry_count: retry_count as u8,
-        trigger_reason: reason.map(|s| s.to_string()),
-        latency_ms,
-        success,
-        estimated_cost,
-        input_tokens,
-        output_tokens,
-        cache_hit_tokens,
-        cache_miss_tokens,
-        request_id: request_id.map(|s| s.to_string()),
-        virtual_key_id,
+        request_model: input.model.to_string(),
+        channel_id: input.channel_id,
+        channel_name: input.channel_name.to_string(),
+        channel_priority: input.channel_priority,
+        retry_count: input.retry_count as u8,
+        trigger_reason: input.reason.map(|s| s.to_string()),
+        latency_ms: input.latency_ms,
+        success: input.success,
+        estimated_cost: input.estimated_cost,
+        input_tokens: input.input_tokens,
+        output_tokens: input.output_tokens,
+        cache_hit_tokens: input.cache_hit_tokens,
+        cache_miss_tokens: input.cache_miss_tokens,
+        request_id: input.request_id.map(|s| s.to_string()),
+        virtual_key_id: input.virtual_key_id.clone(),
     }
 }
 

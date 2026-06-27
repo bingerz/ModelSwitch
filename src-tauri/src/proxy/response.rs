@@ -13,10 +13,10 @@ use crate::channel::Channel;
 use crate::proxy::stream::{keepalive_stream, sse_stream_response_with_telemetry};
 use crate::router::active_requests::ActiveRequestGuard;
 
+use super::cache::{InFlightRequests, RequestCache};
 use super::provider::ProviderAdaptor;
 use super::usage::{extract_usage, extract_usage_from_stream};
-use super::cache::{InFlightRequests, RequestCache};
-use super::{estimate_tokens, make_log, RequestFormat};
+use super::{estimate_tokens, make_log, DispatchLogInput, RequestFormat};
 
 /// Shared context for response handling — eliminates 14+ positional parameters.
 ///
@@ -879,21 +879,19 @@ fn compute_token_cost(
     }
 }
 
-/// Record post-response telemetry: accumulate usage into quota/virtual-key/provider
-/// stores and emit token/cost Prometheus metrics.
+/// Bundled parameters for post-response telemetry recording.
 ///
-/// Called from both the streaming background task (after extracting real token
-/// counts from the SSE stream) and the JSON success handler (after parsing usage
-/// from the response body).
-#[allow(clippy::too_many_arguments)]
-async fn record_post_response_telemetry(
-    quota_store: &crate::quota::SharedQuotaStore,
-    virtual_key_store: &crate::virtual_key::SharedVirtualKeyStore,
-    provider_budgets: &crate::provider_budget::SharedProviderBudgetStore,
-    key_rate_limiter: &Arc<crate::proxy::rate_limiter::KeyRateLimiter>,
+/// Grouped into three logical sections: store references, identity fields, and
+/// usage/cost fields. Passed to [`record_post_response_telemetry`] to avoid a
+/// 14-parameter positional signature.
+struct TelemetryRecord<'a> {
+    quota_store: &'a crate::quota::SharedQuotaStore,
+    virtual_key_store: &'a crate::virtual_key::SharedVirtualKeyStore,
+    provider_budgets: &'a crate::provider_budget::SharedProviderBudgetStore,
+    key_rate_limiter: &'a Arc<crate::proxy::rate_limiter::KeyRateLimiter>,
     channel_id: Uuid,
-    provider_name: &str,
-    model: &str,
+    provider_name: &'a str,
+    model: &'a str,
     input_tokens: Option<u64>,
     output_tokens: Option<u64>,
     cache_hit_tokens: Option<u64>,
@@ -901,59 +899,71 @@ async fn record_post_response_telemetry(
     cost: Option<f64>,
     vk_id: Option<Uuid>,
     reserved_cents: u64,
-) {
+}
+
+/// Record post-response telemetry: accumulate usage into quota/virtual-key/provider
+/// stores and emit token/cost Prometheus metrics.
+///
+/// Called from both the streaming background task (after extracting real token
+/// counts from the SSE stream) and the JSON success handler (after parsing usage
+/// from the response body).
+async fn record_post_response_telemetry(rec: &TelemetryRecord<'_>) {
     // 1. Accumulate usage (tokens + cost) into quota store.
-    quota_store
+    rec.quota_store
         .accumulate_usage(
-            channel_id,
-            input_tokens,
-            output_tokens,
-            cache_hit_tokens,
-            cache_miss_tokens,
-            cost,
+            rec.channel_id,
+            rec.input_tokens,
+            rec.output_tokens,
+            rec.cache_hit_tokens,
+            rec.cache_miss_tokens,
+            rec.cost,
         )
         .await;
 
     // 2. Attribute spend to the requesting virtual key (if any). When a
     //    reservation was made before dispatch, reconcile against it so the
     //    key is not double-charged (reservation + accumulation).
-    if let Some(vk) = vk_id {
-        let cost_cents = (cost.unwrap_or(0.0) * 100.0) as u64;
-        if reserved_cents > 0 {
-            virtual_key_store
-                .reconcile_spend(vk, reserved_cents, cost_cents)
+    if let Some(vk) = rec.vk_id {
+        let cost_cents = (rec.cost.unwrap_or(0.0) * 100.0) as u64;
+        if rec.reserved_cents > 0 {
+            rec.virtual_key_store
+                .reconcile_spend(vk, rec.reserved_cents, cost_cents)
                 .await;
         } else {
-            virtual_key_store.accumulate_spend(vk, cost_cents).await;
+            rec.virtual_key_store.accumulate_spend(vk, cost_cents).await;
         }
 
         // Record actual token consumption against the key's TPM window.
         // This is the post-response complement to the pre-request `check_tpm`
         // gate in the virtual-key middleware.
-        let total_tokens = input_tokens.unwrap_or(0) + output_tokens.unwrap_or(0);
-        key_rate_limiter.record_tokens(vk, total_tokens);
+        let total_tokens = rec.input_tokens.unwrap_or(0) + rec.output_tokens.unwrap_or(0);
+        rec.key_rate_limiter.record_tokens(vk, total_tokens);
     }
 
     // 3. Accumulate spend into per-provider budget tracker.
-    let cost_cents = (cost.unwrap_or(0.0) * 100.0) as u64;
-    provider_budgets
-        .accumulate_spend(provider_name, cost_cents)
+    let cost_cents = (rec.cost.unwrap_or(0.0) * 100.0) as u64;
+    rec.provider_budgets
+        .accumulate_spend(rec.provider_name, cost_cents)
         .await;
 
     // 4. Token + cost Prometheus metrics.
-    if let Some(it) = input_tokens {
+    if let Some(it) = rec.input_tokens {
         crate::metrics::input_tokens_total()
-            .with_label_values(&[provider_name, model])
+            .with_label_values(&[rec.provider_name, rec.model])
             .inc_by(it);
     }
-    if let Some(ot) = output_tokens {
+    if let Some(ot) = rec.output_tokens {
         crate::metrics::output_tokens_total()
-            .with_label_values(&[provider_name, model])
+            .with_label_values(&[rec.provider_name, rec.model])
             .inc_by(ot);
     }
-    crate::metrics::record_tokens(input_tokens.unwrap_or(0), output_tokens.unwrap_or(0), model);
-    if let Some(c) = cost {
-        crate::metrics::record_cost(c, model);
+    crate::metrics::record_tokens(
+        rec.input_tokens.unwrap_or(0),
+        rec.output_tokens.unwrap_or(0),
+        rec.model,
+    );
+    if let Some(c) = rec.cost {
+        crate::metrics::record_cost(c, rec.model);
     }
 }
 
@@ -1120,23 +1130,24 @@ pub(super) async fn handle_streaming_success(
         est_tokens / 2,
     );
     let log_id = Uuid::new_v4();
-    let mut log_entry = make_log(
-        current_model,
-        channel.id,
-        &channel.name,
-        channel.priority,
-        attempt,
-        trigger_reason,
-        start.elapsed().as_millis() as u64,
-        true,
+    let log_input = DispatchLogInput {
+        model: current_model,
+        channel_id: channel.id,
+        channel_name: &channel.name,
+        channel_priority: channel.priority,
+        retry_count: attempt,
+        reason: trigger_reason,
+        latency_ms: start.elapsed().as_millis() as u64,
+        success: true,
         estimated_cost,
-        None,
-        None,
-        None,
-        None,
+        input_tokens: None,
+        output_tokens: None,
+        cache_hit_tokens: None,
+        cache_miss_tokens: None,
         request_id,
-        vk_id.map(|id| id.to_string()),
-    );
+        virtual_key_id: vk_id.map(|id| id.to_string()),
+    };
+    let mut log_entry = make_log(&log_input);
     log_entry.id = log_id;
     state.logger.log(log_entry).await;
 
@@ -1284,23 +1295,23 @@ pub(super) async fn handle_streaming_success(
                 // spend to the virtual key, accumulate into the provider budget,
                 // and emit token/cost Prometheus metrics. Shared with the JSON
                 // success handler via `record_post_response_telemetry`.
-                record_post_response_telemetry(
-                    &bg_quota_store,
-                    &bg_virtual_key_store,
-                    &bg_provider_budgets,
-                    &bg_key_rate_limiter,
-                    bg_channel_id,
-                    &bg_provider_name,
-                    &bg_current_model,
+                let rec = TelemetryRecord {
+                    quota_store: &bg_quota_store,
+                    virtual_key_store: &bg_virtual_key_store,
+                    provider_budgets: &bg_provider_budgets,
+                    key_rate_limiter: &bg_key_rate_limiter,
+                    channel_id: bg_channel_id,
+                    provider_name: &bg_provider_name,
+                    model: &bg_current_model,
                     input_tokens,
                     output_tokens,
-                    token_usage.cache_hit_tokens,
-                    token_usage.cache_miss_tokens,
-                    real_cost,
-                    bg_vk_id,
-                    bg_reserved_cents,
-                )
-                .await;
+                    cache_hit_tokens: token_usage.cache_hit_tokens,
+                    cache_miss_tokens: token_usage.cache_miss_tokens,
+                    cost: real_cost,
+                    vk_id: bg_vk_id,
+                    reserved_cents: bg_reserved_cents,
+                };
+                record_post_response_telemetry(&rec).await;
             }
         });
     }
@@ -1385,11 +1396,8 @@ pub(super) async fn handle_json_success(
     // nonstream_keepalive_interval_secs > 0, the extracted function sends
     // `\n` whitespace chunks to keep the TCP connection alive while waiting
     // for the upstream response body.
-    let (body_bytes, keepalive_tx, keepalive_rx) = race_response_with_keepalive(
-        resp,
-        state.gateway.nonstream_keepalive_interval_secs,
-    )
-    .await;
+    let (body_bytes, keepalive_tx, keepalive_rx) =
+        race_response_with_keepalive(resp, state.gateway.nonstream_keepalive_interval_secs).await;
 
     // Translate response body via provider (pass-through for OpenAI/Anthropic,
     // Gemini-to-OpenAI translation for Gemini).
@@ -1497,43 +1505,42 @@ pub(super) async fn handle_json_success(
             // spend to the virtual key, accumulate into the provider budget,
             // and emit token/cost Prometheus metrics. Shared with the
             // streaming success handler via `record_post_response_telemetry`.
-            record_post_response_telemetry(
-                &bg_quota_store,
-                &bg_virtual_key_store,
-                &bg_provider_budgets,
-                &bg_key_rate_limiter,
-                bg_channel_id,
-                &bg_provider_name,
-                &bg_current_model,
-                bg_input_tokens,
-                bg_output_tokens,
-                bg_cache_hit_tokens,
-                bg_cache_miss_tokens,
-                bg_estimated_cost,
-                bg_vk_id,
-                bg_reserved_cents,
-            )
-            .await;
+            let rec = TelemetryRecord {
+                quota_store: &bg_quota_store,
+                virtual_key_store: &bg_virtual_key_store,
+                provider_budgets: &bg_provider_budgets,
+                key_rate_limiter: &bg_key_rate_limiter,
+                channel_id: bg_channel_id,
+                provider_name: &bg_provider_name,
+                model: &bg_current_model,
+                input_tokens: bg_input_tokens,
+                output_tokens: bg_output_tokens,
+                cache_hit_tokens: bg_cache_hit_tokens,
+                cache_miss_tokens: bg_cache_miss_tokens,
+                cost: bg_estimated_cost,
+                vk_id: bg_vk_id,
+                reserved_cents: bg_reserved_cents,
+            };
+            record_post_response_telemetry(&rec).await;
 
-            bg_logger
-                .log(make_log(
-                    &bg_current_model,
-                    bg_channel_id,
-                    &bg_channel_name,
-                    bg_channel_priority,
-                    bg_attempt,
-                    bg_trigger_reason.as_deref(),
-                    bg_start.elapsed().as_millis() as u64,
-                    true,
-                    bg_estimated_cost,
-                    bg_input_tokens,
-                    bg_output_tokens,
-                    bg_cache_hit_tokens,
-                    bg_cache_miss_tokens,
-                    bg_request_id.as_deref(),
-                    bg_vk_id.map(|id| id.to_string()),
-                ))
-                .await;
+            let log_input = DispatchLogInput {
+                model: &bg_current_model,
+                channel_id: bg_channel_id,
+                channel_name: &bg_channel_name,
+                channel_priority: bg_channel_priority,
+                retry_count: bg_attempt,
+                reason: bg_trigger_reason.as_deref(),
+                latency_ms: bg_start.elapsed().as_millis() as u64,
+                success: true,
+                estimated_cost: bg_estimated_cost,
+                input_tokens: bg_input_tokens,
+                output_tokens: bg_output_tokens,
+                cache_hit_tokens: bg_cache_hit_tokens,
+                cache_miss_tokens: bg_cache_miss_tokens,
+                request_id: bg_request_id.as_deref(),
+                virtual_key_id: bg_vk_id.map(|id| id.to_string()),
+            };
+            bg_logger.log(make_log(&log_input)).await;
 
             // Prometheus metrics
             let provider_label = bg_provider.as_str();

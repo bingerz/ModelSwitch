@@ -124,9 +124,9 @@ impl VirtualKey {
     pub fn is_model_allowed(&self, model: &str) -> bool {
         match &self.allowed_models {
             None => true,
-            Some(allowed) => allowed.iter().any(|pattern| {
-                model.starts_with(pattern) || matches_glob(pattern, model)
-            }),
+            Some(allowed) => allowed
+                .iter()
+                .any(|pattern| model.starts_with(pattern) || matches_glob(pattern, model)),
         }
     }
 
