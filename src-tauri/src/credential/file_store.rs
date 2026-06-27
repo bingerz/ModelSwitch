@@ -57,20 +57,23 @@ impl FileCredentialStore {
                             // Decrypt if encrypted; plaintext values load as-is
                             let value = if crypto::is_encrypted(s) {
                                 if let Some(key) = &store.encryption_key {
-                                    crypto::decrypt(key, s).unwrap_or_else(|e| {
-                                        tracing::error!(
-                                            key = %k,
-                                            error = %e,
-                                            "failed to decrypt credential — using empty value"
-                                        );
-                                        String::new()
-                                    })
+                                    match crypto::decrypt(key, s) {
+                                        Ok(v) => v,
+                                        Err(e) => {
+                                            tracing::error!(
+                                                key = %k,
+                                                error = %e,
+                                                "failed to decrypt credential — skipping entry"
+                                            );
+                                            continue;
+                                        }
+                                    }
                                 } else {
                                     tracing::warn!(
                                         key = %k,
-                                        "encrypted credential found but no encryption key configured"
+                                        "encrypted credential found but no encryption key configured — skipping"
                                     );
-                                    String::new()
+                                    continue;
                                 }
                             } else {
                                 // Plaintext value — backward compatible
@@ -101,11 +104,8 @@ impl FileCredentialStore {
         let mut table = toml::map::Map::new();
         for (k, v) in cache.iter() {
             let stored_value = if let Some(key) = &self.encryption_key {
-                // Encrypt value for at-rest storage
-                crypto::encrypt(key, v).unwrap_or_else(|e| {
-                    tracing::error!(key = %k, error = %e, "encryption failed — storing plaintext");
-                    v.clone()
-                })
+                crypto::encrypt(key, v)
+                    .with_context(|| format!("encryption failed for credential key '{k}'"))?
             } else {
                 v.clone()
             };
