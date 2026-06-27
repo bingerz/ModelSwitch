@@ -15,6 +15,7 @@ use crate::router::active_requests::ActiveRequestGuard;
 
 use super::provider::ProviderAdaptor;
 use super::usage::{extract_usage, extract_usage_from_stream};
+use super::cache::{InFlightRequests, RequestCache};
 use super::{estimate_tokens, make_log, RequestFormat};
 
 /// Shared context for response handling — eliminates 14+ positional parameters.
@@ -956,6 +957,84 @@ async fn record_post_response_telemetry(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Extracted helpers shared between streaming and JSON response handlers
+// ---------------------------------------------------------------------------
+
+/// Record the upstream response body in the response cache and signal
+/// completion to any coalesced waiters.
+fn record_cache_entry(
+    cache: &Arc<RequestCache>,
+    in_flight: &Arc<InFlightRequests>,
+    key: u128,
+    material: String,
+    body: String,
+) {
+    cache.insert(key, material, body);
+    in_flight.complete(key);
+}
+
+/// Race the upstream response bytes against a keepalive interval timer,
+/// sending `\n` whitespace chunks to keep the TCP connection alive.
+/// Returns (body_bytes, Option<keepalive_tx>, Option<keepalive_rx>).
+async fn race_response_with_keepalive(
+    resp: reqwest::Response,
+    keepalive_secs: u64,
+) -> (
+    Bytes,
+    Option<mpsc::Sender<Result<Bytes, std::io::Error>>>,
+    Option<mpsc::Receiver<Result<Bytes, std::io::Error>>>,
+) {
+    if keepalive_secs > 0 {
+        let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(16);
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(keepalive_secs));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        interval.tick().await; // skip first immediate tick
+
+        let bytes_fut = resp.bytes();
+        tokio::pin!(bytes_fut);
+
+        let bytes = loop {
+            tokio::select! {
+                result = &mut bytes_fut => {
+                    break result.unwrap_or_default();
+                }
+                _ = interval.tick() => {
+                    // Send whitespace keepalive chunk
+                    if tx.send(Ok(Bytes::from("\n"))).await.is_err() {
+                        // Client disconnected — still consume the response
+                        break bytes_fut.await.unwrap_or_default();
+                    }
+                }
+            }
+        };
+
+        (bytes, Some(tx), Some(rx))
+    } else {
+        (resp.bytes().await.unwrap_or_default(), None, None)
+    }
+}
+
+/// Apply provider-specific response transformation (e.g. Gemini-to-OpenAI
+/// response format translation). Pass-through when no transform is needed.
+fn apply_provider_response_transform(
+    provider: &dyn ProviderAdaptor,
+    body_bytes: Bytes,
+    upstream_model: &str,
+) -> Bytes {
+    if provider.needs_response_transform() {
+        let body_str = std::str::from_utf8(&body_bytes).unwrap_or("");
+        if let Ok(v) = serde_json::from_str::<Value>(body_str) {
+            let translated = provider.transform_response(&v, upstream_model);
+            Bytes::from(serde_json::to_string(&translated).unwrap_or_default())
+        } else {
+            body_bytes
+        }
+    } else {
+        body_bytes
+    }
+}
+
 /// Handle a successful streaming (SSE) response from upstream.
 /// Logs the attempt, spawns a background task to extract real token usage,
 /// caches the SSE response for streaming cache hits, and applies keepalive if configured.
@@ -1152,8 +1231,13 @@ pub(super) async fn handle_streaming_success(
             // Cache the accumulated SSE text for streaming cache hits.
             // Must happen before in_flight.complete for coalesced waiters.
             if !output_text.is_empty() {
-                bg_request_cache.insert(bg_cache_key, bg_key_material, output_text.clone());
-                bg_in_flight.complete(bg_cache_key);
+                record_cache_entry(
+                    &bg_request_cache,
+                    &bg_in_flight,
+                    bg_cache_key,
+                    bg_key_material,
+                    output_text.clone(),
+                );
             }
 
             // Parse SSE data lines once, post-stream, for usage extraction.
@@ -1297,61 +1381,19 @@ pub(super) async fn handle_json_success(
     let _pool_guard = pool_guard;
     let _active_guard = active_guard;
 
-    // Check if non-stream keepalive is enabled. When enabled, we race
-    // resp.bytes() against a keepalive interval, sending `\n` whitespace
-    // chunks to keep the TCP connection alive.
-    let keepalive_secs = state.gateway.nonstream_keepalive_interval_secs;
-
-    // When keepalive is active, we create an mpsc channel. The sender (`tx`)
-    // is used during the select loop to enqueue `\n` keepalive chunks. After
-    // the upstream response arrives, `tx` is used again to send the final JSON
-    // body, then dropped to close the channel. The receiver (`rx`) becomes the
-    // HTTP response body via `Body::from_stream`.
-    let (body_bytes, keepalive_tx, keepalive_rx) = if keepalive_secs > 0 {
-        let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(16);
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(keepalive_secs));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        interval.tick().await; // skip first immediate tick
-
-        let bytes_fut = resp.bytes();
-        tokio::pin!(bytes_fut);
-
-        let bytes = loop {
-            tokio::select! {
-                result = &mut bytes_fut => {
-                    break result.unwrap_or_default();
-                }
-                _ = interval.tick() => {
-                    // Send whitespace keepalive chunk
-                    if tx.send(Ok(Bytes::from("\n"))).await.is_err() {
-                        // Client disconnected — still consume the response
-                        break bytes_fut.await.unwrap_or_default();
-                    }
-                }
-            }
-        };
-
-        (bytes, Some(tx), Some(rx))
-    } else {
-        (resp.bytes().await.unwrap_or_default(), None, None)
-    };
+    // Race the upstream response against a keepalive interval timer. When
+    // nonstream_keepalive_interval_secs > 0, the extracted function sends
+    // `\n` whitespace chunks to keep the TCP connection alive while waiting
+    // for the upstream response body.
+    let (body_bytes, keepalive_tx, keepalive_rx) = race_response_with_keepalive(
+        resp,
+        state.gateway.nonstream_keepalive_interval_secs,
+    )
+    .await;
 
     // Translate response body via provider (pass-through for OpenAI/Anthropic,
     // Gemini-to-OpenAI translation for Gemini).
-    // Use Bytes to avoid String allocation + UTF-8 validation on the hot path.
-    let response_bytes: bytes::Bytes = if provider.needs_response_transform() {
-        // Only Gemini needs parse + transform + re-serialize
-        let body_str = std::str::from_utf8(&body_bytes).unwrap_or("");
-        if let Ok(v) = serde_json::from_str::<Value>(body_str) {
-            let translated = provider.transform_response(&v, upstream_model);
-            bytes::Bytes::from(serde_json::to_string(&translated).unwrap_or_default())
-        } else {
-            body_bytes
-        }
-    } else {
-        // Pass-through — use original bytes, no parse/re-serialize
-        body_bytes
-    };
+    let response_bytes = apply_provider_response_transform(provider, body_bytes, upstream_model);
 
     // Protocol translation: if the request format differs from upstream format,
     // translate the response body from upstream_format to request_format.
@@ -1412,12 +1454,13 @@ pub(super) async fn handle_json_success(
     };
     // Cache non-streaming responses (inline — coalesced waiters depend on
     // ordering: insert must precede complete()).
-    state.cache.request_cache.insert(
+    record_cache_entry(
+        &state.cache.request_cache,
+        &state.cache.in_flight,
         cache_key,
         cache_key_material.to_string(),
         response_str.to_string(),
     );
-    state.cache.in_flight.complete(cache_key);
 
     // Active-request decrement handled by `_active_guard` drop at function end.
 

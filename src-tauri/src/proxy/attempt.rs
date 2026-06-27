@@ -140,19 +140,18 @@ const CUSTOM_HEADER_DENYLIST: &[&str] = &[
     "forwarded",
 ];
 
-/// Build the upstream HTTP request, inject headers/auth, and send with TTFT timeout.
+/// Build the reqwest RequestBuilder for an upstream channel request.
 ///
-/// Returns the upstream response on success alongside the RAII guards (pool
-/// client + active request tracker) that must outlive the response body, or
-/// an `AttemptOutcome` (always `Retry`) on failure.
-async fn build_and_send_request(
+/// Handles URL construction, pool client selection, header forwarding,
+/// auth injection, and custom channel headers. Returns the [`RequestBuilder`]
+/// and the [`PooledClient`] guard that must outlive the request.
+async fn build_upstream_request(
     state: &Arc<crate::proxy::AppState>,
     ctx: &DispatchContext<'_>,
     upstream_body: &Value,
     upstream_model: &str,
     api_key: &str,
-    estimated_tokens: u64,
-) -> Result<(reqwest::Response, PooledClient, ActiveRequestGuard), AttemptOutcome> {
+) -> Result<(reqwest::RequestBuilder, PooledClient), AttemptOutcome> {
     // Build URL via provider (Gemini embeds model in URL; others use base_url + path)
     let url = ctx
         .provider
@@ -219,6 +218,21 @@ async fn build_and_send_request(
         req_builder = req_builder.header("Accept", "text/event-stream");
     }
 
+    Ok((req_builder, pool_guard))
+}
+
+/// Send the prepared request with an optional first-byte (TTFT) timeout.
+///
+/// Acquires the active-request RAII guard, sends with a TTFT timeout when
+/// streaming is enabled and a positive timeout is configured, records rate
+/// limiter consumption, and translates transport errors into
+/// [`AttemptOutcome::Retry`] through [`fail_and_retry`].
+async fn send_with_timeout(
+    state: &Arc<crate::proxy::AppState>,
+    ctx: &DispatchContext<'_>,
+    req_builder: reqwest::RequestBuilder,
+    estimated_tokens: u64,
+) -> Result<(reqwest::Response, ActiveRequestGuard), AttemptOutcome> {
     // Track active request count for least-busy routing via RAII guard.
     let active_guard = state.router.active_requests.acquire(ctx.channel.id);
 
@@ -266,7 +280,7 @@ async fn build_and_send_request(
         .record(ctx.channel.id, estimated_tokens);
 
     match resp_result {
-        Ok(r) => Ok((r, pool_guard, active_guard)),
+        Ok(r) => Ok((r, active_guard)),
         Err(e) => {
             tracing::error!(channel = %ctx.channel.name, error = %e, "Request failed");
             Err(fail_and_retry(
@@ -282,6 +296,25 @@ async fn build_and_send_request(
             .await)
         }
     }
+}
+
+/// Build the upstream HTTP request, inject headers/auth, and send with TTFT timeout.
+///
+/// Returns the upstream response on success alongside the RAII guards (pool
+/// client + active request tracker) that must outlive the response body, or
+/// an `AttemptOutcome` (always `Retry`) on failure.
+async fn build_and_send_request(
+    state: &Arc<crate::proxy::AppState>,
+    ctx: &DispatchContext<'_>,
+    upstream_body: &Value,
+    upstream_model: &str,
+    api_key: &str,
+    estimated_tokens: u64,
+) -> Result<(reqwest::Response, PooledClient, ActiveRequestGuard), AttemptOutcome> {
+    let (req_builder, pool_guard) =
+        build_upstream_request(state, ctx, upstream_body, upstream_model, api_key).await?;
+    let (resp, active_guard) = send_with_timeout(state, ctx, req_builder, estimated_tokens).await?;
+    Ok((resp, pool_guard, active_guard))
 }
 
 /// Check for non-success HTTP status codes and return the appropriate AttemptOutcome.
@@ -420,72 +453,43 @@ async fn check_sse_bootstrap(
 > {
     let bootstrap_retries = state.gateway.stream_bootstrap_retries;
     if bootstrap_retries > 0 && ctx.attempt <= bootstrap_retries {
-        let mut stream = resp.bytes_stream();
-        let ttft_secs = state.gateway.stream_ttft_timeout_secs.unwrap_or(30).max(1);
-        let first_result =
-            tokio::time::timeout(std::time::Duration::from_secs(ttft_secs), stream.next()).await;
+        bootstrap_sse_stream(state, ctx, resp, estimated_tokens).await
+    } else {
+        Ok((resp.bytes_stream().boxed(), None))
+    }
+}
 
-        match first_result {
-            Ok(Some(Ok(bytes))) => {
-                let preview = String::from_utf8_lossy(&bytes);
-                if is_stream_error_chunk(&preview) {
-                    tracing::warn!(
-                        channel = %ctx.channel.name,
-                        "Bootstrap retry: first SSE chunk indicates upstream error"
-                    );
-                    state.channel_mgr.mark_circuit_open(ctx.channel.id).await;
-                    state
-                        .router
-                        .cooldown_tracker
-                        .record_attempt(ctx.channel.id, false);
-                    log_attempt_failure(
-                        &state.logger,
-                        ctx.current_model,
-                        ctx.channel,
-                        ctx.attempt,
-                        FailureReason::ServerError,
-                        ctx.start,
-                        ctx.request_id,
-                        ctx.vk_id.map(|id| id.to_string()),
-                    )
-                    .await;
-                    return Err(AttemptOutcome::Retry);
-                }
-                tracing::debug!(
-                    channel = %ctx.channel.name,
-                    bytes = bytes.len(),
-                    "Bootstrap check passed — first chunk is clean"
-                );
-                Ok((stream.boxed(), Some(bytes)))
-            }
-            Ok(Some(Err(_e))) => {
+/// Bootstrap an SSE stream by waiting for the first data chunk within
+/// a TTFT timeout and handling protocol-specific bootstrap errors.
+///
+/// Reads the first chunk from the stream to check for upstream errors
+/// before committing to this channel's stream.
+async fn bootstrap_sse_stream(
+    state: &Arc<crate::proxy::AppState>,
+    ctx: &DispatchContext<'_>,
+    resp: reqwest::Response,
+    estimated_tokens: u64,
+) -> Result<
+    (
+        futures::stream::BoxStream<'static, Result<Bytes, reqwest::Error>>,
+        Option<Bytes>,
+    ),
+    AttemptOutcome,
+> {
+    let mut stream = resp.bytes_stream();
+    let ttft_secs = state.gateway.stream_ttft_timeout_secs.unwrap_or(30).max(1);
+    let first_result =
+        tokio::time::timeout(std::time::Duration::from_secs(ttft_secs), stream.next()).await;
+
+    match first_result {
+        Ok(Some(Ok(bytes))) => {
+            let preview = String::from_utf8_lossy(&bytes);
+            if is_stream_error_chunk(&preview) {
                 tracing::warn!(
                     channel = %ctx.channel.name,
-                    error = %_e,
-                    "Bootstrap retry: stream error on first chunk"
+                    "Bootstrap retry: first SSE chunk indicates upstream error"
                 );
-                state
-                    .router
-                    .cooldown_tracker
-                    .record_attempt(ctx.channel.id, false);
-                log_attempt_failure(
-                    &state.logger,
-                    ctx.current_model,
-                    ctx.channel,
-                    ctx.attempt,
-                    FailureReason::ConnectionError,
-                    ctx.start,
-                    ctx.request_id,
-                    ctx.vk_id.map(|id| id.to_string()),
-                )
-                .await;
-                Err(AttemptOutcome::Retry)
-            }
-            Ok(None) => {
-                tracing::warn!(
-                    channel = %ctx.channel.name,
-                    "Bootstrap retry: upstream stream ended before first chunk"
-                );
+                state.channel_mgr.mark_circuit_open(ctx.channel.id).await;
                 state
                     .router
                     .cooldown_tracker
@@ -501,39 +505,88 @@ async fn check_sse_bootstrap(
                     ctx.vk_id.map(|id| id.to_string()),
                 )
                 .await;
-                Err(AttemptOutcome::Retry)
+                return Err(AttemptOutcome::Retry);
             }
-            Err(_elapsed) => {
-                tracing::warn!(
-                    channel = %ctx.channel.name,
-                    ttft_secs,
-                    "Bootstrap retry: TTFT timeout waiting for first chunk"
-                );
-                state
-                    .limits
-                    .rate_limiter
-                    .record(ctx.channel.id, estimated_tokens);
-                state.channel_mgr.mark_circuit_open(ctx.channel.id).await;
-                state
-                    .router
-                    .cooldown_tracker
-                    .record_attempt(ctx.channel.id, false);
-                log_attempt_failure(
-                    &state.logger,
-                    ctx.current_model,
-                    ctx.channel,
-                    ctx.attempt,
-                    FailureReason::Timeout,
-                    ctx.start,
-                    ctx.request_id,
-                    ctx.vk_id.map(|id| id.to_string()),
-                )
-                .await;
-                Err(AttemptOutcome::Retry)
-            }
+            tracing::debug!(
+                channel = %ctx.channel.name,
+                bytes = bytes.len(),
+                "Bootstrap check passed — first chunk is clean"
+            );
+            Ok((stream.boxed(), Some(bytes)))
         }
-    } else {
-        Ok((resp.bytes_stream().boxed(), None))
+        Ok(Some(Err(_e))) => {
+            tracing::warn!(
+                channel = %ctx.channel.name,
+                error = %_e,
+                "Bootstrap retry: stream error on first chunk"
+            );
+            state
+                .router
+                .cooldown_tracker
+                .record_attempt(ctx.channel.id, false);
+            log_attempt_failure(
+                &state.logger,
+                ctx.current_model,
+                ctx.channel,
+                ctx.attempt,
+                FailureReason::ConnectionError,
+                ctx.start,
+                ctx.request_id,
+                ctx.vk_id.map(|id| id.to_string()),
+            )
+            .await;
+            Err(AttemptOutcome::Retry)
+        }
+        Ok(None) => {
+            tracing::warn!(
+                channel = %ctx.channel.name,
+                "Bootstrap retry: upstream stream ended before first chunk"
+            );
+            state
+                .router
+                .cooldown_tracker
+                .record_attempt(ctx.channel.id, false);
+            log_attempt_failure(
+                &state.logger,
+                ctx.current_model,
+                ctx.channel,
+                ctx.attempt,
+                FailureReason::ServerError,
+                ctx.start,
+                ctx.request_id,
+                ctx.vk_id.map(|id| id.to_string()),
+            )
+            .await;
+            Err(AttemptOutcome::Retry)
+        }
+        Err(_elapsed) => {
+            tracing::warn!(
+                channel = %ctx.channel.name,
+                ttft_secs,
+                "Bootstrap retry: TTFT timeout waiting for first chunk"
+            );
+            state
+                .limits
+                .rate_limiter
+                .record(ctx.channel.id, estimated_tokens);
+            state.channel_mgr.mark_circuit_open(ctx.channel.id).await;
+            state
+                .router
+                .cooldown_tracker
+                .record_attempt(ctx.channel.id, false);
+            log_attempt_failure(
+                &state.logger,
+                ctx.current_model,
+                ctx.channel,
+                ctx.attempt,
+                FailureReason::Timeout,
+                ctx.start,
+                ctx.request_id,
+                ctx.vk_id.map(|id| id.to_string()),
+            )
+            .await;
+            Err(AttemptOutcome::Retry)
+        }
     }
 }
 
