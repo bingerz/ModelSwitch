@@ -73,90 +73,13 @@ pub async fn start_gateway(
         tracing::debug!("PID file written: {} (pid={})", pid_path.display(), pid);
     }
 
-    let listener = {
-        const MAX_BIND_RETRIES: u32 = 10;
-        const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
-        let mut last_err = String::new();
-        let mut bound = None;
-        for attempt in 1..=MAX_BIND_RETRIES {
-            match tokio::net::TcpListener::bind(&addr).await {
-                Ok(l) => {
-                    if attempt > 1 {
-                        tracing::info!("Gateway bound to {} after {} retries", addr, attempt - 1);
-                    }
-                    tracing::info!("Gateway listening on {}", addr);
-                    bound = Some(l);
-                    break;
-                }
-                Err(e) => {
-                    last_err = format!("{e}");
-                    if attempt < MAX_BIND_RETRIES {
-                        tracing::warn!(
-                            "Bind attempt {}/{} failed on {} — retrying in {}ms: {}",
-                            attempt,
-                            MAX_BIND_RETRIES,
-                            addr,
-                            RETRY_DELAY.as_millis(),
-                            e
-                        );
-                        tokio::time::sleep(RETRY_DELAY).await;
-                    }
-                }
-            }
-        }
-        match bound {
-            Some(l) => {
-                if let Some(tx) = bind_notify {
-                    let _ = tx.send(Ok(()));
-                }
-                l
-            }
-            None => {
-                let msg = format!("Failed to bind gateway on {addr}: {last_err}");
-                tracing::error!("{msg}");
-                if let Some(tx) = bind_notify {
-                    let _ = tx.send(Err(msg));
-                }
-                return;
-            }
-        }
+    let listener = match bind_with_retry(&addr, bind_notify).await {
+        Some(l) => l,
+        None => return,
     };
 
     if tls_config.enable {
-        let cert_path = tls::validate_tls_path(&tls_config.cert, "cert");
-        let key_path = tls::validate_tls_path(&tls_config.key, "key");
-
-        let cert_file = File::open(&cert_path).unwrap_or_else(|_| {
-            panic!("TLS cert file cannot be opened");
-        });
-        let mut cert_reader = BufReader::new(cert_file);
-        let certs: Vec<rustls::pki_types::CertificateDer<'static>> =
-            rustls_pemfile::certs(&mut cert_reader)
-                .collect::<Result<Vec<_>, _>>()
-                .unwrap_or_else(|e| {
-                    tracing::error!("Failed to parse TLS certificate: {}", e);
-                    panic!("TLS cert parse error");
-                });
-
-        let key_file = File::open(&key_path).unwrap_or_else(|_| {
-            panic!("TLS key file cannot be opened");
-        });
-        let mut key_reader = BufReader::new(key_file);
-        let key = rustls_pemfile::private_key(&mut key_reader)
-            .unwrap_or_else(|e| {
-                tracing::error!("Failed to parse TLS private key: {}", e);
-                panic!("TLS key parse error");
-            })
-            .expect("No private key found in TLS key file");
-
-        let tls_server_config = rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(certs, key)
-            .unwrap_or_else(|e| {
-                tracing::error!("Failed to build TLS config: {}", e);
-                panic!("TLS config error: {}", e);
-            });
-        let tls_acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(tls_server_config));
+        let tls_acceptor = build_tls_acceptor(&tls_config);
 
         let shutdown_fut: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
             match shutdown_notify {
@@ -267,6 +190,90 @@ pub async fn start_gateway(
 
     // Clean up PID file on shutdown
     let _ = std::fs::remove_file(&pid_path);
+}
+
+/// Bind to `addr` with retry, signalling result via `bind_notify`.
+/// Returns `Some(listener)` on success, `None` on failure (caller should return).
+async fn bind_with_retry(
+    addr: &str,
+    bind_notify: Option<oneshot::Sender<Result<(), String>>>,
+) -> Option<tokio::net::TcpListener> {
+    const MAX_BIND_RETRIES: u32 = 10;
+    const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+    let mut last_err = String::new();
+    for attempt in 1..=MAX_BIND_RETRIES {
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(l) => {
+                if attempt > 1 {
+                    tracing::info!("Gateway bound to {} after {} retries", addr, attempt - 1);
+                }
+                tracing::info!("Gateway listening on {}", addr);
+                if let Some(tx) = bind_notify {
+                    let _ = tx.send(Ok(()));
+                }
+                return Some(l);
+            }
+            Err(e) => {
+                last_err = format!("{e}");
+                if attempt < MAX_BIND_RETRIES {
+                    tracing::warn!(
+                        "Bind attempt {}/{} failed on {} — retrying in {}ms: {}",
+                        attempt,
+                        MAX_BIND_RETRIES,
+                        addr,
+                        RETRY_DELAY.as_millis(),
+                        e
+                    );
+                    tokio::time::sleep(RETRY_DELAY).await;
+                }
+            }
+        }
+    }
+    let msg = format!("Failed to bind gateway on {addr}: {last_err}");
+    tracing::error!("{msg}");
+    if let Some(tx) = bind_notify {
+        let _ = tx.send(Err(msg));
+    }
+    None
+}
+
+/// Load TLS cert/key from config and build a TlsAcceptor.
+/// Panics on startup-time misconfiguration (missing/unparseable cert or key).
+fn build_tls_acceptor(tls_config: &config::TlsConfig) -> tokio_rustls::TlsAcceptor {
+    let cert_path = tls::validate_tls_path(&tls_config.cert, "cert");
+    let key_path = tls::validate_tls_path(&tls_config.key, "key");
+
+    let cert_file = File::open(&cert_path).unwrap_or_else(|_| {
+        panic!("TLS cert file cannot be opened");
+    });
+    let mut cert_reader = BufReader::new(cert_file);
+    let certs: Vec<rustls::pki_types::CertificateDer<'static>> =
+        rustls_pemfile::certs(&mut cert_reader)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to parse TLS certificate: {}", e);
+                panic!("TLS cert parse error");
+            });
+
+    let key_file = File::open(&key_path).unwrap_or_else(|_| {
+        panic!("TLS key file cannot be opened");
+    });
+    let mut key_reader = BufReader::new(key_file);
+    let key = rustls_pemfile::private_key(&mut key_reader)
+        .unwrap_or_else(|e| {
+            tracing::error!("Failed to parse TLS private key: {}", e);
+            panic!("TLS key parse error");
+        })
+        .expect("No private key found in TLS key file");
+
+    let tls_server_config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .unwrap_or_else(|e| {
+            tracing::error!("Failed to build TLS config: {}", e);
+            panic!("TLS config error: {}", e);
+        });
+    tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(tls_server_config))
 }
 
 #[cfg(test)]
