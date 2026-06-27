@@ -302,9 +302,7 @@ pub(crate) fn apply_runtime_config(
         || retry_changed
         || cache_changed;
 
-    RuntimeReloadSummary {
-        any_changed,
-    }
+    RuntimeReloadSummary { any_changed }
 }
 
 /// Watch the config file for changes and reload channels and MCP servers when modified.

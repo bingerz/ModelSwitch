@@ -950,11 +950,7 @@ async fn record_post_response_telemetry(
             .with_label_values(&[provider_name, model])
             .inc_by(ot);
     }
-    crate::metrics::record_tokens(
-        input_tokens.unwrap_or(0),
-        output_tokens.unwrap_or(0),
-        model,
-    );
+    crate::metrics::record_tokens(input_tokens.unwrap_or(0), output_tokens.unwrap_or(0), model);
     if let Some(c) = cost {
         crate::metrics::record_cost(c, model);
     }

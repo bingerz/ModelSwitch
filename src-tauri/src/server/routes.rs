@@ -484,4 +484,3 @@ async fn healthz_handler() -> axum::response::Response {
         r#"{"status":"ok"}"#.to_string(),
     )
 }
-
