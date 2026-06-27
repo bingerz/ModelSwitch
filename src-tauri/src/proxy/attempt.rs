@@ -224,7 +224,8 @@ async fn build_and_send_request(
         match state.gateway.stream_ttft_timeout_secs {
             Some(secs) if secs > 0 => {
                 let send_future = req_builder.send();
-                match tokio::time::timeout(std::time::Duration::from_secs(secs), send_future).await {
+                match tokio::time::timeout(std::time::Duration::from_secs(secs), send_future).await
+                {
                     Ok(result) => result,
                     Err(_elapsed) => {
                         tracing::warn!(
@@ -388,7 +389,10 @@ async fn check_error_status(
             ctx.vk_id.map(|id| id.to_string()),
         )
         .await;
-        return Err(AttemptOutcome::Respond(json_response(status_code, body_text)));
+        return Err(AttemptOutcome::Respond(json_response(
+            status_code,
+            body_text,
+        )));
     }
 
     Ok(resp)
