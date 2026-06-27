@@ -332,6 +332,11 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
     // Mounted under both `/api` (backward compat) and `/v1/api` (versioned).
     let admin_router = admin_routes("/api")
         .merge(admin_routes("/v1/api"))
+        // Metrics endpoints are mounted behind admin auth so that only
+        // authenticated callers (Bearer token) can scrape per-model /
+        // per-channel traffic, cost, and error data.
+        .route("/metrics", get(metrics_handler))
+        .route("/v1/metrics", get(metrics_handler))
         .with_state(admin_route_state)
         .layer(axum::middleware::from_fn(middleware::rbac::rbac_middleware))
         .layer(axum::middleware::from_fn_with_state(
@@ -344,8 +349,6 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
         .merge(admin_router)
         .merge(portal_routes().with_state(Arc::clone(&state)))
         .merge(auth_routes(Arc::clone(&state)))
-        .route("/metrics", get(metrics_handler))
-        .route("/v1/metrics", get(metrics_handler))
         .route("/healthz", get(healthz_handler));
 
     // Conditionally mount MCP Gateway Mode endpoint.

@@ -39,19 +39,50 @@ pub async fn start_gateway(
     // Security gate: refuse to start in web console mode without admin_token
     // on a non-loopback bind address. This prevents accidentally exposing
     // unauthenticated admin endpoints to the network.
-    if state.security.admin_token.is_none() && web_console_dir.is_some() {
-        let is_loopback = host == "127.0.0.1" || host == "localhost" || host == "::1";
-        if !is_loopback {
-            let msg = format!(
-                "Refusing to start: web console mode without admin_token on non-loopback address ({}:{}). \
-                 Set [security] admin_token in config.toml or bind to 127.0.0.1.",
-                host, port
+    let is_loopback = host == "127.0.0.1" || host == "localhost" || host == "::1";
+    if state.security.admin_token.is_none() && web_console_dir.is_some() && !is_loopback {
+        let msg = format!(
+            "Refusing to start: web console mode without admin_token on non-loopback address ({}:{}). \
+             Set [security] admin_token in config.toml or bind to 127.0.0.1.",
+            host, port
+        );
+        tracing::error!("{msg}");
+        if let Some(tx) = bind_notify {
+            let _ = tx.send(Err(msg));
+        }
+        return;
+    }
+
+    // Warn (don't refuse) when admin APIs are unprotected on non-loopback.
+    // In headless mode without web console, the hard guard above doesn't fire,
+    // so surface a prominent warning instead.
+    if state.security.admin_token.is_none() && !is_loopback {
+        tracing::warn!("==========================================================");
+        tracing::warn!("  WARNING: admin_token is not set and gateway is bound to");
+        tracing::warn!(
+            "    non-loopback address ({}:{}). ALL admin endpoints",
+            host,
+            port
+        );
+        tracing::warn!("    are OPEN to the network. Set [security] admin_token");
+        tracing::warn!("    in config.toml immediately.");
+        tracing::warn!("==========================================================");
+    }
+
+    // Warn when proxy is in open-proxy mode (no virtual keys configured).
+    if !is_loopback {
+        let has_keys = state.billing.virtual_key_store.has_keys().await;
+        if !has_keys {
+            tracing::warn!("==========================================================");
+            tracing::warn!("  WARNING: no virtual keys configured — proxy is in open");
+            tracing::warn!(
+                "    mode on non-loopback address ({}: {}). ANY client",
+                host,
+                port
             );
-            tracing::error!("{msg}");
-            if let Some(tx) = bind_notify {
-                let _ = tx.send(Err(msg));
-            }
-            return;
+            tracing::warn!("    can use the gateway without authentication. Create");
+            tracing::warn!("    virtual keys via the admin API or config.toml.");
+            tracing::warn!("==========================================================");
         }
     }
 
