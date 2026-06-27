@@ -44,7 +44,7 @@ impl CooldownTracker {
     /// `success` = true for 2xx, false for 5xx/429/connection errors.
     /// 4xx client errors (except 429) should NOT be recorded (caller decides).
     pub fn record_attempt(&self, channel_id: Uuid, success: bool) {
-        let mut records = self.records.lock().unwrap();
+        let mut records = self.records.lock().unwrap_or_else(|e| e.into_inner());
         let queue = records.entry(channel_id).or_default();
         queue.push_back(AttemptRecord { success });
         if queue.len() > WINDOW_SIZE {
@@ -56,14 +56,14 @@ impl CooldownTracker {
             self.evaluate_cooldown(channel_id);
         } else {
             // Clear cooldown on success
-            let mut cooldowns = self.cooldowns.lock().unwrap();
+            let mut cooldowns = self.cooldowns.lock().unwrap_or_else(|e| e.into_inner());
             cooldowns.remove(&channel_id);
         }
     }
 
     /// Check if a channel is currently in cooldown.
     pub fn is_in_cooldown(&self, channel_id: Uuid) -> bool {
-        let cooldowns = self.cooldowns.lock().unwrap();
+        let cooldowns = self.cooldowns.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(until) = cooldowns.get(&channel_id) {
             if *until > Instant::now() {
                 return true;
@@ -74,7 +74,7 @@ impl CooldownTracker {
 
     /// Get remaining cooldown seconds (0 if not in cooldown).
     pub fn cooldown_remaining_secs(&self, channel_id: Uuid) -> u64 {
-        let cooldowns = self.cooldowns.lock().unwrap();
+        let cooldowns = self.cooldowns.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(until) = cooldowns.get(&channel_id) {
             let remaining = until.saturating_duration_since(Instant::now());
             return remaining.as_secs();
@@ -84,7 +84,7 @@ impl CooldownTracker {
 
     /// Evaluate whether a channel should enter cooldown based on failure rate.
     fn evaluate_cooldown(&self, channel_id: Uuid) {
-        let records = self.records.lock().unwrap();
+        let records = self.records.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(queue) = records.get(&channel_id) {
             if queue.len() < self.min_attempts {
                 return;
@@ -93,7 +93,7 @@ impl CooldownTracker {
             let failure_rate = failures as f64 / queue.len() as f64;
             if failure_rate >= self.threshold {
                 drop(records);
-                let mut cooldowns = self.cooldowns.lock().unwrap();
+                let mut cooldowns = self.cooldowns.lock().unwrap_or_else(|e| e.into_inner());
                 cooldowns.insert(channel_id, Instant::now() + self.cooldown_duration);
                 tracing::warn!(
                     channel_id = %channel_id,
@@ -107,8 +107,14 @@ impl CooldownTracker {
 
     /// Remove a channel from tracking (e.g., when channel is deleted).
     pub fn remove(&self, channel_id: Uuid) {
-        self.records.lock().unwrap().remove(&channel_id);
-        self.cooldowns.lock().unwrap().remove(&channel_id);
+        self.records
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&channel_id);
+        self.cooldowns
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&channel_id);
     }
 }
 

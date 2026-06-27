@@ -31,6 +31,7 @@ pub mod telemetry;
 pub mod test_helpers;
 
 use crate::proxy::AppState;
+use futures::FutureExt;
 use std::sync::Arc;
 
 // Re-export for CLI binary and external consumers
@@ -39,19 +40,44 @@ pub use shutdown::run_gateway;
 
 /// Spawn a background task, working both in CLI (tokio runtime) and Tauri (main thread without
 /// runtime).
+///
+/// The future is wrapped in `catch_unwind` so that a panic in a background task
+/// is logged and the task terminated without tearing down the worker thread or
+/// the gateway. This is critical because tokio's worker threads are shared
+/// across many tasks, and an unwinding panic would otherwise propagate to the
+/// runtime and risk aborting the process.
 pub(crate) fn spawn_bg<F>(future: F)
 where
     F: std::future::Future + Send + 'static,
     F::Output: Send + 'static,
 {
+    // AssertUnwindSafe is sound here because background tasks own their state
+    // (no shared mutable borrows are held across the await boundary that could
+    // be observed in a partially-modified state), and we swallow the panic at
+    // the task boundary — the rest of the gateway is unaffected.
+    let wrapped = async move {
+        let result = std::panic::AssertUnwindSafe(future).catch_unwind().await;
+        if let Err(e) = result {
+            let msg = e
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| e.downcast_ref::<String>().map(|s| s.as_str()))
+                .unwrap_or("<non-string panic payload>");
+            tracing::error!(
+                panic.payload = %msg,
+                "background task panicked — task terminated, gateway continues"
+            );
+        }
+    };
+
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => {
-            handle.spawn(future);
+            handle.spawn(wrapped);
         }
         Err(_) => {
             #[cfg(feature = "tauri")]
             {
-                tauri::async_runtime::spawn(future);
+                tauri::async_runtime::spawn(wrapped);
             }
             #[cfg(not(feature = "tauri"))]
             {
@@ -60,7 +86,7 @@ where
                 let rt = RT.get_or_init(|| {
                     tokio::runtime::Runtime::new().expect("Failed to create background runtime")
                 });
-                rt.spawn(future);
+                rt.spawn(wrapped);
             }
         }
     }

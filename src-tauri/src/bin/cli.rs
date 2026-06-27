@@ -69,6 +69,32 @@ enum Commands {
 async fn main() {
     let cli = Cli::parse();
 
+    // Install a panic hook that logs the panic with location and backtrace
+    // before the default abort behavior. This ensures panics are visible
+    // in structured logs rather than being silently swallowed by tokio.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| info.payload().downcast_ref::<String>().map(|s| s.as_str()))
+            .unwrap_or("<non-string panic payload>");
+
+        tracing::error!(
+            panic.location = %location,
+            panic.payload = %payload,
+            "panic occurred in gateway task"
+        );
+
+        // Chain to the default hook for backtrace printing (if RUST_BACKTRACE is set)
+        default_hook(info);
+    }));
+
     // Determine effective log level
     let log_level = resolve_log_level(&cli);
     if std::env::var("RUST_LOG").is_err() {

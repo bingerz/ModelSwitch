@@ -14,6 +14,10 @@ where
 {
     data: RwLock<HashMap<K, V>>,
     store_path: PathBuf,
+    /// Set when a corrupt store file was detected during `load()`.
+    /// When poisoned, `persist()` and `persist_sync()` refuse to write
+    /// to prevent overwriting potentially recoverable data.
+    poisoned: std::sync::atomic::AtomicBool,
 }
 
 impl<K, V> PersistedStore<K, V>
@@ -25,6 +29,7 @@ where
         Self {
             data: RwLock::new(HashMap::new()),
             store_path,
+            poisoned: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -46,6 +51,14 @@ where
     /// that the migration framework can detect the current version on the
     /// next startup.
     pub async fn persist(&self) {
+        if self.poisoned.load(std::sync::atomic::Ordering::SeqCst) {
+            tracing::error!(
+                path = %self.store_path.display(),
+                "persist() refused — store is poisoned (corrupt data was detected on load). \
+                 Restart the gateway after investigating the .corrupt.* backup file."
+            );
+            return;
+        }
         let data = self.data.read().await;
         let json = match serde_json::to_string(&*data) {
             Ok(s) => inject_schema_version(&s),
@@ -141,9 +154,25 @@ where
             Err(e) => {
                 tracing::error!(
                     "CRITICAL: Failed to parse persisted store at {}: {e}. \
-                     Loading with empty data — existing keys/budgets may be lost!",
+                     Backing up corrupt file and poisoning store to prevent overwrite.",
                     self.store_path.display()
                 );
+                // Back up the corrupt file so an operator can attempt manual recovery.
+                let backup_path = {
+                    let ts = chrono::Utc::now().format("%Y%m%dT%H%M%S");
+                    self.store_path.with_extension(format!("json.corrupt.{ts}"))
+                };
+                if let Err(backup_err) = tokio::fs::rename(&self.store_path, &backup_path).await {
+                    tracing::error!(
+                        original = %self.store_path.display(),
+                        backup = %backup_path.display(),
+                        error = %backup_err,
+                        "Failed to back up corrupt store file — data will be lost on next persist"
+                    );
+                }
+                // Poison the store: persist() will refuse to write until the process restarts.
+                self.poisoned
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
                 return;
             }
         };
@@ -158,6 +187,13 @@ where
     /// Synchronous persist for shutdown path.
     /// Uses `try_read()` with retries to handle lock contention.
     pub fn persist_sync(&self) {
+        if self.poisoned.load(std::sync::atomic::Ordering::SeqCst) {
+            tracing::error!(
+                path = %self.store_path.display(),
+                "persist_sync() refused — store is poisoned"
+            );
+            return;
+        }
         let json = {
             let mut guard = None;
             for _ in 0..10 {
@@ -187,37 +223,56 @@ where
         if let Some(parent) = self.store_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
+        let tmp_path = self.store_path.with_extension("json.tmp");
         #[cfg(unix)]
         {
+            use std::io::Write;
             use std::os::unix::fs::OpenOptionsExt;
             match std::fs::OpenOptions::new()
                 .create(true)
                 .write(true)
                 .truncate(true)
                 .mode(0o600)
-                .open(&self.store_path)
+                .open(&tmp_path)
             {
                 Ok(mut f) => {
-                    use std::io::Write;
                     if let Err(e) = f.write_all(json.as_bytes()) {
-                        tracing::error!("Failed to write store (sync): {e}");
+                        tracing::error!("Failed to write store (sync temp): {e}");
+                        let _ = std::fs::remove_file(&tmp_path);
+                        return;
+                    }
+                    // fsync before rename to ensure durability
+                    if let Err(e) = f.sync_all() {
+                        tracing::error!("Failed to fsync store (sync temp): {e}");
+                        let _ = std::fs::remove_file(&tmp_path);
                         return;
                     }
                 }
                 Err(e) => {
-                    tracing::error!("Failed to create store file (sync): {e}");
+                    tracing::error!("Failed to create store file (sync temp): {e}");
                     return;
                 }
             }
-            tracing::info!("Store persisted on shutdown");
+            // Atomic rename
+            if let Err(e) = std::fs::rename(&tmp_path, &self.store_path) {
+                tracing::error!("Failed to rename temp store into place (sync): {e}");
+                let _ = std::fs::remove_file(&tmp_path);
+                return;
+            }
+            tracing::info!("Store persisted on shutdown (atomic write)");
         }
         #[cfg(not(unix))]
         {
-            if let Err(e) = std::fs::write(&self.store_path, &json) {
-                tracing::error!("Failed to write store (sync): {e}");
-            } else {
-                tracing::info!("Store persisted on shutdown");
+            if let Err(e) = std::fs::write(&tmp_path, &json) {
+                tracing::error!("Failed to write store (sync temp): {e}");
+                return;
             }
+            if let Err(e) = std::fs::rename(&tmp_path, &self.store_path) {
+                tracing::error!("Failed to rename temp store into place (sync): {e}");
+                let _ = std::fs::remove_file(&tmp_path);
+                return;
+            }
+            tracing::info!("Store persisted on shutdown (atomic write)");
         }
     }
 
@@ -545,7 +600,7 @@ mod async_tests {
     }
 
     #[tokio::test]
-    async fn async_load_corrupt_json_returns_empty() {
+    async fn async_load_corrupt_json_poisons_and_backs_up() {
         let path = std::env::temp_dir().join(format!(
             "modelswitch-corrupt-test-{}.json",
             uuid::Uuid::new_v4().simple()
@@ -556,6 +611,163 @@ mod async_tests {
         store.load().await; // should not panic
         let r = store.read().await;
         assert!(r.is_empty(), "corrupt JSON should result in empty map");
+        drop(r);
+
+        // Store should be poisoned
+        assert!(
+            store.poisoned.load(std::sync::atomic::Ordering::SeqCst),
+            "store should be poisoned after corrupt load"
+        );
+
+        // Clean up backup
+        let parent = path.parent().unwrap();
+        if let Ok(entries) = std::fs::read_dir(parent) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("modelswitch-corrupt-test-")
+                    && name_str.contains(".corrupt.")
+                {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn load_corrupt_json_backs_up_and_poisons() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-corrupt-poison-{}.json",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::write(&path, b"{ this is not valid json }").unwrap();
+
+        let store: PersistedStore<String, TestData> = PersistedStore::new(path.clone());
+        store.load().await;
+
+        // Store should be poisoned
+        assert!(
+            store.poisoned.load(std::sync::atomic::Ordering::SeqCst),
+            "store should be poisoned after corrupt load"
+        );
+
+        // Persist should be refused
+        {
+            let mut w = store.write().await;
+            w.insert(
+                "k".to_string(),
+                TestData {
+                    name: "v".to_string(),
+                    value: 1,
+                },
+            );
+        }
+        store.persist().await;
+
+        // Original path should NOT have been overwritten (persist was refused)
+        // The corrupt file was renamed to .corrupt.{timestamp}
+        assert!(
+            !path.exists(),
+            "original path should not exist — corrupt file was backed up"
+        );
+
+        // Clean up backup file
+        let parent = path.parent().unwrap();
+        if let Ok(entries) = std::fs::read_dir(parent) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("modelswitch-corrupt-poison-")
+                    && name_str.contains(".corrupt.")
+                {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn persist_after_successful_load_is_not_poisoned() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-healthy-{}.json",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let store: PersistedStore<String, TestData> = PersistedStore::new(path.clone());
+        {
+            let mut w = store.write().await;
+            w.insert(
+                "key1".to_string(),
+                TestData {
+                    name: "test".to_string(),
+                    value: 42,
+                },
+            );
+        }
+        store.persist().await;
+
+        // Load into a new store — should NOT be poisoned
+        let store2: PersistedStore<String, TestData> = PersistedStore::new(path.clone());
+        store2.load().await;
+        assert!(
+            !store2.poisoned.load(std::sync::atomic::Ordering::SeqCst),
+            "store should NOT be poisoned after successful load"
+        );
+
+        // Persist should work
+        {
+            let mut w = store2.write().await;
+            w.insert(
+                "key2".to_string(),
+                TestData {
+                    name: "v2".to_string(),
+                    value: 99,
+                },
+            );
+        }
+        store2.persist().await;
+        assert!(
+            path.exists(),
+            "file should exist after non-poisoned persist"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn persist_sync_uses_atomic_write() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-sync-atomic-{}.json",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let store: PersistedStore<String, TestData> = PersistedStore::new(path.clone());
+        {
+            let mut w = store.write().await;
+            w.insert(
+                "key1".to_string(),
+                TestData {
+                    name: "test".to_string(),
+                    value: 42,
+                },
+            );
+        }
+
+        store.persist_sync();
+
+        // Verify data was written
+        assert!(path.exists(), "file should exist after sync persist");
+        let data = std::fs::read_to_string(&path).unwrap();
+        assert!(data.contains("key1"), "data should contain key1");
+
+        // Temp file should not exist
+        let tmp_path = path.with_extension("json.tmp");
+        assert!(
+            !tmp_path.exists(),
+            "temp file should be cleaned up after atomic rename"
+        );
 
         let _ = std::fs::remove_file(&path);
     }
