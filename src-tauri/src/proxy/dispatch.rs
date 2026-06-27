@@ -1430,7 +1430,7 @@ mod tests {
             channels: vec![],
             mcp_servers: vec![],
         };
-        let credential_store: SharedCredentialStore = create_credential_store();
+        let credential_store: SharedCredentialStore = create_credential_store(None);
         let channel_mgr = Arc::new(ChannelManager::new(&config, Arc::clone(&credential_store)));
         let logger = Arc::new(DispatchLogger::new(1000));
         let http_pool = crate::http_pool::HttpPool::new(1, || {

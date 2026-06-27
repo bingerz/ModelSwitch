@@ -119,7 +119,7 @@ fn build_state(
     admin_roles: Vec<(String, Role)>,
 ) -> Arc<AppState> {
     let config = test_config(channel_configs);
-    let credential_store: SharedCredentialStore = create_credential_store();
+    let credential_store: SharedCredentialStore = create_credential_store(None);
     let channel_mgr = Arc::new(ChannelManager::new(&config, Arc::clone(&credential_store)));
 
     let logger = Arc::new(DispatchLogger::new(1000));

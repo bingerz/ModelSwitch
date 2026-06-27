@@ -305,8 +305,14 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     let model_aliases = config.gateway.model_aliases.clone();
     let routing_strategy = config.gateway.routing_strategy;
 
+    // Resolve admin token: env > config (needed before credential store
+    // initialization so credentials can be encrypted at rest with AES-256-GCM).
+    let admin_token = std::env::var("MODELSWITCH_ADMIN_TOKEN")
+        .ok()
+        .or(config.gateway.admin_token.clone());
+
     // Initialize channel manager and logger
-    let credential_store = create_credential_store();
+    let credential_store = create_credential_store(admin_token.as_deref());
     let channel_mgr = Arc::new(ChannelManager::new(&config, Arc::clone(&credential_store)));
     let log_file = config::app_config_dir().join("logs.ndjson");
 
@@ -351,11 +357,6 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     spawn_bg(async move {
         mcp_mgr_for_load.load_configs(&mcp_configs).await;
     });
-
-    // Resolve admin token: env > config
-    let admin_token = std::env::var("MODELSWITCH_ADMIN_TOKEN")
-        .ok()
-        .or(config.gateway.admin_token.clone());
 
     // Resolve role-based admin tokens for RBAC.
     let admin_roles: Vec<(String, crate::middleware::rbac::Role)> = config

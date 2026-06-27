@@ -1,3 +1,4 @@
+pub mod crypto;
 pub mod file_store;
 
 use std::sync::Arc;
@@ -12,7 +13,16 @@ pub trait CredentialStore: Send + Sync {
 pub type SharedCredentialStore = Arc<dyn CredentialStore>;
 
 /// Create the file-based credential store.
-pub fn create_credential_store() -> SharedCredentialStore {
-    tracing::info!("Using file-based credential store");
-    Arc::new(file_store::FileCredentialStore::new())
+///
+/// When `admin_token` is provided, credentials are encrypted at rest with
+/// AES-256-GCM. When `None`, credentials are stored in plaintext (with a
+/// startup warning).
+pub fn create_credential_store(admin_token: Option<&str>) -> SharedCredentialStore {
+    if let Some(token) = admin_token {
+        tracing::info!("Using file-based credential store with AES-256-GCM encryption at rest");
+        Arc::new(file_store::FileCredentialStore::with_encryption(token))
+    } else {
+        tracing::warn!("No admin_token set — credentials stored in plaintext without encryption");
+        Arc::new(file_store::FileCredentialStore::new())
+    }
 }

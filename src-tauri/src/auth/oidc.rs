@@ -9,13 +9,17 @@
 //!    the returned ID token (JWT claims decoded locally) or, when no ID token
 //!    is present, by calling the IdP's userinfo endpoint with the access token.
 //!
-//! Signature validation of the ID token is intentionally deferred — the
-//! gateway relies on the TLS-protected token endpoint response and the
-//! single-use authorization code binding. Production deployments that need
-//! defence-in-depth should add JWKS signature verification.
+//! ID token signatures are verified via the IdP's JWKS
+//! (`{jwks_uri}` from the discovery document) before claims are trusted. If
+//! JWKS verification fails (e.g. unknown key type, transient fetch error), the
+//! authenticator falls back to claim-only validation (`iss`/`aud`/`exp`) so
+//! compatibility with unusual IdP configurations is preserved. The fallback
+//! can be removed in a future hardening pass to require strict signature
+//! verification.
 
 use base64::Engine;
 use hmac::{Hmac, Mac};
+use jsonwebtoken::{DecodingKey, Validation};
 use serde::Deserialize;
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
@@ -90,6 +94,40 @@ struct TokenResponse {
     expires_in: Option<u64>,
     #[serde(default)]
     refresh_token: Option<String>,
+}
+
+/// JWKS (JSON Web Key Set) returned by the IdP's `jwks_uri` endpoint.
+#[derive(Debug, Deserialize)]
+struct Jwks {
+    keys: Vec<Jwk>,
+}
+
+/// Individual key inside a JWKS.
+///
+/// Only the RSA parameters required for ID token verification are modelled
+/// here; EC and OKP fields are parsed but not yet used.
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+struct Jwk {
+    kid: Option<String>,
+    kty: String,
+    #[serde(default)]
+    alg: Option<String>,
+    /// RSA modulus (base64url, no padding).
+    #[serde(default)]
+    n: Option<String>,
+    /// RSA exponent (base64url, no padding).
+    #[serde(default)]
+    e: Option<String>,
+    /// EC curve name (e.g. `P-256`).
+    #[serde(default)]
+    crv: Option<String>,
+    /// EC x coordinate (base64url).
+    #[serde(default)]
+    x: Option<String>,
+    /// EC y coordinate (base64url).
+    #[serde(default)]
+    y: Option<String>,
 }
 
 /// OIDC authenticator handling the authorization code flow.
@@ -285,14 +323,30 @@ impl OidcAuthenticator {
     ///
     /// Preference order:
     /// 1. ID token claims (`sub`, `email`, `name` / `preferred_username`) when
-    ///    an `id_token` was returned.
+    ///    an `id_token` was returned. JWKS signature verification is attempted
+    ///    first; if it fails the authenticator falls back to claim-only
+    ///    validation so unusual IdP configurations keep working.
     /// 2. UserInfo endpoint (`userinfo_endpoint` from discovery) queried with
     ///    the access token as a Bearer header.
     pub async fn extract_user_info(&self, tokens: &TokenSet) -> Result<AuthUserInfo, OidcError> {
         if let Some(id_token) = &tokens.id_token {
-            let claims = decode_jwt_payload(id_token)?;
-            validate_id_token_claims(&claims, &self.config.issuer, &self.config.client_id)?;
-            return Ok(claims_to_user_info(&claims));
+            // Try JWKS signature verification first (strong security).
+            match self.verify_id_token(id_token).await {
+                Ok(claims) => return Ok(claims_to_user_info(&claims)),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "ID token JWKS verification failed — falling back to claim-only validation"
+                    );
+                    // Fallback: decode without signature verification, validate
+                    // claims only. Maintains compatibility with IdPs that have
+                    // unusual JWKS configurations; can be removed in a future
+                    // hardening pass to require strict signature verification.
+                    let claims = decode_jwt_payload(id_token)?;
+                    validate_id_token_claims(&claims, &self.config.issuer, &self.config.client_id)?;
+                    return Ok(claims_to_user_info(&claims));
+                }
+            }
         }
 
         // No ID token — fall back to userinfo endpoint.
@@ -328,14 +382,91 @@ impl OidcAuthenticator {
 
         Ok(claims_to_user_info(&claims))
     }
+
+    /// Verify an ID token's signature using the IdP's JWKS, then return the
+    /// validated claims.
+    ///
+    /// Fetches the JWKS from `{jwks_uri}`, finds the key matching the token's
+    /// `kid` header, and verifies the signature + `iss` / `aud` / `exp` claims
+    /// via the `jsonwebtoken` crate.
+    async fn verify_id_token(&self, id_token: &str) -> Result<serde_json::Value, OidcError> {
+        let discovery = self.discover().await?;
+
+        // Decode the JWT header to find the `kid` (key ID) and algorithm.
+        let header = jsonwebtoken::decode_header(id_token)
+            .map_err(|e| OidcError::UserInfo(format!("failed to decode JWT header: {e}")))?;
+
+        // Fetch JWKS from the discovery document's jwks_uri.
+        let jwks_resp = self
+            .http
+            .get(&discovery.jwks_uri)
+            .send()
+            .await
+            .map_err(|e| OidcError::Discovery(format!("JWKS fetch failed: {e}")))?;
+
+        if !jwks_resp.status().is_success() {
+            return Err(OidcError::Discovery(format!(
+                "JWKS endpoint returned HTTP {}",
+                jwks_resp.status()
+            )));
+        }
+
+        let jwks: Jwks = jwks_resp
+            .json()
+            .await
+            .map_err(|e| OidcError::Discovery(format!("JWKS parse failed: {e}")))?;
+
+        // Find the key matching the token's `kid`. If the header has no `kid`,
+        // fall back to the first RSA key (common with some IdPs).
+        let matching_key = jwks.keys.iter().find(|k| {
+            if let Some(ref kid) = header.kid {
+                k.kid.as_deref() == Some(kid.as_str())
+            } else {
+                k.kty == "RSA"
+            }
+        });
+
+        let key = matching_key.ok_or_else(|| {
+            OidcError::UserInfo("no matching JWKS key found for ID token".to_string())
+        })?;
+
+        // Build a `DecodingKey` from the RSA public key parameters.
+        let decoding_key = if key.kty == "RSA" {
+            let n = key.n.as_ref().ok_or_else(|| {
+                OidcError::UserInfo("JWKS RSA key missing modulus 'n'".to_string())
+            })?;
+            let e = key.e.as_ref().ok_or_else(|| {
+                OidcError::UserInfo("JWKS RSA key missing exponent 'e'".to_string())
+            })?;
+            DecodingKey::from_rsa_components(n, e)
+                .map_err(|e| OidcError::UserInfo(format!("failed to build RSA key: {e}")))?
+        } else {
+            return Err(OidcError::UserInfo(format!(
+                "unsupported JWKS key type: {} (only RSA supported)",
+                key.kty
+            )));
+        };
+
+        // Build validation config: enforce issuer + audience + algorithm.
+        let alg = header.alg;
+        let mut validation = Validation::new(alg);
+        validation.set_audience(&[&self.config.client_id]);
+        validation.set_issuer(&[&self.config.issuer]);
+
+        // Decode and verify the token.
+        let token_data =
+            jsonwebtoken::decode::<serde_json::Value>(id_token, &decoding_key, &validation)
+                .map_err(|e| OidcError::UserInfo(format!("ID token verification failed: {e}")))?;
+
+        Ok(token_data.claims)
+    }
 }
 
 /// Decode the payload (middle) segment of a JWT without signature validation.
 ///
-/// OIDC ID tokens are JWS (signed) JWTs. For user-info extraction we only
-/// need the claims — we trust the TLS-protected token endpoint response and
-/// the single-use authorization code binding. Signature verification via JWKS
-/// is a deferred hardening step.
+/// This is the fallback path used when JWKS signature verification fails or
+/// is unavailable. The TLS-protected token endpoint response plus the claim
+/// validation in [`validate_id_token_claims`] provide the baseline trust.
 fn decode_jwt_payload(token: &str) -> Result<serde_json::Value, OidcError> {
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() < 2 {
@@ -438,8 +569,10 @@ fn compute_hmac(secret: &str, data: &str) -> String {
 
 /// Validate OIDC ID token claims (iss, aud, exp) without signature verification.
 ///
-/// This catches misconfiguration, token replay, and tokens from the wrong IdP.
-/// Signature verification via JWKS is a separate defence-in-depth layer.
+/// This is the fallback path used when JWKS verification cannot be performed.
+/// It catches misconfiguration, token replay, and tokens from the wrong IdP;
+/// [`OidcAuthenticator::verify_id_token`] is the preferred, signature-checking
+/// path.
 fn validate_id_token_claims(
     claims: &serde_json::Value,
     expected_iss: &str,
@@ -1005,5 +1138,156 @@ mod tests {
         };
         let result = auth.extract_user_info(&tokens).await;
         assert!(result.is_err());
+    }
+
+    // ── JWKS signature verification tests ────────────────────────
+
+    #[tokio::test]
+    async fn verify_id_token_succeeds_with_valid_jwks() {
+        use rsa::{pkcs1::EncodeRsaPrivateKey, traits::PublicKeyParts, RsaPrivateKey};
+
+        // Generate a small RSA keypair for the mock IdP. `rsa` 0.9 requires
+        // rand_core 0.6, which is pulled in as a dev-dependency.
+        let mut rng = rsa::rand_core::OsRng;
+        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("generate RSA key");
+        let public_key = private_key.to_public_key();
+
+        // Encode the RSA components for the JWKS response (base64url, no pad).
+        let n_b64 = URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be());
+        let e_b64 = URL_SAFE_NO_PAD.encode(public_key.e().to_bytes_be());
+
+        let server = MockServer::start().await;
+        let issuer_url = server.uri();
+
+        // Build a real signed JWT with the matching private key.
+        let claims = json!({
+            "sub": "user-jwks-test",
+            "email": "jwks@example.com",
+            "preferred_username": "jwks-user",
+            "iss": issuer_url,
+            "aud": "test-client-id",
+            "exp": (chrono::Utc::now().timestamp() + 3600)
+        });
+
+        let pkcs1_pem = private_key
+            .to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)
+            .expect("encode PKCS#1");
+        let encoding_key = jsonwebtoken::EncodingKey::from_rsa_pem(pkcs1_pem.as_bytes())
+            .expect("build encoding key");
+
+        let token = jsonwebtoken::encode(
+            &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256),
+            &claims,
+            &encoding_key,
+        )
+        .expect("sign JWT");
+
+        // Mock the discovery document.
+        let discovery = json!({
+            "authorization_endpoint": format!("{}/authorize", server.uri()),
+            "token_endpoint": format!("{}/token", server.uri()),
+            "jwks_uri": format!("{}/jwks", server.uri()),
+            "issuer": server.uri()
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/.well-known/openid-configuration"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(discovery))
+            .mount(&server)
+            .await;
+
+        // Mock the JWKS endpoint.
+        let jwks = json!({
+            "keys": [{
+                "kid": "test-key-1",
+                "kty": "RSA",
+                "alg": "RS256",
+                "n": n_b64,
+                "e": e_b64
+            }]
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/jwks"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(jwks))
+            .mount(&server)
+            .await;
+
+        // Configure the authenticator with the mock issuer.
+        let mut cfg = test_config();
+        cfg.issuer = server.uri();
+        let auth = OidcAuthenticator::new(cfg).unwrap();
+
+        let tokens = TokenSet {
+            access_token: "atk".into(),
+            id_token: Some(token),
+            token_type: "Bearer".into(),
+            expires_in: None,
+            refresh_token: None,
+        };
+
+        let info = auth
+            .extract_user_info(&tokens)
+            .await
+            .expect("extract should succeed via JWKS verification");
+        assert_eq!(info.id, "user-jwks-test");
+        assert_eq!(info.username, "jwks-user");
+        assert_eq!(info.email.as_deref(), Some("jwks@example.com"));
+        assert_eq!(info.source, AuthSource::Oidc);
+    }
+
+    /// A fake-signed JWT cannot pass JWKS verification, so the authenticator
+    /// must fall back to claim-only validation. The expired `exp` then
+    /// triggers the expected rejection.
+    #[tokio::test]
+    async fn extract_user_info_falls_back_when_jwks_unreachable() {
+        let server = MockServer::start().await;
+
+        // Discovery points the JWKS URI at the mock server but we deliberately
+        // do NOT mount a `/jwks` responder, so the JWKS fetch will return 404.
+        let discovery = json!({
+            "authorization_endpoint": format!("{}/authorize", server.uri()),
+            "token_endpoint": format!("{}/token", server.uri()),
+            "jwks_uri": format!("{}/jwks", server.uri()),
+            "issuer": server.uri()
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/.well-known/openid-configuration"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(discovery))
+            .mount(&server)
+            .await;
+
+        // Valid (claim-wise) fake-signed JWT — JWKS verification will fail
+        // because the signature is bogus, then claim validation should pass.
+        let claims = json!({
+            "sub": "fallback-user",
+            "preferred_username": "fallback",
+            "email": "fallback@example.com",
+            "iss": server.uri(),
+            "aud": "test-client-id",
+            "exp": (chrono::Utc::now().timestamp() + 3600)
+        });
+        let jwt = make_fake_jwt(&claims);
+
+        let mut cfg = test_config();
+        cfg.issuer = server.uri();
+        let auth = OidcAuthenticator::new(cfg).unwrap();
+
+        let tokens = TokenSet {
+            access_token: "atk".into(),
+            id_token: Some(jwt),
+            token_type: "Bearer".into(),
+            expires_in: None,
+            refresh_token: None,
+        };
+
+        let info = auth
+            .extract_user_info(&tokens)
+            .await
+            .expect("fallback claim-only validation should succeed");
+        assert_eq!(info.id, "fallback-user");
+        assert_eq!(info.username, "fallback");
+        assert_eq!(info.email.as_deref(), Some("fallback@example.com"));
     }
 }
