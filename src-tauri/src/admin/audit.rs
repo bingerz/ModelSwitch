@@ -841,12 +841,65 @@ mod tests {
     #[tokio::test]
     async fn hash_chain_tamper_action_breaks_chain() {
         let log = AuditLog::new(100);
-        log.record("create", "admin", "key1", json!({})).await;
-        log.record("delete", "admin", "key1", json!({})).await;
-        // verify_chain reads from the in-memory buffer, confirm it was valid before tamper
+        log.record("channel.create", "alice", "ch-1", json!({"v": 1}))
+            .await;
+        log.record("channel.update", "bob", "ch-1", json!({"v": 2}))
+            .await;
+        log.record("channel.delete", "carol", "ch-1", json!({"v": 3}))
+            .await;
+
+        // Sanity check before tampering.
         assert!(
             log.verify_chain().await,
             "chain should be valid before tamper"
+        );
+
+        // Tamper with the middle entry's action field (VecDeque front = oldest,
+        // so entries[1] is the chronologically middle entry).
+        {
+            let mut entries = log.entries.write().await;
+            if let Some(mid) = entries.get_mut(1) {
+                mid.action = "channel.exfiltrate".to_string();
+            }
+        }
+
+        assert!(
+            !log.verify_chain().await,
+            "chain should be broken after tampering with action"
+        );
+    }
+
+    #[tokio::test]
+    async fn hash_chain_tamper_prev_hash_breaks_chain() {
+        let log = AuditLog::new(100);
+        log.record("channel.create", "alice", "ch-1", json!({"v": 1}))
+            .await;
+        log.record("channel.update", "bob", "ch-1", json!({"v": 2}))
+            .await;
+        log.record("channel.delete", "carol", "ch-1", json!({"v": 3}))
+            .await;
+
+        // Sanity check before tampering.
+        assert!(
+            log.verify_chain().await,
+            "chain should be valid before tamper"
+        );
+
+        // Tamper with the middle entry's prev_hash field. verify_chain iterates
+        // front-to-back and checks each entry's prev_hash against the hash of
+        // its predecessor, so corrupting this link breaks the chain at entry[1].
+        {
+            let mut entries = log.entries.write().await;
+            if let Some(mid) = entries.get_mut(1) {
+                mid.prev_hash = Some(
+                    "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+                );
+            }
+        }
+
+        assert!(
+            !log.verify_chain().await,
+            "chain should be broken after tampering with prev_hash"
         );
     }
 
