@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Copy, CheckCheck, X } from "lucide-react";
+import { X } from "lucide-react";
 import {
   api,
   type BatchCreateVirtualKeyItem,
@@ -14,6 +14,7 @@ import {
   type BatchCreateSettings,
   type BatchValidationError,
 } from "./batch-validate";
+import { BatchResultsTable } from "./BatchResultsTable";
 
 export interface BatchCreateModalProps {
   onClose: () => void;
@@ -55,8 +56,6 @@ export function BatchCreateModal({ onClose, onCreated }: BatchCreateModalProps) 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<BatchCreateVirtualKeyItem[] | null>(null);
-  const [copiedAll, setCopiedAll] = useState(false);
-  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
   const update = <K extends keyof SharedSettings>(key: K, value: SharedSettings[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
@@ -88,30 +87,6 @@ export function BatchCreateModal({ onClose, onCreated }: BatchCreateModalProps) 
       toast.error(msg);
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const handleCopyAll = async () => {
-    if (!results) return;
-    const text = results.map((r) => r.key).join("\n");
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedAll(true);
-      toast.success(t("virtualKeys.batch.copiedAll"));
-      setTimeout(() => setCopiedAll(false), 2000);
-    } catch {
-      toast.error(t("common.failed"));
-    }
-  };
-
-  const handleCopyOne = async (item: BatchCreateVirtualKeyItem, idx: number) => {
-    try {
-      await navigator.clipboard.writeText(item.key);
-      setCopiedIdx(idx);
-      toast.success(t("common.copiedToClipboard"));
-      setTimeout(() => setCopiedIdx(null), 2000);
-    } catch {
-      toast.error(t("common.failed"));
     }
   };
 
@@ -283,59 +258,17 @@ export function BatchCreateModal({ onClose, onCreated }: BatchCreateModalProps) 
             <div className="vk-plaintext-warning">
               {t("virtualKeys.plaintextWarning")}
             </div>
-            <div className="vk-batch-results-toolbar">
-              <span className="meta-tag">
-                {t("virtualKeys.batch.resultsCount", { count: results.length })}
-              </span>
-              <button
-                type="button"
-                className={`btn btn-sm ${copiedAll ? "btn-primary" : ""}`}
-                onClick={handleCopyAll}
-              >
-                {copiedAll ? <CheckCheck size={14} /> : <Copy size={14} />}
-                {copiedAll
-                  ? t("common.copied")
-                  : t("virtualKeys.batch.copyAll")}
-              </button>
-            </div>
-            <div className="vk-batch-results-table-wrapper">
-              <table className="vk-batch-results-table">
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>{t("virtualKeys.keyName")}</th>
-                    <th>{t("virtualKeys.plaintextKey")}</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {results.map((item, idx) => (
-                    <tr key={item.id}>
-                      <td className="mono">{idx + 1}</td>
-                      <td>{item.name}</td>
-                      <td>
-                        <code className="mono vk-batch-key-cell">{item.key}</code>
-                      </td>
-                      <td>
-                        <button
-                          type="button"
-                          className={`btn btn-sm ${copiedIdx === idx ? "btn-primary" : ""}`}
-                          onClick={() => handleCopyOne(item, idx)}
-                          aria-label={t("common.copy")}
-                          title={t("common.copy")}
-                        >
-                          {copiedIdx === idx ? (
-                            <CheckCheck size={14} />
-                          ) : (
-                            <Copy size={14} />
-                          )}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <BatchResultsTable
+              results={results.map((r) => ({
+                id: r.id,
+                name: r.name,
+                key: r.key,
+              }))}
+              showStatusColumn={false}
+              summary={t("virtualKeys.batch.resultsCount", {
+                count: results.length,
+              })}
+            />
             <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
               <button
                 type="button"

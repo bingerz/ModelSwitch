@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Copy, CheckCheck, X, Upload, FileText } from "lucide-react";
+import { X, Upload, FileText } from "lucide-react";
 import {
   api,
   type CreateVirtualKeyResponse,
@@ -9,6 +9,7 @@ import { useFocusTrap } from "../../hooks/useFocusTrap";
 import { useToast } from "../Toast";
 import { dollarsToCents } from "./types";
 import { parseCsv, type ParsedRow } from "./csv-parser";
+import { BatchResultsTable } from "./BatchResultsTable";
 
 export interface CsvImportModalProps {
   onClose: () => void;
@@ -210,108 +211,6 @@ function SharedSettingsForm({ settings, onChange, t }: SharedSettingsFormProps) 
   );
 }
 
-interface ResultsTableProps {
-  results: CreationResult[];
-  copiedAll: boolean;
-  copiedIdx: number | null;
-  onCopyAll: () => void;
-  onCopyIdx: (item: CreationResult, idx: number) => void;
-  t: TFunc;
-}
-
-function ResultsTable({
-  results,
-  copiedAll,
-  copiedIdx,
-  onCopyAll,
-  onCopyIdx,
-  t,
-}: ResultsTableProps) {
-  const successCount = results.filter((r) => r.error === null).length;
-
-  return (
-    <>
-      <div className="vk-plaintext-warning">
-        {t("virtualKeys.batch.plaintextWarning")}
-      </div>
-      <div className="vk-batch-results-toolbar">
-        <span className="meta-tag">
-          {t("virtualKeys.csv.resultsSummary", {
-            success: successCount,
-            total: results.length,
-          })}
-        </span>
-        {successCount > 0 && (
-          <button
-            type="button"
-            className={`btn btn-sm ${copiedAll ? "btn-primary" : ""}`}
-            onClick={onCopyAll}
-          >
-            {copiedAll ? <CheckCheck size={14} /> : <Copy size={14} />}
-            {copiedAll ? t("common.copied") : t("virtualKeys.batch.copyAll")}
-          </button>
-        )}
-      </div>
-      <div className="vk-batch-results-table-wrapper">
-        <table className="vk-batch-results-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>{t("virtualKeys.keyName")}</th>
-              <th>{t("virtualKeys.plaintextKey")}</th>
-              <th>{t("common.status")}</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {results.map((item, idx) => (
-              <tr key={idx}>
-                <td className="mono">{idx + 1}</td>
-                <td>{item.name}</td>
-                <td>
-                  {item.plaintext ? (
-                    <code className="mono vk-batch-key-cell">{item.plaintext}</code>
-                  ) : (
-                    <span className="vk-csv-danger-text">--</span>
-                  )}
-                </td>
-                <td>
-                  {item.error ? (
-                    <span className="vk-csv-cell-error">
-                      {item.error}
-                    </span>
-                  ) : (
-                    <span className="vk-csv-cell-success">
-                      {t("common.success")}
-                    </span>
-                  )}
-                </td>
-                <td>
-                  {item.plaintext && (
-                    <button
-                      type="button"
-                      className={`btn btn-sm ${copiedIdx === idx ? "btn-primary" : ""}`}
-                      onClick={() => onCopyIdx(item, idx)}
-                      aria-label={t("common.copy")}
-                      title={t("common.copy")}
-                    >
-                      {copiedIdx === idx ? (
-                        <CheckCheck size={14} />
-                      ) : (
-                        <Copy size={14} />
-                      )}
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -329,8 +228,6 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<CreationResult[] | null>(null);
-  const [copiedAll, setCopiedAll] = useState(false);
-  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
 
   const update = useCallback(
     <K extends keyof SharedSettings>(key: K, value: SharedSettings[K]) => {
@@ -467,33 +364,6 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
     }
   };
 
-  const handleCopyAll = async () => {
-    if (!results) return;
-    const text = results
-      .filter((r) => r.plaintext)
-      .map((r) => r.plaintext)
-      .join("\n");
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedAll(true);
-      toast.success(t("virtualKeys.batch.copiedAll"));
-      setTimeout(() => setCopiedAll(false), 2000);
-    } catch {
-      toast.error(t("common.failed"));
-    }
-  };
-
-  const handleCopyOne = async (item: CreationResult, idx: number) => {
-    try {
-      await navigator.clipboard.writeText(item.plaintext);
-      setCopiedIdx(idx);
-      toast.success(t("common.copiedToClipboard"));
-      setTimeout(() => setCopiedIdx(null), 2000);
-    } catch {
-      toast.error(t("common.failed"));
-    }
-  };
-
   const handleClose = () => {
     if (submitting) return;
     onClose();
@@ -533,13 +403,20 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
         {/* Results view */}
         {results && (
           <>
-            <ResultsTable
-              results={results}
-              copiedAll={copiedAll}
-              copiedIdx={copiedIdx}
-              onCopyAll={handleCopyAll}
-              onCopyIdx={handleCopyOne}
-              t={t}
+            <div className="vk-plaintext-warning">
+              {t("virtualKeys.batch.plaintextWarning")}
+            </div>
+            <BatchResultsTable
+              results={results.map((r, idx) => ({
+                id: `csv-${idx}`,
+                name: r.name,
+                key: r.plaintext,
+                error: r.error,
+              }))}
+              summary={t("virtualKeys.csv.resultsSummary", {
+                success: results.filter((r) => r.error === null).length,
+                total: results.length,
+              })}
             />
             <div className="vk-csv-actions">
               <button
