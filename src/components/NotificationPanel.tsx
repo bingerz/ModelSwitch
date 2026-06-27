@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Bell } from "lucide-react";
 import { SectionHeader } from "./ui/SectionHeader";
@@ -9,23 +10,22 @@ export function NotificationPanel() {
   const { t } = useTranslation();
   const toast = useToast();
   const [config, setConfig] = useState<NotificationConfig | null>(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
+  const { isLoading: loading, refetch } = useQuery({
+    queryKey: ["notification-config"],
+    queryFn: async () => {
       const data = await api.notificationConfig();
       setConfig(data);
-    } catch {
-      // silently fail
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+      return data;
+    },
+    // Silently fail
+    retry: false,
+  });
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  const refresh = async () => {
+    await refetch();
+  };
 
   const handleSave = async () => {
     if (!config) return;

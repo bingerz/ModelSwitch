@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { type GwStatus, invokeTauri, isTauri } from "./lib/api";
 import { ToastProvider, useToast } from "./components/Toast";
 import { LoginPage } from "./components/LoginPage";
@@ -61,6 +62,18 @@ const ReportsPanel = lazy(() =>
 
 type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "logs" | "cost" | "quota" | "settings" | "audit" | "redemption" | "metrics" | "guardrails" | "notifications" | "registry" | "reports";
 type Theme = "light" | "dark";
+
+// React Query client — sensible defaults for a management console.
+// Created at module scope so it is stable across renders, regardless of mock mode.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: true,
+      staleTime: 5_000, // 5s before data is considered stale
+    },
+  },
+});
 
 // Route check: if the URL path starts with /portal, render the employee
 // self-service portal instead of the admin console.
@@ -429,12 +442,14 @@ export default function App() {
   }
 
   return (
-    <ToastProvider>
-      <QuotaProvider>
-        <ErrorBoundary>
-          <AppInner />
-        </ErrorBoundary>
-      </QuotaProvider>
-    </ToastProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <QuotaProvider>
+            <AppInner />
+          </QuotaProvider>
+        </ToastProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
   );
 }

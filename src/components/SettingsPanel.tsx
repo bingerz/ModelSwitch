@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Settings, Server, Database, RotateCcw, Wallet, FlaskConical } from "lucide-react";
 import { SectionHeader } from "./ui/SectionHeader";
@@ -16,13 +17,16 @@ interface BudgetFormState {
 
 const EMPTY_BUDGET_FORM: BudgetFormState = { provider: "", daily: "", monthly: "" };
 
+interface SettingsData {
+  cache: CacheStats | null;
+  info: GatewayInfo | null;
+  budgets: ProviderBudgetEntry[];
+  ratios: Record<string, number>;
+}
+
 export function SettingsPanel() {
   const { t } = useTranslation();
   const toast = useToast();
-  const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
-  const [gatewayInfo, setGatewayInfo] = useState<GatewayInfo | null>(null);
-  const [budgets, setBudgets] = useState<ProviderBudgetEntry[]>([]);
-  const [loading, setLoading] = useState(true);
   const [flushing, setFlushing] = useState(false);
   const [reloading, setReloading] = useState(false);
   const [completionRatios, setCompletionRatios] = useState<Record<string, number>>({});
@@ -34,34 +38,41 @@ export function SettingsPanel() {
   const [budgetSaving, setBudgetSaving] = useState(false);
   const [deletingBudget, setDeletingBudget] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
+  const { data, isLoading: loading, refetch } = useQuery({
+    queryKey: ["settings"],
+    queryFn: async (): Promise<SettingsData> => {
       const [cache, info, budgetData] = await Promise.all([
         api.cacheStats().catch(() => null),
         api.gatewayInfo().catch(() => null),
         api.providerBudgets().catch(() => []),
       ]);
-      setCacheStats(cache);
-      setGatewayInfo(info);
-      setBudgets(budgetData);
+      let ratios: Record<string, number> = {};
       try {
-        const ratios = await api.completionRatios();
-        setCompletionRatios(ratios);
+        ratios = await api.completionRatios();
       } catch {
         // ratios not available yet
       }
-    } catch {
-      // Silently fail — StatusBar shows gateway status
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+      return { cache, info, budgets: budgetData, ratios };
+    },
+    refetchInterval: 10_000,
+    // Silently fail — StatusBar shows gateway status
+    retry: false,
+  });
 
+  const cacheStats = data?.cache ?? null;
+  const gatewayInfo = data?.info ?? null;
+  const budgets = data?.budgets ?? [];
+  // Sync completion ratios from server into local editable state on each poll.
+  // Local state is needed because the UI lets users edit ratios before saving.
   useEffect(() => {
-    refresh();
-    const interval = setInterval(refresh, 10000);
-    return () => clearInterval(interval);
-  }, [refresh]);
+    if (data) {
+      setCompletionRatios(data.ratios);
+    }
+  }, [data]);
+
+  const refresh = async () => {
+    await refetch();
+  };
 
   const handleFlushCache = async () => {
     setFlushing(true);

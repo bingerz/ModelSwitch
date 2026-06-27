@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { BarChart3, DollarSign, TrendingUp, Coins, Bot, Layers, Cpu } from "lucide-react";
-import { api, type CostStats, PRIORITY_TIERS } from "../lib/api";
+import { api, PRIORITY_TIERS } from "../lib/api";
 import { formatNumber } from "../lib/format";
 import { StatTile } from "./ui/StatTile";
 import { SectionHeader } from "./ui/SectionHeader";
@@ -10,33 +10,27 @@ import "../styles/pages-enhanced.css";
 
 export function CostDashboard() {
   const { t } = useTranslation();
-  const [stats, setStats] = useState<CostStats | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { data: stats, error, refetch } = useQuery({
+    queryKey: ["cost-stats"],
+    queryFn: () => api.costStats(),
+    refetchInterval: 5_000,
+    retry: false,
+  });
 
-  const fetchData = useCallback(async () => {
-    try {
-      const s = await api.costStats();
-      setStats(s);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
+  const fetchData = async () => {
+    await refetch();
+  };
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+  const errorMessage = error instanceof Error ? error.message : error ? String(error) : null;
 
-  if (error && !stats) {
+  if (errorMessage && !stats) {
     return (
       <section>
         <SectionHeader title={t("cost.title")} icon={BarChart3} onRefresh={fetchData} />
         <EmptyState
           icon={BarChart3}
           title={t("dashboard.unableToLoadCost")}
-          description={error}
+          description={errorMessage}
         />
       </section>
     );

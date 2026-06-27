@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Shield } from "lucide-react";
 import { SectionHeader } from "./ui/SectionHeader";
@@ -9,27 +10,26 @@ export function GuardrailsPanel() {
   const { t } = useTranslation();
   const toast = useToast();
   const [config, setConfig] = useState<GuardrailsConfig | null>(null);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [blockedInput, setBlockedInput] = useState("");
   const [allowedInput, setAllowedInput] = useState("");
 
-  const refresh = useCallback(async () => {
-    try {
+  const { isLoading: loading, refetch } = useQuery({
+    queryKey: ["guardrails-config"],
+    queryFn: async () => {
       const data = await api.guardrailsConfig();
       setConfig(data);
       setBlockedInput(data.blocked_patterns.join("\n"));
       setAllowedInput(data.allowed_patterns.join("\n"));
-    } catch {
-      // silently fail
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+      return data;
+    },
+    // Silently fail
+    retry: false,
+  });
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  const refresh = async () => {
+    await refetch();
+  };
 
   const handleSave = async () => {
     if (!config) return;

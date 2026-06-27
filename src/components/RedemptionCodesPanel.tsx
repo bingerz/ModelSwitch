@@ -1,16 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Ticket } from "lucide-react";
 import { SectionHeader } from "./ui/SectionHeader";
-import { api, type RedemptionCode } from "../lib/api";
+import { api } from "../lib/api";
 import { useToast } from "./Toast";
 import { formatCents } from "../lib/format";
 
 export function RedemptionCodesPanel() {
   const { t } = useTranslation();
   const toast = useToast();
-  const [codes, setCodes] = useState<RedemptionCode[]>([]);
-  const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [newCredits, setNewCredits] = useState("");
   const [newExpiry, setNewExpiry] = useState("");
@@ -20,20 +19,16 @@ export function RedemptionCodesPanel() {
   const [redeeming, setRedeeming] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      const data = await api.redemptionCodes.list();
-      setCodes(data);
-    } catch {
-      // silently fail
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const { data: codes = [], isLoading: loading, refetch } = useQuery({
+    queryKey: ["redemption-codes"],
+    queryFn: () => api.redemptionCodes.list(),
+    // Silently fail
+    retry: false,
+  });
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  const refresh = async () => {
+    await refetch();
+  };
 
   const handleCreate = async () => {
     const credits = parseFloat(newCredits);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Activity } from "lucide-react";
 import { SectionHeader } from "./ui/SectionHeader";
@@ -6,25 +6,17 @@ import { api } from "../lib/api";
 
 export function MetricsPanel() {
   const { t } = useTranslation();
-  const [metrics, setMetrics] = useState<string>("");
-  const [loading, setLoading] = useState(true);
+  const { data: metrics = "", isLoading: loading, refetch } = useQuery({
+    queryKey: ["metrics"],
+    queryFn: () => api.metrics(),
+    refetchInterval: 10_000,
+    // Silently fail on error — keep showing stale data
+    retry: false,
+  });
 
-  const refresh = useCallback(async () => {
-    try {
-      const text = await api.metrics();
-      setMetrics(text);
-    } catch {
-      // silently fail
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    refresh();
-    const interval = setInterval(refresh, 10000);
-    return () => clearInterval(interval);
-  }, [refresh]);
+  const refresh = async () => {
+    await refetch();
+  };
 
   // Parse Prometheus text format for key metrics summary
   const summary: Record<string, string> = {};

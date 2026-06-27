@@ -1,38 +1,22 @@
-import { useCallback, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ScrollText } from "lucide-react";
 import { SectionHeader } from "./ui/SectionHeader";
 import { api } from "../lib/api";
 
-interface AuditEntry {
-  timestamp: string;
-  action: string;
-  actor: string;
-  target: string;
-  details: string | null;
-}
-
 export function AuditLogPanel() {
   const { t } = useTranslation();
-  const [entries, setEntries] = useState<AuditEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: entries = [], isLoading: loading, refetch } = useQuery({
+    queryKey: ["audit-log"],
+    queryFn: () => api.auditLog(200),
+    refetchInterval: 15_000,
+    // Silently fail — keep showing stale data
+    retry: false,
+  });
 
-  const refresh = useCallback(async () => {
-    try {
-      const data = await api.auditLog(200);
-      setEntries(data);
-    } catch {
-      // silently fail
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    refresh();
-    const interval = setInterval(refresh, 15000);
-    return () => clearInterval(interval);
-  }, [refresh]);
+  const refresh = async () => {
+    await refetch();
+  };
 
   return (
     <section>

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ClipboardList, Search } from "lucide-react";
 import { api, type DispatchLog } from "../lib/api";
@@ -18,27 +19,20 @@ function matchesSearch(log: DispatchLog, query: string): boolean {
 
 export function LogViewer() {
   const { t } = useTranslation();
-  const [logs, setLogs] = useState<DispatchLog[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<FilterValue>("all");
   const [search, setSearch] = useState("");
 
-  const fetchLogs = useCallback(async () => {
-    try {
-      const data = await api.logs(0, 100);
-      setLogs(data);
-    } catch {
-      // Silently ignore fetch failures; UI will show stale data
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const { data: logs = [], isLoading: loading, refetch } = useQuery({
+    queryKey: ["logs", 0, 100],
+    queryFn: () => api.logs(0, 100),
+    refetchInterval: 3_000,
+    // Silently ignore fetch failures; UI will show stale data
+    retry: false,
+  });
 
-  useEffect(() => {
-    fetchLogs();
-    const interval = setInterval(fetchLogs, 3000);
-    return () => clearInterval(interval);
-  }, [fetchLogs]);
+  const fetchLogs = async () => {
+    await refetch();
+  };
 
   // Pre-compute counts for badge display (unfiltered)
   const totalCount = logs.length;

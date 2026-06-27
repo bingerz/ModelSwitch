@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { BarChart3, DollarSign, Coins, TrendingUp, FileText, Download } from "lucide-react";
-import { api, type UsageReport, type UsageReportParams } from "../lib/api";
+import { api, type UsageReportParams } from "../lib/api";
 import { formatNumber, formatCents, formatTokens } from "../lib/format";
 import { useToast } from "./Toast";
 import { StatTile } from "./ui/StatTile";
@@ -30,12 +31,11 @@ export function ReportsPanel() {
   const [group, setGroup] = useState("");
   const [groupBy, setGroupBy] = useState<GroupBy>("day");
 
-  const [report, setReport] = useState<UsageReport | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [hasGenerated, setHasGenerated] = useState(false);
+  // Submitted params — only updated when the user clicks Generate.
+  // null = never generated, so the query stays disabled until first click.
+  const [submittedParams, setSubmittedParams] = useState<UsageReportParams | null>(null);
 
-  const buildParams = useCallback((): UsageReportParams => {
+  const buildParams = (): UsageReportParams => {
     const params: UsageReportParams = {
       from,
       to,
@@ -44,31 +44,38 @@ export function ReportsPanel() {
     if (keyId.trim()) params.key_id = keyId.trim();
     if (group.trim()) params.group = group.trim();
     return params;
-  }, [from, to, groupBy, keyId, group]);
+  };
 
-  const generate = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await api.reports.usage(buildParams());
-      setReport(data);
-      setHasGenerated(true);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(msg);
+  const { data: report, isFetching: loading, error, refetch } = useQuery({
+    queryKey: ["reports-usage", submittedParams],
+    queryFn: () => api.reports.usage(submittedParams!),
+    enabled: submittedParams !== null,
+    placeholderData: keepPreviousData,
+    retry: false,
+  });
+
+  // Surface fetch errors via toast — matches the original UX where generate()
+  // showed an error toast on failure.
+  useEffect(() => {
+    if (error) {
       toast.error(t("reports.loadFailed"));
-    } finally {
-      setLoading(false);
     }
-  }, [buildParams, toast, t]);
+  }, [error, t, toast]);
 
-  const exportCsv = useCallback(() => {
+  const generate = async () => {
+    setSubmittedParams(buildParams());
+    // Trigger an immediate refetch so subsequent clicks (without filter changes)
+    // still re-request fresh data.
+    await refetch();
+  };
+
+  const exportCsv = () => {
     try {
       api.reports.usageCsv(buildParams());
     } catch {
       toast.error(t("reports.exportFailed"));
     }
-  }, [buildParams, toast, t]);
+  };
 
   // Sort rows by date descending by default
   const sortedRows = useMemo(() => {
@@ -160,7 +167,7 @@ export function ReportsPanel() {
       {/* Error banner */}
       {error && (
         <div className="reports-error-banner">
-          {error}
+          {error instanceof Error ? error.message : String(error)}
         </div>
       )}
 
@@ -195,7 +202,7 @@ export function ReportsPanel() {
       )}
 
       {/* Data table */}
-      {!report && !loading && !hasGenerated && (
+      {!report && !loading && submittedParams === null && (
         <EmptyState
           icon={FileText}
           title={t("reports.empty")}
@@ -203,7 +210,7 @@ export function ReportsPanel() {
         />
       )}
 
-      {hasGenerated && !loading && report && report.rows.length === 0 && (
+      {submittedParams !== null && !loading && report && report.rows.length === 0 && (
         <EmptyState
           icon={FileText}
           title={t("reports.noData")}

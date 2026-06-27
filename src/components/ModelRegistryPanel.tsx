@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Database, Search } from "lucide-react";
 import { SectionHeader } from "./ui/SectionHeader";
@@ -25,28 +26,23 @@ function formatContextSize(tokens: number | null): string {
 
 export function ModelRegistryPanel() {
   const { t } = useTranslation();
-  const [items, setItems] = useState<ModelRegistryItem[]>([]);
-  const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [groupByChannel, setGroupByChannel] = useState(false);
 
-  const refresh = useCallback(async () => {
-    try {
-      const data = await api.modelRegistry();
-      setItems(data.models);
-    } catch {
-      // silently fail — section header shows refresh state
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const { data, isLoading: loading, refetch } = useQuery({
+    queryKey: ["model-registry"],
+    queryFn: () => api.modelRegistry(),
+    refetchInterval: 30_000,
+    // Silently fail — section header shows refresh state
+    retry: false,
+  });
 
-  useEffect(() => {
-    refresh();
-    const interval = setInterval(refresh, 30000);
-    return () => clearInterval(interval);
-  }, [refresh]);
+  const items: ModelRegistryItem[] = data?.models ?? [];
+
+  const refresh = async () => {
+    await refetch();
+  };
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

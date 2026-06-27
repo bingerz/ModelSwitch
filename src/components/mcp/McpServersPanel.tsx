@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api } from "../../lib/api";
 import { useToast } from "../Toast";
@@ -17,12 +18,14 @@ interface McpHealthEntry {
   consecutive_failures: number;
 }
 
+interface McpListResult {
+  servers: McpServer[];
+  healthMap: Record<string, McpHealthEntry>;
+}
+
 export function McpServersPanel() {
   const { t } = useTranslation();
   const toast = useToast();
-  const [servers, setServers] = useState<McpServer[]>([]);
-  const [healthMap, setHealthMap] = useState<Record<string, McpHealthEntry>>({});
-  const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -30,26 +33,34 @@ export function McpServersPanel() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
+  const { data, isLoading: loading, error, refetch } = useQuery({
+    queryKey: ["mcp-servers"],
+    queryFn: async (): Promise<McpListResult> => {
       const [list, healthList] = await Promise.all([
         api.mcp.listServers(),
         api.mcpHealth().catch(() => [] as McpHealthEntry[]),
       ]);
-      setServers(list);
       const byName: Record<string, McpHealthEntry> = {};
       for (const h of healthList) byName[h.name] = h;
-      setHealthMap(byName);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("mcp.loadFailed"));
-    } finally {
-      setLoading(false);
-    }
-  }, [toast, t]);
+      return { servers: list, healthMap: byName };
+    },
+    refetchInterval: 5_000,
+    retry: false,
+  });
 
+  const servers = data?.servers ?? [];
+  const healthMap = data?.healthMap ?? {};
+
+  // Show toast when fetch error changes
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (error) {
+      toast.error(error instanceof Error ? error.message : t("mcp.loadFailed"));
+    }
+  }, [error, t, toast]);
+
+  const refresh = async () => {
+    await refetch();
+  };
 
   const handleStart = async (id: string) => {
     setActionLoading(id);

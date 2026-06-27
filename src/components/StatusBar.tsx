@@ -1,78 +1,86 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, type DispatchStats, type GwStatus, invokeTauri } from "../lib/api";
 import { isTauri, API_BASE } from "../lib/runtime";
 import { useQuota } from "../hooks/useQuota";
 
+interface StatusResult {
+  gw: GwStatus;
+  stats: DispatchStats | null;
+  networkError: boolean;
+}
+
 export function StatusBar() {
   const { t } = useTranslation();
-  const [gw, setGw] = useState<GwStatus | null>(null);
-  const [stats, setStats] = useState<DispatchStats | null>(null);
   const [busy, setBusy] = useState(false);
-  const [networkError, setNetworkError] = useState(false);
+  const queryClient = useQueryClient();
   const { totalBalance, channelsWithData, lowBalanceCount } = useQuota();
 
-  // Backoff tracking for adaptive polling in web mode
-  const backoffRef = useRef(3000); // Start at 3s
-
-  const pollStatus = useCallback(async () => {
-    if (isTauri) {
-      // Desktop mode: use Tauri IPC for gateway lifecycle
-      backoffRef.current = 3000;
-      try {
-        const s = await invokeTauri<GwStatus>("gateway_status");
-        setGw(s);
-        if (s.running) {
-          try {
-            setStats(await api.stats());
-          } catch {
-            setStats(null);
+  const { data } = useQuery<StatusResult>({
+    queryKey: ["status-bar"],
+    queryFn: async () => {
+      if (isTauri) {
+        // Desktop mode: use Tauri IPC for gateway lifecycle
+        try {
+          const s = await invokeTauri<GwStatus>("gateway_status");
+          let stats: DispatchStats | null = null;
+          if (s.running) {
+            try {
+              stats = await api.stats();
+            } catch {
+              stats = null;
+            }
           }
-        } else {
-          setStats(null);
+          return { gw: s, stats, networkError: false };
+        } catch {
+          return {
+            gw: { running: false, host: "127.0.0.1", port: 8080 },
+            stats: null,
+            networkError: false,
+          };
         }
-      } catch {
-        setGw((prev) => prev ?? { running: false, host: "127.0.0.1", port: 8080 });
       }
-    } else {
       // Web mode: gateway is already serving the page. Poll /health.
       try {
         const res = await fetch(`${API_BASE}/health`);
-        setNetworkError(false);
-        backoffRef.current = 3000;
-        setGw({
-          running: res.ok,
-          host: window.location.hostname,
-          port: Number(window.location.port) || 80,
-        });
+        let stats: DispatchStats | null = null;
         if (res.ok) {
           try {
-            setStats(await api.stats());
+            stats = await api.stats();
           } catch {
-            setStats(null);
+            stats = null;
           }
         }
+        return {
+          gw: {
+            running: res.ok,
+            host: window.location.hostname,
+            port: Number(window.location.port) || 80,
+          },
+          stats,
+          networkError: false,
+        };
       } catch {
-        setNetworkError(true);
-        backoffRef.current = Math.min(backoffRef.current * 1.5, 30000);
-        setGw((prev) => prev ?? { running: false, host: "", port: 0 });
+        return {
+          gw: { running: false, host: "", port: 0 },
+          stats: null,
+          networkError: true,
+        };
       }
-    }
-  }, []);
+    },
+    // Poll every 3s. The QueryClient default staleTime (5s) does not affect
+    // refetchInterval — the status bar always re-fetches on the interval.
+    refetchInterval: 3_000,
+    // Keep showing the last known status while refetching in the background
+    // (the original code preserved `gw` between polls via functional setState).
+    retry: false,
+    refetchOnWindowFocus: true,
+  });
 
-  useEffect(() => {
-    pollStatus();
-    // Use a recursive timeout instead of fixed interval for adaptive backoff
-    let timeoutId: ReturnType<typeof setTimeout>;
-    const scheduleNext = () => {
-      timeoutId = setTimeout(async () => {
-        await pollStatus();
-        scheduleNext();
-      }, backoffRef.current);
-    };
-    scheduleNext();
-    return () => clearTimeout(timeoutId);
-  }, [pollStatus]);
+  const gw = data?.gw ?? null;
+  const stats = data?.stats ?? null;
+  const networkError = data?.networkError ?? false;
 
   const handleAction = async (cmd: "gateway_start" | "gateway_stop" | "gateway_restart") => {
     setBusy(true);
@@ -81,9 +89,9 @@ export function StatusBar() {
     } catch (e) {
       console.error("Gateway action failed:", e);
     }
-    // Immediate re-poll after action
-    setTimeout(() => {
-      pollStatus();
+    // Immediate re-poll after action, then clear busy.
+    setTimeout(async () => {
+      await queryClient.invalidateQueries({ queryKey: ["status-bar"] });
       setBusy(false);
     }, 500);
   };
