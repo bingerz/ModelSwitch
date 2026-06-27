@@ -284,10 +284,9 @@ pub async fn oidc_login(State(state): State<std::sync::Arc<AppState>>) -> axum::
         }
     };
 
-    let (url, _state) = authenticator.authorization_url();
-    // TODO: persist `_state` in a server-side session/cookie and verify it
-    // in the callback. For this phase we rely on the single-use code +
-    // redirect_uri binding for CSRF defence.
+    let (url, _state) = authenticator.authorization_url(&state.oidc_state_secret);
+    // The state token is a self-validating HMAC (see `verify_state_token`);
+    // no server-side session storage is required.
     Json(super::ApiResponse::ok(OidcLoginResponse { url })).into_response()
 }
 
@@ -321,10 +320,11 @@ pub async fn oidc_callback(
         return ApiError::new(StatusCode::BAD_REQUEST, "Authorization failed").into_response();
     }
 
-    // TODO: validate `params.state` against the value issued in `oidc_login`.
-    // Requires server-side session storage (cookie or KV). Skipped for this
-    // phase; the authorization code is one-time-use and bound to redirect_uri.
-    tracing::debug!(callback_state = %params.state, "OIDC callback received");
+    // Verify the HMAC-signed stateless CSRF token issued in `oidc_login`.
+    if let Err(e) = crate::auth::oidc::verify_state_token(&state.oidc_state_secret, &params.state) {
+        tracing::warn!(error = %e, "OIDC state token verification failed");
+        return ApiError::new(StatusCode::BAD_REQUEST, "Invalid state parameter").into_response();
+    }
 
     let authenticator = match OidcAuthenticator::new(oidc_config) {
         Ok(auth) => auth,

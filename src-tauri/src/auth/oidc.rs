@@ -15,10 +15,15 @@
 //! defence-in-depth should add JWKS signature verification.
 
 use base64::Engine;
+use hmac::{Hmac, Mac};
 use serde::Deserialize;
+use sha2::Sha256;
+use subtle::ConstantTimeEq;
 
 use crate::auth::{AuthSource, AuthUserInfo};
 use crate::config::OidcConfig;
+
+type HmacSha256 = Hmac<Sha256>;
 
 /// OIDC authentication errors.
 #[derive(Debug, thiserror::Error)]
@@ -124,6 +129,7 @@ impl OidcAuthenticator {
 
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| OidcError::Config(format!("failed to build HTTP client: {e}")))?;
 
@@ -136,14 +142,15 @@ impl OidcAuthenticator {
     /// `client_id`, `redirect_uri`, `response_type=code`, `scope`,
     /// and a random `state` parameter for CSRF protection.
     ///
-    /// Returns `(url, state)` where `state` should be stored (e.g., in a
-    /// session or cookie) and verified when the callback is received.
+    /// Returns `(url, state)` where `state` is a self-validating HMAC token
+    /// (see [`verify_state_token`]) — no server-side session storage required.
     ///
     /// This uses the conventional `{issuer}/authorize` path. Override via
     /// discovery is handled by [`Self::discover`] when exchanging code.
-    pub fn authorization_url(&self) -> (String, String) {
-        // Generate a random state parameter for CSRF protection.
-        let state = uuid::Uuid::new_v4().simple().to_string();
+    pub fn authorization_url(&self, state_secret: &str) -> (String, String) {
+        // Stateless CSRF token: HMAC-signed so the callback can verify it
+        // without needing to persist anything server-side.
+        let state = build_state_token(state_secret);
 
         let scopes = if self.config.scopes.is_empty() {
             "openid"
@@ -203,9 +210,24 @@ impl OidcAuthenticator {
             )));
         }
 
-        resp.json::<DiscoveryDocument>()
+        let doc: DiscoveryDocument = resp
+            .json()
             .await
-            .map_err(|e| OidcError::Discovery(format!("discovery parse failed: {e}")))
+            .map_err(|e| OidcError::Discovery(format!("discovery parse failed: {e}")))?;
+
+        // SSRF defence: validate that discovered endpoints belong to the same host
+        // as the configured issuer. This prevents a compromised or malicious IdP from
+        // redirecting our server to internal network addresses.
+        let issuer_url = url::Url::parse(&self.config.issuer)
+            .map_err(|e| OidcError::Config(format!("invalid issuer URL: {e}")))?;
+        let issuer_host = issuer_url.host_str().unwrap_or("");
+
+        validate_endpoint_host(&doc.token_endpoint, issuer_host)?;
+        if let Some(ref userinfo) = doc.userinfo_endpoint {
+            validate_endpoint_host(userinfo, issuer_host)?;
+        }
+
+        Ok(doc)
     }
 
     /// Exchange an authorization code for a [`TokenSet`].
@@ -269,6 +291,7 @@ impl OidcAuthenticator {
     pub async fn extract_user_info(&self, tokens: &TokenSet) -> Result<AuthUserInfo, OidcError> {
         if let Some(id_token) = &tokens.id_token {
             let claims = decode_jwt_payload(id_token)?;
+            validate_id_token_claims(&claims, &self.config.issuer, &self.config.client_id)?;
             return Ok(claims_to_user_info(&claims));
         }
 
@@ -353,6 +376,126 @@ fn claims_to_user_info(claims: &serde_json::Value) -> AuthUserInfo {
     }
 }
 
+/// Build a stateless, self-validating CSRF state token.
+///
+/// Format: `{nonce}.{expiry_epoch}.{hmac}` where hmac = HMAC-SHA256(secret, nonce + "." + expiry).
+/// The callback verifies the HMAC and checks that `expiry` has not passed,
+/// without needing server-side session storage.
+fn build_state_token(secret: &str) -> String {
+    let nonce = uuid::Uuid::new_v4().simple().to_string();
+    // 10-minute validity window — generous enough for user interaction with the IdP.
+    let expiry = (chrono::Utc::now().timestamp() + 600).to_string();
+    let mac = compute_hmac(secret, &format!("{nonce}.{expiry}"));
+    format!("{nonce}.{expiry}.{mac}")
+}
+
+/// Verify a stateless CSRF state token.
+///
+/// Returns `Ok(())` if the HMAC matches (constant-time compare) and the
+/// token has not expired. Returns `Err` otherwise.
+pub fn verify_state_token(secret: &str, token: &str) -> Result<(), OidcError> {
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() != 3 {
+        return Err(OidcError::Authorization(
+            "malformed state token".to_string(),
+        ));
+    }
+    let nonce = parts[0];
+    let expiry_str = parts[1];
+    let provided_mac = parts[2];
+
+    // Check expiry first — reject expired tokens before HMAC comparison.
+    let expiry: i64 = expiry_str
+        .parse()
+        .map_err(|_| OidcError::Authorization("malformed state expiry".to_string()))?;
+    let now = chrono::Utc::now().timestamp();
+    if now > expiry {
+        return Err(OidcError::Authorization("state token expired".to_string()));
+    }
+
+    // Recompute HMAC and constant-time compare.
+    let expected_mac = compute_hmac(secret, &format!("{nonce}.{expiry_str}"));
+    if expected_mac
+        .as_bytes()
+        .ct_eq(provided_mac.as_bytes())
+        .into()
+    {
+        Ok(())
+    } else {
+        Err(OidcError::Authorization(
+            "state token HMAC mismatch".to_string(),
+        ))
+    }
+}
+
+/// Compute a hex-encoded HMAC-SHA256.
+fn compute_hmac(secret: &str, data: &str) -> String {
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
+    mac.update(data.as_bytes());
+    hex::encode(mac.finalize().into_bytes())
+}
+
+/// Validate OIDC ID token claims (iss, aud, exp) without signature verification.
+///
+/// This catches misconfiguration, token replay, and tokens from the wrong IdP.
+/// Signature verification via JWKS is a separate defence-in-depth layer.
+fn validate_id_token_claims(
+    claims: &serde_json::Value,
+    expected_iss: &str,
+    expected_aud: &str,
+) -> Result<(), OidcError> {
+    // Verify issuer matches configuration.
+    let iss = claims
+        .get("iss")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| OidcError::UserInfo("ID token missing 'iss' claim".to_string()))?;
+    if iss != expected_iss {
+        return Err(OidcError::UserInfo(format!(
+            "ID token issuer mismatch: expected '{expected_iss}', got '{iss}'"
+        )));
+    }
+
+    // Verify audience matches our client_id.
+    let aud = claims.get("aud");
+    let aud_matches = match aud {
+        Some(serde_json::Value::String(s)) => s == expected_aud,
+        Some(serde_json::Value::Array(arr)) => arr.iter().any(|v| v.as_str() == Some(expected_aud)),
+        _ => false,
+    };
+    if !aud_matches {
+        return Err(OidcError::UserInfo(
+            "ID token audience does not match client_id".to_string(),
+        ));
+    }
+
+    // Verify token has not expired.
+    if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64()) {
+        let now = chrono::Utc::now().timestamp();
+        if now > exp {
+            return Err(OidcError::UserInfo("ID token has expired".to_string()));
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate that a URL from the discovery document has the same host as the issuer.
+///
+/// Prevents SSRF via malicious discovery documents that redirect the server to
+/// internal endpoints.
+fn validate_endpoint_host(url_str: &str, issuer_host: &str) -> Result<(), OidcError> {
+    let parsed = url::Url::parse(url_str)
+        .map_err(|e| OidcError::Discovery(format!("discovery endpoint URL malformed: {e}")))?;
+    if parsed.host_str() != Some(issuer_host) {
+        return Err(OidcError::Discovery(format!(
+            "discovery endpoint host mismatch: issuer host '{issuer_host}' but endpoint host was '{}'",
+            parsed.host_str().unwrap_or("(none)")
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,7 +525,7 @@ mod tests {
     #[test]
     fn authorization_url_contains_required_params() {
         let auth = OidcAuthenticator::new(test_config()).unwrap();
-        let (url, state) = auth.authorization_url();
+        let (url, state) = auth.authorization_url("test-secret");
 
         assert!(url.starts_with("https://login.example.com/authorize?"));
         assert!(url.contains("response_type=code"));
@@ -396,15 +539,15 @@ mod tests {
     #[test]
     fn authorization_url_has_unique_state() {
         let auth = OidcAuthenticator::new(test_config()).unwrap();
-        let (_, state1) = auth.authorization_url();
-        let (_, state2) = auth.authorization_url();
+        let (_, state1) = auth.authorization_url("test-secret");
+        let (_, state2) = auth.authorization_url("test-secret");
         assert_ne!(state1, state2, "state must be unique per request");
     }
 
     #[test]
     fn authorization_url_includes_configured_scopes() {
         let auth = OidcAuthenticator::new(test_config()).unwrap();
-        let (url, _) = auth.authorization_url();
+        let (url, _) = auth.authorization_url("test-secret");
         // Scopes are URL-encoded in the query string.
         assert!(url.contains("openid"));
         assert!(url.contains("email"));
@@ -421,7 +564,7 @@ mod tests {
             scopes: vec!["openid".to_string(), "custom:read-write".to_string()],
         };
         let auth = OidcAuthenticator::new(cfg).unwrap();
-        let (url, _state) = auth.authorization_url();
+        let (url, _state) = auth.authorization_url("test-secret");
         // The colon in "custom:read-write" should be encoded once (as %3A),
         // not double-encoded to %253A.
         assert!(
@@ -444,7 +587,7 @@ mod tests {
             scopes: vec!["openid".into()],
         };
         let auth = OidcAuthenticator::new(cfg).unwrap();
-        let (url, _) = auth.authorization_url();
+        let (url, _) = auth.authorization_url("test-secret");
         // Should not have a double slash before "authorize".
         assert!(url.starts_with("https://login.example.com/authorize?"));
         assert!(!url.contains("//authorize"));
@@ -720,7 +863,9 @@ mod tests {
             "sub": "user-abc",
             "email": "alice@example.com",
             "preferred_username": "alice",
-            "name": "Alice Adams"
+            "name": "Alice Adams",
+            "iss": "https://login.example.com",
+            "aud": "test-client-id"
         });
         let jwt = make_fake_jwt(&claims);
 
@@ -814,5 +959,51 @@ mod tests {
             OidcError::UserInfo(_) => {}
             other => panic!("expected UserInfo error, got: {other}"),
         }
+    }
+
+    // ── CSRF state token tests ───────────────────────────────────
+
+    #[test]
+    fn state_token_roundtrips_successfully() {
+        let secret = "test-secret";
+        let token = build_state_token(secret);
+        assert!(verify_state_token(secret, &token).is_ok());
+    }
+
+    #[test]
+    fn state_token_rejects_wrong_secret() {
+        let token = build_state_token("correct-secret");
+        assert!(verify_state_token("wrong-secret", &token).is_err());
+    }
+
+    #[test]
+    fn state_token_rejects_tampered_token() {
+        let token = build_state_token("secret");
+        let tampered = format!("{}.{}.{}", "fake-nonce", "9999999999", "fake-mac");
+        assert!(verify_state_token("secret", &tampered).is_err());
+    }
+
+    // ── ID token claim validation tests ──────────────────────────
+
+    #[tokio::test]
+    async fn extract_user_info_rejects_expired_id_token() {
+        let claims = json!({
+            "sub": "user-abc",
+            "iss": "https://login.example.com",
+            "aud": "test-client-id",
+            "exp": 1  // Unix epoch — always in the past
+        });
+        let jwt = make_fake_jwt(&claims);
+        let cfg = test_config();
+        let auth = OidcAuthenticator::new(cfg).unwrap();
+        let tokens = TokenSet {
+            access_token: "atk".into(),
+            id_token: Some(jwt),
+            token_type: "Bearer".into(),
+            expires_in: None,
+            refresh_token: None,
+        };
+        let result = auth.extract_user_info(&tokens).await;
+        assert!(result.is_err());
     }
 }

@@ -257,6 +257,7 @@ fn build_test_state_with_opts(
         model_registry,
         ldap_config: None,
         oidc_config: None,
+        oidc_state_secret: "test-state-secret".to_string(),
         started_at: std::time::Instant::now(),
     })
 }

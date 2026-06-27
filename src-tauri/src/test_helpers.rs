@@ -212,6 +212,7 @@ fn build_state(
         completion_ratios: Arc::new(parking_lot::RwLock::new(HashMap::new())),
         ldap_config: None,
         oidc_config: None,
+        oidc_state_secret: "test-state-secret".to_string(),
         started_at: std::time::Instant::now(),
     })
 }

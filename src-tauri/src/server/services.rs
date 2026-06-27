@@ -487,6 +487,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         )),
         ldap_config: config.gateway.auth.ldap.clone(),
         oidc_config: config.gateway.auth.oidc.clone(),
+        oidc_state_secret: uuid::Uuid::new_v4().to_string(),
         started_at: std::time::Instant::now(),
     });
 
