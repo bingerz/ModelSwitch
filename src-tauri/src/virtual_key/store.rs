@@ -646,6 +646,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn validate_any_bypasses_expiry_check() {
+        // validate_any is documented to skip enabled/expired/budget checks so
+        // the self-service portal can still resolve a key record even when the
+        // key is inactive. This test pins that contract: an expired key that
+        // validate() rejects (see validate_rejects_expired_key) must still be
+        // returned by validate_any().
+        let store = VirtualKeyStore::new();
+        let past = chrono::Utc::now() - chrono::Duration::hours(1);
+        let (vk, plaintext) = store
+            .create(
+                "expired".to_string(),
+                None,
+                None,
+                None,
+                vec![],
+                vec![],
+                None,
+                None,
+                Some(past),
+                None,
+            )
+            .await;
+        // Sanity: validate() rejects the expired key.
+        assert!(
+            store.validate(&plaintext).await.is_none(),
+            "validate must reject expired key"
+        );
+        // Contract under test: validate_any() still returns the key.
+        let result = store.validate_any(&plaintext).await;
+        assert!(
+            result.is_some(),
+            "validate_any must return expired key without enforcing checks"
+        );
+        assert_eq!(result.unwrap().id, vk.id);
+    }
+
+    #[tokio::test]
     async fn update_changes_rpm_limit() {
         let store = VirtualKeyStore::new();
         let (vk, _) = store

@@ -596,4 +596,50 @@ mod tests {
         };
         assert!(!vk.is_expired());
     }
+
+    #[test]
+    fn is_expired_boundary_check() {
+        // `is_expired` uses a strict `Utc::now() > exp` comparison, so a key
+        // whose `expires_at` equals `now` exactly is NOT considered expired.
+        // Wall-clock time advances between capture and the assertion, so the
+        // test uses a 1-second margin on each side rather than the exact
+        // equality case, which would be flaky.
+        let mut vk = VirtualKey {
+            id: Uuid::new_v4(),
+            key_hash: "x".to_string(),
+            key_prefix: "ms-vk-x".to_string(),
+            name: "boundary".to_string(),
+            daily_budget_cents: None,
+            monthly_budget_cents: None,
+            enabled: true,
+            created_at: Utc::now(),
+            spend: VirtualKeySpend::default(),
+            allowed_models: None,
+            denied_models: vec![],
+            allowed_ips: vec![],
+            rpm_limit: None,
+            tpm_limit: None,
+            expires_at: None,
+            group: None,
+        };
+
+        // 1 second in the past → expired
+        vk.expires_at = Some(Utc::now() - chrono::Duration::seconds(1));
+        assert!(
+            vk.is_expired(),
+            "key with expires_at 1 second in the past must be expired"
+        );
+
+        // 5 seconds in the future → not expired
+        vk.expires_at = Some(Utc::now() + chrono::Duration::seconds(5));
+        assert!(
+            !vk.is_expired(),
+            "key with expires_at 5 seconds in the future must not be expired"
+        );
+
+        // Boundary documentation: `expires_at == now` returns false (not expired)
+        // because the comparison is strict `>`. We do not assert equality
+        // directly because wall-clock time advances between the assignment and
+        // the check.
+    }
 }
