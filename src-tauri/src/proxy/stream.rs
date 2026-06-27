@@ -120,7 +120,20 @@ fn translate_protocol_sse_chunk(
 /// All SSE line parsing (`data:` extraction, usage detection) is deferred to
 /// the post-stream telemetry task. The per-chunk hot path performs only a
 /// single zero-copy `extend_from_slice` into the output buffer.
-#[allow(clippy::type_complexity)]
+///
+/// Handles for SSE stream telemetry coordination between the stream task
+/// and the post-stream telemetry task.
+pub(crate) struct SseTelemetryHandles {
+    /// The SSE streaming response sent to the client.
+    pub response: Response,
+    /// Accumulated SSE data bytes (drained by the telemetry task after stream completes).
+    pub output_buffer: Arc<Mutex<BytesMut>>,
+    /// Signalled when the stream finishes (success, error, or disconnect).
+    pub stream_done: Arc<Notify>,
+    /// Time to first byte, written once by the stream task.
+    pub ttft: Arc<std::sync::Mutex<Option<std::time::Duration>>>,
+}
+
 pub(crate) fn sse_stream_response_with_telemetry(
     upstream_stream: impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
     translate_gemini: bool,
@@ -128,12 +141,7 @@ pub(crate) fn sse_stream_response_with_telemetry(
     first_byte_timeout: Option<std::time::Duration>,
     protocol_translation: Option<(RequestFormat, RequestFormat)>,
     start: std::time::Instant,
-) -> (
-    Response,
-    Arc<Mutex<BytesMut>>,
-    Arc<Notify>,
-    Arc<std::sync::Mutex<Option<std::time::Duration>>>,
-) {
+) -> SseTelemetryHandles {
     use tokio::sync::mpsc;
 
     let output_buffer: Arc<Mutex<BytesMut>> = Arc::new(Mutex::new(BytesMut::new()));
@@ -326,7 +334,12 @@ pub(crate) fn sse_stream_response_with_telemetry(
         .body(body)
         .expect("valid HTTP response construction");
 
-    (response, output_buffer, stream_done, ttft)
+    SseTelemetryHandles {
+        response,
+        output_buffer,
+        stream_done,
+        ttft,
+    }
 }
 
 /// Create a non-streaming JSON response.
@@ -572,7 +585,7 @@ mod tests {
         let chunks = vec![Bytes::from("data: {}\n\n")];
         let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
 
-        let (_response, _output_buffer, stream_done, ttft) = sse_stream_response_with_telemetry(
+        let handles = sse_stream_response_with_telemetry(
             upstream,
             false,
             "gpt-4".to_string(),
@@ -581,18 +594,18 @@ mod tests {
             std::time::Instant::now(),
         );
 
-        let body = _response.into_body();
+        let body = handles.response.into_body();
         let _ = axum::body::to_bytes(body, usize::MAX).await;
-        stream_done.notified().await;
+        handles.stream_done.notified().await;
 
-        assert!(ttft.lock().unwrap().is_some());
+        assert!(handles.ttft.lock().unwrap().is_some());
     }
 
     #[tokio::test]
     async fn telemetry_ttft_none_when_empty_stream() {
         let upstream = stream::iter(Vec::<Result<Bytes, reqwest::Error>>::new());
 
-        let (_response, _output_buffer, stream_done, ttft) = sse_stream_response_with_telemetry(
+        let handles = sse_stream_response_with_telemetry(
             upstream,
             false,
             "gpt-4".to_string(),
@@ -601,11 +614,11 @@ mod tests {
             std::time::Instant::now(),
         );
 
-        let body = _response.into_body();
+        let body = handles.response.into_body();
         let _ = axum::body::to_bytes(body, usize::MAX).await;
-        stream_done.notified().await;
+        handles.stream_done.notified().await;
 
-        assert!(ttft.lock().unwrap().is_none());
+        assert!(handles.ttft.lock().unwrap().is_none());
     }
 
     #[tokio::test]
@@ -617,7 +630,11 @@ mod tests {
                 Poll::Pending
             });
 
-        let (response, _output_buffer, stream_done, _ttft) = sse_stream_response_with_telemetry(
+        let SseTelemetryHandles {
+            response,
+            stream_done,
+            ..
+        } = sse_stream_response_with_telemetry(
             pending_stream,
             false,
             "gpt-4".to_string(),
@@ -644,7 +661,12 @@ mod tests {
         )];
         let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
 
-        let (_response, output_buffer, stream_done, _ttft) = sse_stream_response_with_telemetry(
+        let SseTelemetryHandles {
+            response: _response,
+            output_buffer,
+            stream_done,
+            ..
+        } = sse_stream_response_with_telemetry(
             upstream,
             true,
             "gemini-pro".to_string(),
@@ -678,7 +700,12 @@ mod tests {
         )];
         let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
 
-        let (_response, output_buffer, stream_done, _ttft) = sse_stream_response_with_telemetry(
+        let SseTelemetryHandles {
+            response: _response,
+            output_buffer,
+            stream_done,
+            ..
+        } = sse_stream_response_with_telemetry(
             upstream,
             false,
             "claude-3".to_string(),
@@ -709,7 +736,12 @@ mod tests {
         let chunks: Vec<_> = std::iter::repeat(chunk).take(600).collect();
         let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
 
-        let (_response, output_buffer, stream_done, _ttft) = sse_stream_response_with_telemetry(
+        let SseTelemetryHandles {
+            response: _response,
+            output_buffer,
+            stream_done,
+            ..
+        } = sse_stream_response_with_telemetry(
             upstream,
             false,
             "gpt-4".to_string(),
@@ -739,7 +771,12 @@ mod tests {
         ];
         let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
 
-        let (response, output_buffer, stream_done, _ttft) = sse_stream_response_with_telemetry(
+        let SseTelemetryHandles {
+            response,
+            output_buffer,
+            stream_done,
+            ..
+        } = sse_stream_response_with_telemetry(
             upstream,
             false,
             "gpt-4".to_string(),
@@ -775,7 +812,12 @@ mod tests {
         ];
         let upstream = stream::iter(chunks.into_iter().map(Ok::<_, reqwest::Error>));
 
-        let (_response, output_buffer, stream_done, _ttft) = sse_stream_response_with_telemetry(
+        let SseTelemetryHandles {
+            response: _response,
+            output_buffer,
+            stream_done,
+            ..
+        } = sse_stream_response_with_telemetry(
             upstream,
             false,
             "gpt-4".to_string(),

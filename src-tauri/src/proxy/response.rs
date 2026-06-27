@@ -10,7 +10,9 @@ use bytes::Bytes;
 use tokio::sync::mpsc;
 
 use crate::channel::Channel;
-use crate::proxy::stream::{keepalive_stream, sse_stream_response_with_telemetry};
+use crate::proxy::stream::{
+    keepalive_stream, sse_stream_response_with_telemetry, SseTelemetryHandles,
+};
 use crate::router::active_requests::ActiveRequestGuard;
 
 use super::cache::{InFlightRequests, RequestCache};
@@ -1107,7 +1109,12 @@ pub(super) async fn handle_streaming_success(
             upstream_stream
         };
 
-    let (stream_resp, output_buffer, stream_done, ttft) = sse_stream_response_with_telemetry(
+    let SseTelemetryHandles {
+        response: stream_resp,
+        output_buffer,
+        stream_done,
+        ttft,
+    } = sse_stream_response_with_telemetry(
         combined_stream,
         is_gemini,
         upstream_model.to_string(),
