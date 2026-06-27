@@ -24,8 +24,11 @@ LimitNOFILE=65536
 # ── 环境变量 ────────────────────────────────────────────────────────────
 Environment=MODELSWITCH_CREDENTIAL_STORE=file
 Environment=RUST_LOG=info
-# 通过环境变量或 config.toml 设置管理 Token
-Environment=MODELSWITCH_ADMIN_TOKEN=changeme
+# 必须通过环境变量或 config.toml 设置管理 Token
+# 方式1 (推荐): 写入 config.toml [security] admin_token = "your-token"
+# 方式2: 创建 /etc/modelswitch/env 文件并取消下面注释
+# EnvironmentFile=/etc/modelswitch/env
+# 然后在 env 文件中写入: MODELSWITCH_ADMIN_TOKEN=your-secure-token-here
 
 # ── 安全加固 ────────────────────────────────────────────────────────────
 # 禁止获取新权限 (防止提权攻击)
