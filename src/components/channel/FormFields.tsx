@@ -3,46 +3,41 @@ import { useTranslation } from "react-i18next";
 import type { ApiFormat } from "../../lib/presets";
 import { ModelSelector } from "./ModelSelector";
 
-export interface FormFieldsProps {
+/**
+ * Consolidated form state for channel editor fields.
+ *
+ * Previously each field was threaded through `FormFieldsProps` as an
+ * individual value + setter pair (24+ props). Grouping them into a single
+ * object eliminates the prop drilling without changing the wire format
+ * the parents already use to track this state.
+ */
+export interface FormState {
   name: string;
-  setName: (v: string) => void;
   provider: string;
-  setProvider: (v: string) => void;
   priority: number;
-  setPriority: (v: number) => void;
   weight: number;
-  setWeight: (v: number) => void;
   costPerToken: string;
-  setCostPerToken: (v: string) => void;
   credentialType: string;
-  setCredentialType: (v: string) => void;
   credentialValue: string;
-  setCredentialValue: (v: string) => void;
   baseUrl: string;
-  setBaseUrl: (v: string) => void;
   cooldownMinutes: string;
-  setCooldownMinutes: (v: string) => void;
   inputCostPerMtok: string;
-  setInputCostPerMtok: (v: string) => void;
   outputCostPerMtok: string;
-  setOutputCostPerMtok: (v: string) => void;
   rpmLimit: string;
-  setRpmLimit: (v: string) => void;
   tpmLimit: string;
-  setTpmLimit: (v: string) => void;
   accountGroup: string;
-  setAccountGroup: (v: string) => void;
   excludedModels: string;
-  setExcludedModels: (v: string) => void;
   tags: string;
-  setTags: (v: string) => void;
   modelsEndpoint: string;
-  setModelsEndpoint: (v: string) => void;
   modelsRefreshInterval: string;
-  setModelsRefreshInterval: (v: string) => void;
-  presetModels: string[];
   modelMapping: Record<string, string>;
-  setModelMapping: (v: Record<string, string>) => void;
+}
+
+export interface FormFieldsProps {
+  values: FormState;
+  onChange: (patch: Partial<FormState>) => void;
+  // Non-form-field props kept as individuals
+  presetModels: string[];
   apiKeyUrl?: string;
   defaultModel?: string;
   showCredential: boolean;
@@ -56,45 +51,9 @@ export interface FormFieldsProps {
 }
 
 export function FormFields({
-  name,
-  setName,
-  provider,
-  setProvider,
-  priority,
-  setPriority,
-  weight,
-  setWeight,
-  costPerToken,
-  setCostPerToken,
-  credentialType,
-  setCredentialType,
-  credentialValue,
-  setCredentialValue,
-  baseUrl,
-  setBaseUrl,
-  cooldownMinutes,
-  setCooldownMinutes,
-  inputCostPerMtok,
-  setInputCostPerMtok,
-  outputCostPerMtok,
-  setOutputCostPerMtok,
-  rpmLimit,
-  setRpmLimit,
-  tpmLimit,
-  setTpmLimit,
-  accountGroup,
-  setAccountGroup,
-  excludedModels,
-  setExcludedModels,
-  tags,
-  setTags,
-  modelsEndpoint,
-  setModelsEndpoint,
-  modelsRefreshInterval,
-  setModelsRefreshInterval,
+  values,
+  onChange,
   presetModels,
-  modelMapping,
-  setModelMapping,
   apiKeyUrl,
   defaultModel,
   showCredential,
@@ -115,22 +74,24 @@ export function FormFields({
     return t("channels.geminiFormat");
   };
 
+  const credentialType = values.credentialType;
+
   return (
     <>
       <div className="form-grid">
         <label className="form-field">
           <span>{t("channels.name")}</span>
           <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            value={values.name}
+            onChange={(e) => onChange({ name: e.target.value })}
             required
           />
         </label>
         <label className="form-field">
           <span>{t("common.provider")}{presetLocked ? ` \u00B7 ${t("channels.presetLocked")}` : ""}</span>
           <select
-            value={provider}
-            onChange={(e) => setProvider(e.target.value)}
+            value={values.provider}
+            onChange={(e) => onChange({ provider: e.target.value })}
             disabled={presetLocked}
           >
             <option value="openai">{t("channels.openai")}</option>
@@ -144,8 +105,8 @@ export function FormFields({
         <label className="form-field">
           <span>{t("common.priority")}</span>
           <select
-            value={priority}
-            onChange={(e) => setPriority(Number(e.target.value))}
+            value={values.priority}
+            onChange={(e) => onChange({ priority: Number(e.target.value) })}
           >
             <option value={1}>{t("channels.priority1Free")}</option>
             <option value={2}>{t("channels.priority2Economy")}</option>
@@ -156,8 +117,8 @@ export function FormFields({
           <span>{t("common.weight")}</span>
           <input
             type="number"
-            value={weight}
-            onChange={(e) => setWeight(Number(e.target.value))}
+            value={values.weight}
+            onChange={(e) => onChange({ weight: Number(e.target.value) })}
             min={1}
             max={1000}
           />
@@ -167,8 +128,8 @@ export function FormFields({
             <label className="form-field">
               <span>{t("channels.credentialType")}</span>
               <select
-                value={credentialType}
-                onChange={(e) => setCredentialType(e.target.value)}
+                value={values.credentialType}
+                onChange={(e) => onChange({ credentialType: e.target.value })}
               >
                 <option value="api_key">{t("channels.credentialApiKey")}</option>
                 <option value="web_session">{t("channels.credentialWebSession")}</option>
@@ -179,8 +140,8 @@ export function FormFields({
               <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
                 {credentialType === "web_session" ? (
                   <textarea
-                    value={credentialValue}
-                    onChange={(e) => setCredentialValue(e.target.value)}
+                    value={values.credentialValue}
+                    onChange={(e) => onChange({ credentialValue: e.target.value })}
                     placeholder={
                       credentialPlaceholder || t("channels.enterCookie")
                     }
@@ -194,8 +155,8 @@ export function FormFields({
                 ) : (
                   <input
                     type="password"
-                    value={credentialValue}
-                    onChange={(e) => setCredentialValue(e.target.value)}
+                    value={values.credentialValue}
+                    onChange={(e) => onChange({ credentialValue: e.target.value })}
                     placeholder={
                       credentialPlaceholder || t("channels.enterApiKey")
                     }
@@ -252,8 +213,8 @@ export function FormFields({
         <label className="form-field">
           <span>{t("channels.baseUrl")}</span>
           <input
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
+            value={values.baseUrl}
+            onChange={(e) => onChange({ baseUrl: e.target.value })}
             placeholder="https://api.openai.com"
             required
           />
@@ -262,8 +223,8 @@ export function FormFields({
           <span>{t("channels.models")}</span>
           <ModelSelector
             availableModels={presetModels}
-            modelMapping={modelMapping}
-            onModelMappingChange={setModelMapping}
+            modelMapping={values.modelMapping}
+            onModelMappingChange={(mm) => onChange({ modelMapping: mm })}
             defaultModel={defaultModel}
           />
         </div>
@@ -286,8 +247,8 @@ export function FormFields({
             <input
               type="number"
               step="0.0001"
-              value={costPerToken}
-              onChange={(e) => setCostPerToken(e.target.value)}
+              value={values.costPerToken}
+              onChange={(e) => onChange({ costPerToken: e.target.value })}
               placeholder={t("channels.costPlaceholder")}
             />
           </label>
@@ -296,8 +257,8 @@ export function FormFields({
             <input
               type="number"
               step="0.0001"
-              value={inputCostPerMtok}
-              onChange={(e) => setInputCostPerMtok(e.target.value)}
+              value={values.inputCostPerMtok}
+              onChange={(e) => onChange({ inputCostPerMtok: e.target.value })}
               placeholder={t("channels.costPlaceholder")}
             />
           </label>
@@ -306,8 +267,8 @@ export function FormFields({
             <input
               type="number"
               step="0.0001"
-              value={outputCostPerMtok}
-              onChange={(e) => setOutputCostPerMtok(e.target.value)}
+              value={values.outputCostPerMtok}
+              onChange={(e) => onChange({ outputCostPerMtok: e.target.value })}
               placeholder={t("channels.costPlaceholder")}
             />
           </label>
@@ -315,8 +276,8 @@ export function FormFields({
             <span>{t("channels.cooldown")}</span>
             <input
               type="number"
-              value={cooldownMinutes}
-              onChange={(e) => setCooldownMinutes(e.target.value)}
+              value={values.cooldownMinutes}
+              onChange={(e) => onChange({ cooldownMinutes: e.target.value })}
               placeholder={t("channels.cooldownPlaceholder")}
               min={1}
             />
@@ -325,8 +286,8 @@ export function FormFields({
             <span>{t("channels.rpmLimit")}</span>
             <input
               type="number"
-              value={rpmLimit}
-              onChange={(e) => setRpmLimit(e.target.value)}
+              value={values.rpmLimit}
+              onChange={(e) => onChange({ rpmLimit: e.target.value })}
               placeholder={t("channels.rpmPlaceholder")}
               min={1}
             />
@@ -335,8 +296,8 @@ export function FormFields({
             <span>{t("channels.tpmLimit")}</span>
             <input
               type="number"
-              value={tpmLimit}
-              onChange={(e) => setTpmLimit(e.target.value)}
+              value={values.tpmLimit}
+              onChange={(e) => onChange({ tpmLimit: e.target.value })}
               placeholder={t("channels.tpmPlaceholder")}
               min={1}
             />
@@ -345,8 +306,8 @@ export function FormFields({
             <span>{t("channels.accountGroup")}</span>
             <input
               type="text"
-              value={accountGroup}
-              onChange={(e) => setAccountGroup(e.target.value)}
+              value={values.accountGroup}
+              onChange={(e) => onChange({ accountGroup: e.target.value })}
               placeholder="e.g., production, staging"
             />
             <small className="form-hint">{t("channels.accountGroupHint")}</small>
@@ -355,8 +316,8 @@ export function FormFields({
             <span>{t("channels.excludedModels")}</span>
             <input
               type="text"
-              value={excludedModels}
-              onChange={(e) => setExcludedModels(e.target.value)}
+              value={values.excludedModels}
+              onChange={(e) => onChange({ excludedModels: e.target.value })}
               placeholder="e.g., gpt-4, claude-3-opus"
             />
             <small className="form-hint">{t("channels.excludedModelsHint")}</small>
@@ -365,8 +326,8 @@ export function FormFields({
             <span>{t("channels.tags")}</span>
             <input
               type="text"
-              value={tags}
-              onChange={(e) => setTags(e.target.value)}
+              value={values.tags}
+              onChange={(e) => onChange({ tags: e.target.value })}
               placeholder="e.g., priority, backup"
             />
             <small className="form-hint">{t("channels.tagsHint")}</small>
@@ -375,8 +336,8 @@ export function FormFields({
             <span>{t("channels.modelsEndpoint")}</span>
             <input
               type="text"
-              value={modelsEndpoint}
-              onChange={(e) => setModelsEndpoint(e.target.value)}
+              value={values.modelsEndpoint}
+              onChange={(e) => onChange({ modelsEndpoint: e.target.value })}
               placeholder="/v1/models"
             />
             <small className="form-hint">{t("channels.modelsEndpointHint")}</small>
@@ -385,8 +346,8 @@ export function FormFields({
             <span>{t("channels.modelsRefreshInterval")}</span>
             <input
               type="number"
-              value={modelsRefreshInterval}
-              onChange={(e) => setModelsRefreshInterval(e.target.value)}
+              value={values.modelsRefreshInterval}
+              onChange={(e) => onChange({ modelsRefreshInterval: e.target.value })}
               placeholder="300"
               min={0}
             />

@@ -9,36 +9,40 @@ import { isTauri } from "../../lib/runtime";
 import { useToast } from "../Toast";
 import { type ProviderPreset, type ApiFormat } from "../../lib/presets";
 import { PresetSelector, getAvailableFormats } from "./PresetSelector";
-import { FormFields } from "./FormFields";
+import { FormFields, type FormState } from "./FormFields";
+
+const INITIAL_FORM: FormState = {
+  name: "",
+  provider: "openai",
+  priority: 1,
+  weight: 100,
+  costPerToken: "",
+  credentialType: "api_key",
+  credentialValue: "",
+  baseUrl: "",
+  modelMapping: {},
+  cooldownMinutes: "",
+  inputCostPerMtok: "",
+  outputCostPerMtok: "",
+  rpmLimit: "",
+  tpmLimit: "",
+  accountGroup: "",
+  excludedModels: "",
+  tags: "",
+  modelsEndpoint: "",
+  modelsRefreshInterval: "",
+};
 
 export function ChannelForm({ onSave }: { onSave: () => void }) {
   const { t } = useTranslation();
   const toast = useToast();
   const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
   const [activePreset, setActivePreset] = useState<ProviderPreset | null>(null);
-  const [name, setName] = useState("");
-  const [provider, setProvider] = useState("openai");
-  const [priority, setPriority] = useState(1);
-  const [weight, setWeight] = useState(100);
-  const [costPerToken, setCostPerToken] = useState("");
-  const [credentialType, setCredentialType] = useState("api_key");
-  const [credentialValue, setCredentialValue] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [modelMapping, setModelMapping] = useState<Record<string, string>>({});
-  const [cooldownMinutes, setCooldownMinutes] = useState("");
+  const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [loginInProgress, setLoginInProgress] = useState(false);
+  const [apiFormat, setApiFormat] = useState<ApiFormat>("anthropic");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [inputCostPerMtok, setInputCostPerMtok] = useState("");
-  const [outputCostPerMtok, setOutputCostPerMtok] = useState("");
-  const [rpmLimit, setRpmLimit] = useState("");
-  const [tpmLimit, setTpmLimit] = useState("");
-  const [accountGroup, setAccountGroup] = useState("");
-  const [excludedModels, setExcludedModels] = useState("");
-  const [tags, setTags] = useState("");
-  const [modelsEndpoint, setModelsEndpoint] = useState("");
-  const [modelsRefreshInterval, setModelsRefreshInterval] = useState("");
-  const [apiFormat, setApiFormat] = useState<ApiFormat>("anthropic");
 
   // Listen for WebView login cookies (safe lazy import)
   useEffect(() => {
@@ -50,7 +54,7 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
       listen("login-cookies-received", (event: { payload: { cookies?: string } }) => {
         const { cookies } = event.payload;
         if (cookies) {
-          setCredentialValue(cookies);
+          setForm((prev) => ({ ...prev, credentialValue: cookies }));
         }
         setLoginInProgress(false);
       }).then((fn) => {
@@ -69,7 +73,7 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
   const handleWebViewLogin = async () => {
     setLoginInProgress(true);
     try {
-      await invokeTauri("open_login_webview", { provider });
+      await invokeTauri("open_login_webview", { provider: form.provider });
     } catch (e) {
       toast.error(t("channels.webViewLoginFailed", { error: String(e) }));
       setLoginInProgress(false);
@@ -82,19 +86,19 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
       // Deselect
       setSelectedPreset(null);
       setActivePreset(null);
-      setName("");
-      setProvider("openai");
-      setPriority(1);
-      setBaseUrl("");
-      setModelMapping({});
+      setForm((prev) => ({
+        ...prev,
+        name: "",
+        provider: "openai",
+        priority: 1,
+        baseUrl: "",
+        modelMapping: {},
+      }));
       setApiFormat("anthropic");
     } else {
       // Apply preset
       setSelectedPreset(preset.name);
       setActivePreset(preset);
-      setName(preset.name);
-      setProvider(preset.provider);
-      setPriority(preset.priority);
       // Initialize API format — prefer anthropic, then preset's apiFormat, then first available
       const formats = getAvailableFormats(preset);
       let defaultFormat = formats[0];
@@ -104,13 +108,19 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
       setApiFormat(defaultFormat);
       // Set baseUrl for the selected format
       const url = preset.endpoints?.[defaultFormat] ?? preset.baseUrl;
-      setBaseUrl(url);
       // Ensure defaultModel is in the mapping
       const mapping = { ...preset.modelMapping };
       if (preset.defaultModel && !mapping[preset.defaultModel]) {
         mapping[preset.defaultModel] = preset.defaultModel;
       }
-      setModelMapping(mapping);
+      setForm((prev) => ({
+        ...prev,
+        name: preset.name,
+        provider: preset.provider,
+        priority: preset.priority,
+        baseUrl: url,
+        modelMapping: mapping,
+      }));
     }
   };
 
@@ -118,55 +128,64 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
     setApiFormat(format);
     if (activePreset) {
       const url = activePreset.endpoints?.[format] ?? activePreset.baseUrl;
-      setBaseUrl(url);
+      setForm((prev) => ({ ...prev, baseUrl: url }));
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    const validationError = validateChannelForm({ name, baseUrl });
+    const validationError = validateChannelForm({
+      name: form.name,
+      baseUrl: form.baseUrl,
+    });
     if (validationError) {
       setError(t(validationError));
       return;
     }
-    if (costPerToken && parseFloat(costPerToken) <= 0) {
+    if (form.costPerToken && parseFloat(form.costPerToken) <= 0) {
       setError(t("channels.costPositive"));
       return;
     }
-    if (!credentialValue.trim() && credentialType === "api_key") {
+    if (!form.credentialValue.trim() && form.credentialType === "api_key") {
       setError(t("channels.apiKeyRequired"));
       return;
     }
     setSubmitting(true);
     try {
       await api.createChannel({
-        name,
-        provider,
-        priority,
-        weight,
-        cost_per_token: costPerToken ? parseFloat(costPerToken) : null,
-        credential_type: credentialType,
-        credential_value: credentialValue,
-        base_url: baseUrl,
-        model_mapping: modelMapping,
-        input_cost_per_mtok: inputCostPerMtok ? parseFloat(inputCostPerMtok) : null,
-        output_cost_per_mtok: outputCostPerMtok ? parseFloat(outputCostPerMtok) : null,
-        cooldown_minutes: cooldownMinutes ? parseInt(cooldownMinutes, 10) : null,
-        rpm_limit: rpmLimit ? parseInt(rpmLimit, 10) : null,
-        tpm_limit: tpmLimit ? parseInt(tpmLimit, 10) : null,
-        account_group: accountGroup.trim() || null,
-        excluded_models: excludedModels
+        name: form.name,
+        provider: form.provider,
+        priority: form.priority,
+        weight: form.weight,
+        cost_per_token: form.costPerToken ? parseFloat(form.costPerToken) : null,
+        credential_type: form.credentialType,
+        credential_value: form.credentialValue,
+        base_url: form.baseUrl,
+        model_mapping: form.modelMapping,
+        input_cost_per_mtok: form.inputCostPerMtok
+          ? parseFloat(form.inputCostPerMtok)
+          : null,
+        output_cost_per_mtok: form.outputCostPerMtok
+          ? parseFloat(form.outputCostPerMtok)
+          : null,
+        cooldown_minutes: form.cooldownMinutes
+          ? parseInt(form.cooldownMinutes, 10)
+          : null,
+        rpm_limit: form.rpmLimit ? parseInt(form.rpmLimit, 10) : null,
+        tpm_limit: form.tpmLimit ? parseInt(form.tpmLimit, 10) : null,
+        account_group: form.accountGroup.trim() || null,
+        excluded_models: form.excludedModels
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean),
-        tags: tags
+        tags: form.tags
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean),
-        models_endpoint: modelsEndpoint.trim() || null,
-        models_refresh_interval_secs: modelsRefreshInterval
-          ? parseInt(modelsRefreshInterval, 10)
+        models_endpoint: form.modelsEndpoint.trim() || null,
+        models_refresh_interval_secs: form.modelsRefreshInterval
+          ? parseInt(form.modelsRefreshInterval, 10)
           : 300,
       });
       toast.success(t("channels.created"));
@@ -189,26 +208,9 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
       <div className="form-divider"><span>{t("channels.orConfigureManually")}</span></div>
 
       <FormFields
-        name={name} setName={setName}
-        provider={provider} setProvider={setProvider}
-        priority={priority} setPriority={setPriority}
-        weight={weight} setWeight={setWeight}
-        costPerToken={costPerToken} setCostPerToken={setCostPerToken}
-        credentialType={credentialType} setCredentialType={setCredentialType}
-        credentialValue={credentialValue} setCredentialValue={setCredentialValue}
-        baseUrl={baseUrl} setBaseUrl={setBaseUrl}
-        cooldownMinutes={cooldownMinutes} setCooldownMinutes={setCooldownMinutes}
-        inputCostPerMtok={inputCostPerMtok} setInputCostPerMtok={setInputCostPerMtok}
-        outputCostPerMtok={outputCostPerMtok} setOutputCostPerMtok={setOutputCostPerMtok}
-        rpmLimit={rpmLimit} setRpmLimit={setRpmLimit}
-        tpmLimit={tpmLimit} setTpmLimit={setTpmLimit}
-        accountGroup={accountGroup} setAccountGroup={setAccountGroup}
-        excludedModels={excludedModels} setExcludedModels={setExcludedModels}
-        tags={tags} setTags={setTags}
-        modelsEndpoint={modelsEndpoint} setModelsEndpoint={setModelsEndpoint}
-        modelsRefreshInterval={modelsRefreshInterval} setModelsRefreshInterval={setModelsRefreshInterval}
+        values={form}
+        onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
         presetModels={activePreset?.models ?? []}
-        modelMapping={modelMapping} setModelMapping={setModelMapping}
         apiKeyUrl={activePreset?.apiKeyUrl}
         defaultModel={activePreset?.defaultModel}
         showCredential={true}

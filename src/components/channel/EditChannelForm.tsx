@@ -7,7 +7,7 @@ import {
   validateChannelForm,
 } from "../../lib/api";
 import { useToast } from "../Toast";
-import { FormFields } from "./FormFields";
+import { FormFields, type FormState } from "./FormFields";
 
 export function EditChannelForm({
   channel,
@@ -20,47 +20,37 @@ export function EditChannelForm({
 }) {
   const { t } = useTranslation();
   const toast = useToast();
-  const [name, setName] = useState(channel.name);
-  const [provider, setProvider] = useState(channel.provider);
-  const [priority, setPriority] = useState(channel.priority);
-  const [weight, setWeight] = useState(channel.weight);
-  const [costPerToken, setCostPerToken] = useState(
-    channel.cost_per_token != null ? String(channel.cost_per_token) : ""
-  );
-  const [baseUrl, setBaseUrl] = useState(channel.base_url);
-  const [modelMapping, setModelMapping] = useState<Record<string, string>>(
-    channel.model_mapping
-  );
-  const [cooldownMinutes, setCooldownMinutes] = useState(
-    channel.cooldown_minutes != null ? String(channel.cooldown_minutes) : ""
-  );
-  const [inputCostPerMtok, setInputCostPerMtok] = useState(
-    channel.input_cost_per_mtok != null ? String(channel.input_cost_per_mtok) : ""
-  );
-  const [outputCostPerMtok, setOutputCostPerMtok] = useState(
-    channel.output_cost_per_mtok != null ? String(channel.output_cost_per_mtok) : ""
-  );
-  const [rpmLimit, setRpmLimit] = useState(
-    channel.rpm_limit != null ? String(channel.rpm_limit) : ""
-  );
-  const [tpmLimit, setTpmLimit] = useState(
-    channel.tpm_limit != null ? String(channel.tpm_limit) : ""
-  );
-  const [accountGroup, setAccountGroup] = useState(channel.account_group ?? "");
-  const [excludedModels, setExcludedModels] = useState(
-    channel.excluded_models.join(", ")
-  );
-  const [tags, setTags] = useState(channel.tags.join(", "));
-  const [modelsEndpoint, setModelsEndpoint] = useState(
-    channel.models_endpoint ?? ""
-  );
-  const [modelsRefreshInterval, setModelsRefreshInterval] = useState(
-    channel.models_refresh_interval_secs
+  const [form, setForm] = useState<FormState>({
+    name: channel.name,
+    provider: channel.provider,
+    priority: channel.priority,
+    weight: channel.weight,
+    costPerToken:
+      channel.cost_per_token != null ? String(channel.cost_per_token) : "",
+    baseUrl: channel.base_url,
+    modelMapping: channel.model_mapping,
+    cooldownMinutes:
+      channel.cooldown_minutes != null ? String(channel.cooldown_minutes) : "",
+    inputCostPerMtok:
+      channel.input_cost_per_mtok != null
+        ? String(channel.input_cost_per_mtok)
+        : "",
+    outputCostPerMtok:
+      channel.output_cost_per_mtok != null
+        ? String(channel.output_cost_per_mtok)
+        : "",
+    rpmLimit: channel.rpm_limit != null ? String(channel.rpm_limit) : "",
+    tpmLimit: channel.tpm_limit != null ? String(channel.tpm_limit) : "",
+    accountGroup: channel.account_group ?? "",
+    excludedModels: channel.excluded_models.join(", "),
+    tags: channel.tags.join(", "),
+    modelsEndpoint: channel.models_endpoint ?? "",
+    modelsRefreshInterval: channel.models_refresh_interval_secs
       ? String(channel.models_refresh_interval_secs)
-      : ""
-  );
-  const [credentialType, setCredentialType] = useState("api_key");
-  const [credentialValue, setCredentialValue] = useState("");
+      : "",
+    credentialType: "api_key",
+    credentialValue: "",
+  });
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -102,7 +92,10 @@ export function EditChannelForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    const validationError = validateChannelForm({ name, baseUrl });
+    const validationError = validateChannelForm({
+      name: form.name,
+      baseUrl: form.baseUrl,
+    });
     if (validationError) {
       setError(t(validationError));
       return;
@@ -110,31 +103,33 @@ export function EditChannelForm({
     setSubmitting(true);
     try {
       await api.updateChannel(channel.id, {
-        name,
-        provider,
-        priority,
-        weight,
-        cost_per_token: costPerToken ? parseFloat(costPerToken) : null,
-        base_url: baseUrl,
+        name: form.name,
+        provider: form.provider,
+        priority: form.priority,
+        weight: form.weight,
+        cost_per_token: form.costPerToken ? parseFloat(form.costPerToken) : null,
+        base_url: form.baseUrl,
         enabled: channel.enabled,
-        model_mapping: modelMapping,
-        cooldown_minutes: cooldownMinutes ? parseInt(cooldownMinutes, 10) : null,
-        credential_type: credentialValue ? credentialType : undefined,
-        credential_value: credentialValue || undefined,
-        rpm_limit: rpmLimit ? parseInt(rpmLimit, 10) : null,
-        tpm_limit: tpmLimit ? parseInt(tpmLimit, 10) : null,
-        account_group: accountGroup.trim() || null,
-        excluded_models: excludedModels
+        model_mapping: form.modelMapping,
+        cooldown_minutes: form.cooldownMinutes
+          ? parseInt(form.cooldownMinutes, 10)
+          : null,
+        credential_type: form.credentialValue ? form.credentialType : undefined,
+        credential_value: form.credentialValue || undefined,
+        rpm_limit: form.rpmLimit ? parseInt(form.rpmLimit, 10) : null,
+        tpm_limit: form.tpmLimit ? parseInt(form.tpmLimit, 10) : null,
+        account_group: form.accountGroup.trim() || null,
+        excluded_models: form.excludedModels
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean),
-        tags: tags
+        tags: form.tags
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean),
-        models_endpoint: modelsEndpoint.trim() || null,
-        models_refresh_interval_secs: modelsRefreshInterval
-          ? parseInt(modelsRefreshInterval, 10)
+        models_endpoint: form.modelsEndpoint.trim() || null,
+        models_refresh_interval_secs: form.modelsRefreshInterval
+          ? parseInt(form.modelsRefreshInterval, 10)
           : 300,
       });
       toast.success(t("channels.updated"));
@@ -193,26 +188,9 @@ export function EditChannelForm({
     <form className="channel-form" onSubmit={handleSubmit}>
       <h3 className="form-title">{t("channels.edit")}</h3>
       <FormFields
-        name={name} setName={setName}
-        provider={provider} setProvider={setProvider}
-        priority={priority} setPriority={setPriority}
-        weight={weight} setWeight={setWeight}
-        costPerToken={costPerToken} setCostPerToken={setCostPerToken}
-        credentialType={credentialType} setCredentialType={setCredentialType}
-        credentialValue={credentialValue} setCredentialValue={setCredentialValue}
-        baseUrl={baseUrl} setBaseUrl={setBaseUrl}
-        cooldownMinutes={cooldownMinutes} setCooldownMinutes={setCooldownMinutes}
-        inputCostPerMtok={inputCostPerMtok} setInputCostPerMtok={setInputCostPerMtok}
-        outputCostPerMtok={outputCostPerMtok} setOutputCostPerMtok={setOutputCostPerMtok}
-        rpmLimit={rpmLimit} setRpmLimit={setRpmLimit}
-        tpmLimit={tpmLimit} setTpmLimit={setTpmLimit}
-        accountGroup={accountGroup} setAccountGroup={setAccountGroup}
-        excludedModels={excludedModels} setExcludedModels={setExcludedModels}
-        tags={tags} setTags={setTags}
-        modelsEndpoint={modelsEndpoint} setModelsEndpoint={setModelsEndpoint}
-        modelsRefreshInterval={modelsRefreshInterval} setModelsRefreshInterval={setModelsRefreshInterval}
+        values={form}
+        onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
         presetModels={[]}
-        modelMapping={modelMapping} setModelMapping={setModelMapping}
         showCredential={true}
         credentialPlaceholder={t("channels.keepCredentialEmpty")}
       />
