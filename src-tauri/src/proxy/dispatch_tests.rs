@@ -245,6 +245,7 @@ fn build_test_state_with_opts(
             sanitizer_config: SanitizerConfig::default(),
             allowed_origins: None,
             trust_forwarded_headers: false,
+            allow_open_proxy: false,
         },
         guardrails: Arc::new(crate::guardrails::GuardrailsChecker::new(
             crate::guardrails::GuardrailsConfig::default(),

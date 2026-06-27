@@ -85,6 +85,11 @@ pub struct GatewayConfig {
     /// When set, the gateway serves a web UI at `/` for browser-based management.
     #[serde(default)]
     pub web_console_dir: Option<String>,
+    /// Explicitly allow open-proxy mode (no virtual key auth) on non-loopback binds.
+    /// Defaults to false — the gateway refuses to start in open-proxy mode on
+    /// non-loopback addresses unless this is set to true.
+    #[serde(default)]
+    pub allow_open_proxy: bool,
     /// Maximum time (seconds) to wait for in-flight requests during shutdown.
     #[serde(default = "default_drain_timeout_secs")]
     pub drain_timeout_secs: u64,
@@ -360,6 +365,7 @@ impl Default for GatewayConfig {
             admin_token: None,
             admin_tokens: vec![],
             web_console_dir: None,
+            allow_open_proxy: false,
             drain_timeout_secs: default_drain_timeout_secs(),
             request_timeout_secs: None,
             stream_keepalive_secs: None,

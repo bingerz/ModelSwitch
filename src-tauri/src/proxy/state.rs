@@ -93,6 +93,9 @@ pub struct SecurityState {
     pub sanitizer_config: crate::config::SanitizerConfig,
     pub allowed_origins: Option<Vec<String>>,
     pub trust_forwarded_headers: bool,
+    /// Whether open-proxy mode (no virtual key auth) is explicitly allowed
+    /// on non-loopback bind addresses.
+    pub allow_open_proxy: bool,
 }
 
 /// Shared application state for the proxy.

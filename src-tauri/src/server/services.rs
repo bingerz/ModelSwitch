@@ -476,6 +476,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             sanitizer_config: config.gateway.sanitizer.clone(),
             allowed_origins: config.gateway.allowed_origins.clone(),
             trust_forwarded_headers: false,
+            allow_open_proxy: config.gateway.allow_open_proxy,
         },
         guardrails: Arc::new(GuardrailsChecker::new(GuardrailsConfig::default())),
         redemption_codes: Arc::new(RedemptionCodeStore::new()),
