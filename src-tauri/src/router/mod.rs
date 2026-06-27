@@ -16,62 +16,8 @@ use strategy::{
     LatencyBasedStrategy, LeastBusyStrategy, LowestCostStrategy, RoutingStrategy,
     UsageBasedStrategy, WeightedRandomStrategy,
 };
-use uuid::Uuid;
 
 pub use strategy::RoutingStrategyType;
-
-/// A group of channels for cross-group retry.
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct ChannelGroup {
-    pub name: String,
-    pub channel_ids: Vec<Uuid>,
-    pub priority: u32,
-}
-
-/// A collection of channel groups that supports cross-group failover.
-///
-/// Groups are ordered by priority (lower number = tried first). When every
-/// channel in a group has failed, [`ChannelGroups::next_group_channels`]
-/// returns the next priority group that still has untried candidates.
-#[allow(dead_code)]
-#[derive(Debug, Clone, Default)]
-pub struct ChannelGroups {
-    pub groups: Vec<ChannelGroup>,
-}
-
-#[allow(dead_code)]
-impl ChannelGroups {
-    pub fn new(groups: Vec<ChannelGroup>) -> Self {
-        Self { groups }
-    }
-
-    /// Returns groups sorted by priority ascending. Groups with a lower
-    /// priority number are tried first.
-    pub fn groups_by_priority(&self) -> Vec<&ChannelGroup> {
-        let mut sorted: Vec<&ChannelGroup> = self.groups.iter().collect();
-        sorted.sort_by_key(|g| g.priority);
-        sorted
-    }
-
-    /// Given a set of failed channel IDs, return the next priority group's
-    /// channels that still have untried candidates. Returns `None` when every
-    /// group has been exhausted.
-    pub fn next_group_channels(&self, failed: &[Uuid]) -> Option<Vec<Uuid>> {
-        for group in self.groups_by_priority() {
-            let untried: Vec<Uuid> = group
-                .channel_ids
-                .iter()
-                .filter(|id| !failed.contains(id))
-                .copied()
-                .collect();
-            if !untried.is_empty() {
-                return Some(untried);
-            }
-        }
-        None
-    }
-}
 
 /// Context references needed by the routing layer.
 /// Bundled into a struct to keep `select_channel` signatures manageable.
@@ -227,66 +173,4 @@ pub async fn select_channel(
         &mut halfopen_candidates,
         &*strategy,
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn mk_id(n: u8) -> Uuid {
-        // Deterministic-ish unique IDs for readable tests
-        Uuid::from_bytes([n; 16])
-    }
-
-    fn sample_groups() -> ChannelGroups {
-        ChannelGroups::new(vec![
-            ChannelGroup {
-                name: "secondary".into(),
-                channel_ids: vec![mk_id(3), mk_id(4)],
-                priority: 20,
-            },
-            ChannelGroup {
-                name: "primary".into(),
-                channel_ids: vec![mk_id(1), mk_id(2)],
-                priority: 10,
-            },
-            ChannelGroup {
-                name: "tertiary".into(),
-                channel_ids: vec![mk_id(5), mk_id(6)],
-                priority: 30,
-            },
-        ])
-    }
-
-    #[test]
-    fn groups_sorted_by_priority() {
-        let groups = sample_groups();
-        let sorted = groups.groups_by_priority();
-        assert_eq!(sorted.len(), 3);
-        assert_eq!(sorted[0].name, "primary");
-        assert_eq!(sorted[0].priority, 10);
-        assert_eq!(sorted[1].name, "secondary");
-        assert_eq!(sorted[1].priority, 20);
-        assert_eq!(sorted[2].name, "tertiary");
-        assert_eq!(sorted[2].priority, 30);
-    }
-
-    #[test]
-    fn next_group_skips_exhausted_groups() {
-        let groups = sample_groups();
-        // Exhaust the primary group entirely
-        let failed = vec![mk_id(1), mk_id(2)];
-        let next = groups
-            .next_group_channels(&failed)
-            .expect("should return secondary group channels");
-
-        assert_eq!(next, vec![mk_id(3), mk_id(4)]);
-    }
-
-    #[test]
-    fn next_group_returns_none_when_all_exhausted() {
-        let groups = sample_groups();
-        let failed = vec![mk_id(1), mk_id(2), mk_id(3), mk_id(4), mk_id(5), mk_id(6)];
-        assert_eq!(groups.next_group_channels(&failed), None);
-    }
 }

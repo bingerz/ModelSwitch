@@ -47,6 +47,9 @@ const STREAM_OVERLAP: usize = 256;
 pub struct CompiledPattern {
     regex: Regex,
     replacement: String,
+    /// Human-readable identifier for debugging and log correlation.
+    /// Stored on the struct so redaction sites can report which pattern fired;
+    /// not currently read by the hot path.
     #[allow(dead_code)]
     name: &'static str,
 }

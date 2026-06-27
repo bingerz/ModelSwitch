@@ -29,6 +29,11 @@ pub async fn probe_connectivity(http_client: &reqwest::Client, channel: &Channel
 /// 200/429 = healthy (endpoint reachable, key valid / rate-limited)
 /// 401/403 = unhealthy (key invalid or unauthorized)
 /// Connection error = unhealthy
+///
+/// Not called from production wiring (the server uses the lighter
+/// `probe_connectivity` via `run_periodic_probe`). Kept because it forms a
+/// complete, tested API-specific probe pathway that can be enabled via
+/// `start_health_checker`.
 #[allow(dead_code)]
 pub async fn probe_channel(
     http_client: &reqwest::Client,

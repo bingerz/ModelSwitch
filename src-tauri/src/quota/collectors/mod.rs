@@ -12,9 +12,6 @@ pub mod stepfun;
 pub mod zhipu;
 
 #[cfg(feature = "tauri")]
-pub mod webview;
-
-#[cfg(feature = "tauri")]
 pub mod webview_scripts;
 
 use crate::quota::provider::QuotaProvider;

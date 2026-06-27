@@ -48,7 +48,10 @@ pub fn to_openai_function(tool: &AggregatedTool) -> Value {
 ///   "input_schema": { ... sanitized JSON Schema ... }
 /// }
 /// ```
-#[allow(dead_code)] // consumed in Phase 3.3 (tool-call interception)
+/// Note: the proxy MCP interception layer (`proxy/mcp_tools.rs`) currently
+/// only wires the OpenAI tool format. This Anthropic format helper is kept for
+/// the Anthropic-side interception path, which is not yet integrated.
+#[allow(dead_code)] // Anthropic MCP tool interception path not yet wired into proxy
 pub fn to_anthropic_tool(tool: &AggregatedTool) -> Value {
     json!({
         "name": tool.namespaced_name,
@@ -94,7 +97,6 @@ pub fn sanitize_schema(schema: &Value) -> Value {
 /// Returns `Some((server_id, original_name, arguments))` if the call
 /// targets an MCP tool, or `None` if the name is not namespaced.
 /// `arguments` is `None` when the LLM produced empty or `"null"` arguments.
-#[allow(dead_code)] // consumed in Phase 3.3 (tool-call interception)
 pub fn parse_mcp_tool_call(namespaced_name: &str, arguments: &str) -> Option<ParsedMcpToolCall> {
     let (server_id, original_name) = AggregatedTool::parse_namespaced(namespaced_name)?;
 
@@ -120,7 +122,6 @@ pub fn parse_mcp_tool_call(namespaced_name: &str, arguments: &str) -> Option<Par
 /// something was returned but cannot consume raw binary.
 ///
 /// If `is_error` is set on the result, the body is prefixed with `"Error: "`.
-#[allow(dead_code)] // consumed in Phase 3.3 (tool-call interception)
 pub fn flatten_tool_result(result: &rmcp::model::CallToolResult) -> String {
     use rmcp::model::RawContent;
 

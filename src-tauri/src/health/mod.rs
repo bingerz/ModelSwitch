@@ -9,6 +9,14 @@ use std::time::Duration;
 /// When the probe succeeds, latency is recorded and circuit-open channels
 /// are force-recovered. When it fails, healthy channels are tripped to
 /// circuit-open.
+///
+/// This forms the thorough (API-specific) probe pathway together with
+/// [`start_health_checker`] and [`probe::probe_channel`]. The production
+/// server currently wires only the lighter [`run_periodic_probe`] (which
+/// uses `probe_connectivity`). This thorough pathway is kept — and its
+/// tests exercise real provider-specific probing logic — so it can be
+/// swapped in via `start_health_checker` when deeper health checks are
+/// needed. Marked dead_code because no production caller invokes it yet.
 #[allow(dead_code)]
 pub(crate) async fn check_channel_health(
     channel_mgr: &ChannelManager,
@@ -49,6 +57,9 @@ pub(crate) async fn check_channel_health(
 /// This is the more thorough probe that sends provider-specific API requests
 /// to validate credentials and endpoint reachability. For a simpler
 /// connectivity-only check, use [`run_periodic_probe`] instead.
+///
+/// Not currently wired into server startup (server uses `run_periodic_probe`).
+/// Kept as a complete, tested alternative for deeper health checks.
 #[allow(dead_code)]
 pub fn start_health_checker(
     channel_mgr: Arc<ChannelManager>,

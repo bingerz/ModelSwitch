@@ -43,7 +43,6 @@ impl AggregatedTool {
     ///
     /// Note: server_ids containing `__` are not supported by this scheme
     /// and should be avoided when configuring servers.
-    #[allow(dead_code)] // consumed in Phase 3.3 (tool-call interception)
     pub fn parse_namespaced(name: &str) -> Option<(&str, &str)> {
         let rest = name.strip_prefix("mcp__")?;
         let server_id = rest.split("__").next()?;
