@@ -17,6 +17,37 @@ use super::provider::ProviderAdaptor;
 use super::usage::{extract_usage, extract_usage_from_stream};
 use super::{estimate_tokens, make_log, RequestFormat};
 
+/// Shared context for response handling — eliminates 14+ positional parameters.
+///
+/// Constructed by `try_channel_attempt` and passed to both streaming and JSON
+/// success handlers. All fields are references or `Copy` types, so the struct
+/// itself is `Copy` and can be passed by value without cloning.
+pub(super) struct ResponseContext<'a> {
+    pub channel: &'a Channel,
+    pub body: &'a Value,
+    pub current_model: &'a str,
+    pub upstream_model: &'a str,
+    pub original_model: &'a str,
+    pub attempt: u32,
+    pub trigger_reason: Option<&'a str>,
+    pub start: std::time::Instant,
+    pub request_id: Option<&'a str>,
+    pub upstream_headers: &'a [(String, String)],
+    pub vk_id: Option<Uuid>,
+    pub reserved_cents: u64,
+    pub cache_key: u128,
+    pub cache_key_material: &'a str,
+}
+
+/// RAII guards that must outlive the response body.
+///
+/// Bundled into a struct so that `handle_streaming_success` and
+/// `handle_json_success` stay under clippy's `too_many_arguments` threshold.
+pub(super) struct ResponseGuards {
+    pub pool: crate::http_pool::PooledClient,
+    pub active: ActiveRequestGuard,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,36 +400,67 @@ mod tests {
         })
     }
 
+    /// Build a `ResponseContext` for testing `handle_json_success`.
+    fn test_response_context<'a>(
+        channel: &'a Channel,
+        body: &'a Value,
+        current_model: &'a str,
+        upstream_model: &'a str,
+        original_model: &'a str,
+        trigger_reason: Option<&'a str>,
+        upstream_headers: &'a [(String, String)],
+        cache_key: u128,
+        cache_key_material: &'a str,
+    ) -> ResponseContext<'a> {
+        ResponseContext {
+            channel,
+            body,
+            current_model,
+            upstream_model,
+            original_model,
+            attempt: 0,
+            trigger_reason,
+            start: std::time::Instant::now(),
+            request_id: None,
+            upstream_headers,
+            vk_id: None,
+            reserved_cents: 0,
+            cache_key,
+            cache_key_material,
+        }
+    }
+
     #[tokio::test]
     async fn handle_json_success_returns_200_with_body() {
         let state = test_helpers::build_test_state(vec![]);
         let channel = test_channel();
         let provider = OpenAIAdaptor;
+        let body = request_body();
         let resp = mock_upstream(
             r#"{"choices":[{"message":{"content":"hi"}}],"usage":{"prompt_tokens":10,"completion_tokens":5},"model":"gpt-4"}"#,
         )
         .await;
 
-        let response = handle_json_success(
-            &state,
+        let ctx = test_response_context(
             &channel,
-            resp,
-            &request_body(),
-            "gpt-4",
-            &provider,
+            &body,
             "gpt-4",
             "gpt-4",
-            0,
-            None,
-            std::time::Instant::now(),
+            "gpt-4",
             None,
             &[],
-            None,
-            0,
             42u128,
             "test-key",
-            test_pool_guard(),
-            test_active_guard(channel.id),
+        );
+        let response = handle_json_success(
+            &state,
+            ctx,
+            &provider,
+            resp,
+            ResponseGuards {
+                pool: test_pool_guard(),
+                active: test_active_guard(channel.id),
+            },
             RequestFormat::OpenAIChat,
             RequestFormat::OpenAIChat,
         )
@@ -420,31 +482,32 @@ mod tests {
         let state = test_helpers::build_test_state(vec![]);
         let channel = test_channel();
         let provider = OpenAIAdaptor;
+        let body = request_body();
         let resp = mock_upstream(
             r#"{"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0},"model":"gpt-4"}"#,
         )
         .await;
 
-        let response = handle_json_success(
-            &state,
+        let ctx = test_response_context(
             &channel,
-            resp,
-            &request_body(),
+            &body,
+            "gpt-4-turbo",
+            "gpt-4-turbo",
             "gpt-4o",
-            &provider,
-            "gpt-4-turbo",
-            "gpt-4-turbo",
-            0,
             Some("model_fallback"),
-            std::time::Instant::now(),
-            None,
             &[],
-            None,
-            0,
             43u128,
             "test-key",
-            test_pool_guard(),
-            test_active_guard(channel.id),
+        );
+        let response = handle_json_success(
+            &state,
+            ctx,
+            &provider,
+            resp,
+            ResponseGuards {
+                pool: test_pool_guard(),
+                active: test_active_guard(channel.id),
+            },
             RequestFormat::OpenAIChat,
             RequestFormat::OpenAIChat,
         )
@@ -471,31 +534,32 @@ mod tests {
         let state = test_helpers::build_test_state(vec![]);
         let channel = test_channel();
         let provider = OpenAIAdaptor;
+        let body = request_body();
         let resp = mock_upstream(
             r#"{"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0},"model":"gpt-4"}"#,
         )
         .await;
 
-        let response = handle_json_success(
-            &state,
+        let ctx = test_response_context(
             &channel,
-            resp,
-            &request_body(),
-            "gpt-4",
-            &provider,
+            &body,
             "gpt-4",
             "gpt-4",
-            0,
-            None,
-            std::time::Instant::now(),
+            "gpt-4",
             None,
             &[],
-            None,
-            0,
             44u128,
             "test-key",
-            test_pool_guard(),
-            test_active_guard(channel.id),
+        );
+        let response = handle_json_success(
+            &state,
+            ctx,
+            &provider,
+            resp,
+            ResponseGuards {
+                pool: test_pool_guard(),
+                active: test_active_guard(channel.id),
+            },
             RequestFormat::OpenAIChat,
             RequestFormat::OpenAIChat,
         )
@@ -516,6 +580,7 @@ mod tests {
         let state = test_helpers::build_test_state(vec![]);
         let channel = test_channel();
         let provider = OpenAIAdaptor;
+        let body = request_body();
         let resp = mock_upstream(
             r#"{"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":0},"model":"gpt-4"}"#,
         )
@@ -523,26 +588,26 @@ mod tests {
 
         let upstream_headers = vec![("x-ratelimit-remaining".to_string(), "100".to_string())];
 
-        let response = handle_json_success(
-            &state,
+        let ctx = test_response_context(
             &channel,
-            resp,
-            &request_body(),
-            "gpt-4",
-            &provider,
+            &body,
             "gpt-4",
             "gpt-4",
-            0,
-            None,
-            std::time::Instant::now(),
+            "gpt-4",
             None,
             &upstream_headers,
-            None,
-            0,
             45u128,
             "test-key",
-            test_pool_guard(),
-            test_active_guard(channel.id),
+        );
+        let response = handle_json_success(
+            &state,
+            ctx,
+            &provider,
+            resp,
+            ResponseGuards {
+                pool: test_pool_guard(),
+                active: test_active_guard(channel.id),
+            },
             RequestFormat::OpenAIChat,
             RequestFormat::OpenAIChat,
         )
@@ -559,28 +624,29 @@ mod tests {
         let state = test_helpers::build_test_state(vec![]);
         let channel = test_channel();
         let provider = OpenAIAdaptor;
+        let body = request_body();
         let resp = mock_upstream(r#"{"choices":[]}"#).await;
 
-        let response = handle_json_success(
-            &state,
+        let ctx = test_response_context(
             &channel,
-            resp,
-            &request_body(),
-            "gpt-4",
-            &provider,
+            &body,
             "gpt-4",
             "gpt-4",
-            0,
-            None,
-            std::time::Instant::now(),
+            "gpt-4",
             None,
             &[],
-            None,
-            0,
             46u128,
             "test-key",
-            test_pool_guard(),
-            test_active_guard(channel.id),
+        );
+        let response = handle_json_success(
+            &state,
+            ctx,
+            &provider,
+            resp,
+            ResponseGuards {
+                pool: test_pool_guard(),
+                active: test_active_guard(channel.id),
+            },
             RequestFormat::OpenAIChat,
             RequestFormat::OpenAIChat,
         )
@@ -595,6 +661,7 @@ mod tests {
         let state = test_helpers::build_test_state(vec![]);
         let channel = test_channel();
         let provider = OpenAIAdaptor;
+        let body = request_body();
         let resp = mock_upstream(
             r#"{"choices":[{"message":{"content":"cached"}}],"usage":{"prompt_tokens":3,"completion_tokens":2},"model":"gpt-4"}"#,
         )
@@ -603,26 +670,26 @@ mod tests {
         let cache_key = 99u128;
         let cache_key_material = "cache-test-material";
 
-        let _response = handle_json_success(
-            &state,
+        let ctx = test_response_context(
             &channel,
-            resp,
-            &request_body(),
-            "gpt-4",
-            &provider,
+            &body,
             "gpt-4",
             "gpt-4",
-            0,
-            None,
-            std::time::Instant::now(),
+            "gpt-4",
             None,
             &[],
-            None,
-            0,
             cache_key,
             cache_key_material,
-            test_pool_guard(),
-            test_active_guard(channel.id),
+        );
+        let _response = handle_json_success(
+            &state,
+            ctx,
+            &provider,
+            resp,
+            ResponseGuards {
+                pool: test_pool_guard(),
+                active: test_active_guard(channel.id),
+            },
             RequestFormat::OpenAIChat,
             RequestFormat::OpenAIChat,
         )
@@ -648,28 +715,29 @@ mod tests {
         let state = test_helpers::build_test_state(vec![]);
         let channel = test_channel();
         let provider = OpenAIAdaptor;
+        let body = request_body();
         let resp = mock_upstream("").await;
 
-        let response = handle_json_success(
-            &state,
+        let ctx = test_response_context(
             &channel,
-            resp,
-            &request_body(),
-            "gpt-4",
-            &provider,
+            &body,
             "gpt-4",
             "gpt-4",
-            0,
-            None,
-            std::time::Instant::now(),
+            "gpt-4",
             None,
             &[],
-            None,
-            0,
             47u128,
             "test-key",
-            test_pool_guard(),
-            test_active_guard(channel.id),
+        );
+        let response = handle_json_success(
+            &state,
+            ctx,
+            &provider,
+            resp,
+            ResponseGuards {
+                pool: test_pool_guard(),
+                active: test_active_guard(channel.id),
+            },
             RequestFormat::OpenAIChat,
             RequestFormat::OpenAIChat,
         )
@@ -683,31 +751,32 @@ mod tests {
         let state = test_helpers::build_test_state(vec![]);
         let channel = test_channel();
         let provider = OpenAIAdaptor;
+        let body = request_body();
         let resp = mock_upstream(
             r#"{"choices":[],"usage":{"prompt_tokens":1000000,"completion_tokens":500000},"model":"gpt-4"}"#,
         )
         .await;
 
-        let response = handle_json_success(
-            &state,
+        let ctx = test_response_context(
             &channel,
-            resp,
-            &request_body(),
-            "gpt-4",
-            &provider,
+            &body,
             "gpt-4",
             "gpt-4",
-            0,
-            None,
-            std::time::Instant::now(),
+            "gpt-4",
             None,
             &[],
-            None,
-            0,
             48u128,
             "test-key",
-            test_pool_guard(),
-            test_active_guard(channel.id),
+        );
+        let response = handle_json_success(
+            &state,
+            ctx,
+            &provider,
+            resp,
+            ResponseGuards {
+                pool: test_pool_guard(),
+                active: test_active_guard(channel.id),
+            },
             RequestFormat::OpenAIChat,
             RequestFormat::OpenAIChat,
         )
@@ -903,30 +972,32 @@ async fn record_post_response_telemetry(
 /// The `pool_guard` is moved into the background telemetry task so the pool's
 /// active count stays accurate for the entire lifetime of the stream — the
 /// guard is dropped only after `stream_done` fires (stream fully consumed).
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_streaming_success(
     state: &Arc<crate::proxy::AppState>,
-    channel: &Channel,
+    ctx: ResponseContext<'_>,
+    provider: &dyn ProviderAdaptor,
     upstream_stream: futures::stream::BoxStream<'static, Result<Bytes, reqwest::Error>>,
     first_chunk: Option<Bytes>,
-    body: &Value,
-    provider: &dyn ProviderAdaptor,
-    current_model: &str,
-    upstream_model: &str,
-    attempt: u32,
-    trigger_reason: Option<&str>,
-    start: std::time::Instant,
-    request_id: Option<&str>,
-    upstream_headers: &[(String, String)],
-    vk_id: Option<Uuid>,
-    reserved_cents: u64,
-    original_model: &str,
-    cache_key: u128,
-    cache_key_material: &str,
-    pool_guard: crate::http_pool::PooledClient,
-    active_guard: ActiveRequestGuard,
+    guards: ResponseGuards,
     protocol_translation: Option<(RequestFormat, RequestFormat)>,
 ) -> Response {
+    let channel = ctx.channel;
+    let body = ctx.body;
+    let current_model = ctx.current_model;
+    let upstream_model = ctx.upstream_model;
+    let original_model = ctx.original_model;
+    let attempt = ctx.attempt;
+    let trigger_reason = ctx.trigger_reason;
+    let start = ctx.start;
+    let request_id = ctx.request_id;
+    let upstream_headers = ctx.upstream_headers;
+    let vk_id = ctx.vk_id;
+    let reserved_cents = ctx.reserved_cents;
+    let cache_key = ctx.cache_key;
+    let cache_key_material = ctx.cache_key_material;
+    let pool_guard = guards.pool;
+    let active_guard = guards.active;
+
     let is_gemini = provider.is_gemini_stream();
 
     // Compute the first-byte timeout from the gateway config. This guards against
@@ -1198,30 +1269,32 @@ pub(super) async fn handle_streaming_success(
 /// function end — after `resp.text().await` completes and all processing
 /// finishes. This is correct because the non-streaming response body is
 /// fully consumed when `resp.text().await` returns.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_json_success(
     state: &Arc<crate::proxy::AppState>,
-    channel: &Channel,
-    resp: reqwest::Response,
-    body: &Value,
-    original_model: &str,
+    ctx: ResponseContext<'_>,
     provider: &dyn ProviderAdaptor,
-    current_model: &str,
-    upstream_model: &str,
-    attempt: u32,
-    trigger_reason: Option<&str>,
-    start: std::time::Instant,
-    request_id: Option<&str>,
-    upstream_headers: &[(String, String)],
-    vk_id: Option<Uuid>,
-    reserved_cents: u64,
-    cache_key: u128,
-    cache_key_material: &str,
-    pool_guard: crate::http_pool::PooledClient,
-    active_guard: ActiveRequestGuard,
+    resp: reqwest::Response,
+    guards: ResponseGuards,
     request_format: RequestFormat,
     upstream_format: RequestFormat,
 ) -> Response {
+    let channel = ctx.channel;
+    let body = ctx.body;
+    let original_model = ctx.original_model;
+    let current_model = ctx.current_model;
+    let upstream_model = ctx.upstream_model;
+    let attempt = ctx.attempt;
+    let trigger_reason = ctx.trigger_reason;
+    let start = ctx.start;
+    let request_id = ctx.request_id;
+    let upstream_headers = ctx.upstream_headers;
+    let vk_id = ctx.vk_id;
+    let reserved_cents = ctx.reserved_cents;
+    let cache_key = ctx.cache_key;
+    let cache_key_material = ctx.cache_key_material;
+    let pool_guard = guards.pool;
+    let active_guard = guards.active;
+
     // Hold the pool guard and active-request guard until the function returns —
     // the non-streaming response body is fully consumed after `resp.bytes().await`
     // below. Both guards decrement their counters on drop.

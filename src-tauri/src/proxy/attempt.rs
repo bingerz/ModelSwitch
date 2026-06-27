@@ -735,56 +735,70 @@ pub(super) async fn try_channel_attempt(
                 (resp.bytes_stream().boxed(), None)
             };
 
-        let response = handle_streaming_success(
-            state,
-            channel,
-            upstream_stream,
-            first_chunk,
-            body,
-            provider,
-            current_model,
-            &upstream_model,
-            attempt,
-            trigger_reason.as_deref(),
-            start,
-            request_id,
-            &upstream_headers,
-            vk_id,
-            reserved_cents,
-            original_model,
-            cache_key,
-            cache_key_material,
-            pool_guard,
-            _active_guard,
-            protocol_translation,
-        )
-        .await;
+        let response = {
+            let ctx = super::response::ResponseContext {
+                channel,
+                body,
+                current_model,
+                upstream_model: &upstream_model,
+                original_model,
+                attempt,
+                trigger_reason: trigger_reason.as_deref(),
+                start,
+                request_id,
+                upstream_headers: &upstream_headers,
+                vk_id,
+                reserved_cents,
+                cache_key,
+                cache_key_material,
+            };
+            handle_streaming_success(
+                state,
+                ctx,
+                provider,
+                upstream_stream,
+                first_chunk,
+                super::response::ResponseGuards {
+                    pool: pool_guard,
+                    active: _active_guard,
+                },
+                protocol_translation,
+            )
+            .await
+        };
         AttemptOutcome::Respond(response)
     } else {
-        let response = handle_json_success(
-            state,
-            channel,
-            resp,
-            body,
-            original_model,
-            provider,
-            current_model,
-            &upstream_model,
-            attempt,
-            trigger_reason.as_deref(),
-            start,
-            request_id,
-            &upstream_headers,
-            vk_id,
-            reserved_cents,
-            cache_key,
-            cache_key_material,
-            pool_guard,
-            _active_guard,
-            request_format,
-            upstream_format,
-        )
-        .await;
+        let response = {
+            let ctx = super::response::ResponseContext {
+                channel,
+                body,
+                current_model,
+                upstream_model: &upstream_model,
+                original_model,
+                attempt,
+                trigger_reason: trigger_reason.as_deref(),
+                start,
+                request_id,
+                upstream_headers: &upstream_headers,
+                vk_id,
+                reserved_cents,
+                cache_key,
+                cache_key_material,
+            };
+            handle_json_success(
+                state,
+                ctx,
+                provider,
+                resp,
+                super::response::ResponseGuards {
+                    pool: pool_guard,
+                    active: _active_guard,
+                },
+                request_format,
+                upstream_format,
+            )
+            .await
+        };
         AttemptOutcome::Respond(response)
     }
 }
