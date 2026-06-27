@@ -75,17 +75,7 @@ function FileDropzone({ onFileSelected, t }: FileDropzoneProps) {
 
   return (
     <div
-      className="vk-csv-dropzone"
-      style={{
-        border: dragOver
-          ? "2px dashed var(--color-accent)"
-          : "2px dashed var(--color-border)",
-        borderRadius: "var(--radius-md, 8px)",
-        padding: "var(--space-4, 1.5rem)",
-        textAlign: "center",
-        cursor: "pointer",
-        transition: "border-color 0.15s ease",
-      }}
+      className={`vk-csv-dropzone${dragOver ? " vk-csv-dropzone--drag" : ""}`}
       onClick={() => fileInputRef.current?.click()}
       onDragOver={(e) => {
         e.preventDefault();
@@ -94,11 +84,11 @@ function FileDropzone({ onFileSelected, t }: FileDropzoneProps) {
       onDragLeave={() => setDragOver(false)}
       onDrop={handleDrop}
     >
-      <Upload size={32} style={{ opacity: 0.5, marginBottom: "0.5rem" }} />
-      <div style={{ fontWeight: 500, marginBottom: "0.25rem" }}>
+      <Upload size={32} className="vk-csv-dropzone-icon" />
+      <div className="vk-csv-dropzone-title">
         {t("virtualKeys.csv.dropHere")}
       </div>
-      <div style={{ fontSize: "0.85em", color: "var(--color-text-muted)" }}>
+      <div className="vk-csv-dropzone-hint">
         {t("virtualKeys.csv.dropHint")}
       </div>
       <input
@@ -136,10 +126,7 @@ interface SharedSettingsFormProps {
 function SharedSettingsForm({ settings, onChange, t }: SharedSettingsFormProps) {
   return (
     <div className="mt-3">
-      <div
-        className="form-title"
-        style={{ fontSize: "0.9em", marginBottom: "var(--space-2)" }}
-      >
+      <div className="form-title vk-csv-section-title">
         {t("virtualKeys.csv.sharedSettings")}
       </div>
 
@@ -285,20 +272,16 @@ function ResultsTable({
                   {item.plaintext ? (
                     <code className="mono vk-batch-key-cell">{item.plaintext}</code>
                   ) : (
-                    <span style={{ color: "var(--color-danger)" }}>--</span>
+                    <span className="vk-csv-danger-text">--</span>
                   )}
                 </td>
                 <td>
                   {item.error ? (
-                    <span
-                      style={{ color: "var(--color-danger)", fontSize: "0.85em" }}
-                    >
+                    <span className="vk-csv-cell-error">
                       {item.error}
                     </span>
                   ) : (
-                    <span
-                      style={{ color: "var(--color-success)", fontSize: "0.85em" }}
-                    >
+                    <span className="vk-csv-cell-success">
                       {t("common.success")}
                     </span>
                   )}
@@ -558,13 +541,7 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
               onCopyIdx={handleCopyOne}
               t={t}
             />
-            <div
-              style={{
-                display: "flex",
-                gap: "var(--space-2)",
-                marginTop: "var(--space-3)",
-              }}
-            >
+            <div className="vk-csv-actions">
               <button
                 type="button"
                 className="btn btn-primary"
@@ -588,16 +565,9 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
             {/* Preview table + shared settings */}
             {parsedRows && parsedRows.length > 0 && (
               <>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "var(--space-2)",
-                    marginBottom: "var(--space-2)",
-                  }}
-                >
+                <div className="vk-csv-file-info">
                   <FileText size={16} />
-                  <span style={{ fontWeight: 500 }}>{fileName}</span>
+                  <span className="vk-csv-filename">{fileName}</span>
                   <span className="meta-tag">
                     {t("virtualKeys.csv.rowsFound", { count: parsedRows.length })}
                   </span>
@@ -614,10 +584,7 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
                   </button>
                 </div>
 
-                <div
-                  className="vk-batch-results-table-wrapper"
-                  style={{ maxHeight: "200px" }}
-                >
+                <div className="vk-batch-results-table-wrapper vk-csv-preview-wrapper">
                   <table className="vk-batch-results-table">
                     <thead>
                       <tr>
@@ -638,13 +605,7 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
                   </table>
                 </div>
                 {parsedRows.length > 50 && (
-                  <div
-                    style={{
-                      fontSize: "0.85em",
-                      color: "var(--color-text-muted)",
-                      marginTop: "0.25rem",
-                    }}
-                  >
+                  <div className="vk-csv-preview-hint">
                     {t("virtualKeys.csv.showingFirst", {
                       shown: 50,
                       total: parsedRows.length,
@@ -664,13 +625,7 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
             )}
 
             {/* Action buttons */}
-            <div
-              style={{
-                display: "flex",
-                gap: "var(--space-2)",
-                marginTop: "var(--space-3)",
-              }}
-            >
+            <div className="vk-csv-actions">
               <button
                 type="button"
                 className="btn btn-primary"

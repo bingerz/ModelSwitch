@@ -1,0 +1,77 @@
+/* ─── CSV Import Modal ─── */
+
+.vk-csv-dropzone {
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  padding: var(--space-4, 1.5rem);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.vk-csv-dropzone--drag {
+  border-color: var(--color-accent);
+}
+
+.vk-csv-dropzone-icon {
+  opacity: 0.5;
+  margin-bottom: 0.5rem;
+}
+
+.vk-csv-dropzone-title {
+  font-weight: 500;
+  margin-bottom: 0.25rem;
+}
+
+.vk-csv-dropzone-hint {
+  font-size: 0.85em;
+  color: var(--color-text-muted);
+}
+
+/* Tighter section title when reusing .form-title inside the CSV modal */
+.vk-csv-section-title {
+  font-size: 0.9em;
+  margin-bottom: var(--space-2);
+}
+
+.vk-csv-danger-text {
+  color: var(--color-danger);
+}
+
+.vk-csv-cell-error {
+  color: var(--color-danger);
+  font-size: 0.85em;
+}
+
+.vk-csv-cell-success {
+  color: var(--color-success);
+  font-size: 0.85em;
+}
+
+.vk-csv-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.vk-csv-file-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.vk-csv-filename {
+  font-weight: 500;
+}
+
+/* Overrides the taller max-height from .vk-batch-results-table-wrapper */
+.vk-csv-preview-wrapper {
+  max-height: 200px;
+}
+
+.vk-csv-preview-hint {
+  font-size: 0.85em;
+  color: var(--color-text-muted);
+  margin-top: 0.25rem;
+}
