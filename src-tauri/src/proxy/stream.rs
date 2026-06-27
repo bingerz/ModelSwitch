@@ -20,12 +20,19 @@ const STREAM_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 /// discarding old bytes while preserving recent output.
 const MAX_OUTPUT_BUFFER_BYTES: usize = 512 * 1024; // 512KB
 
-/// Translate a Gemini SSE chunk to OpenAI SSE format.
-/// Each `data:` line is parsed as JSON and converted via `gemini_stream_to_openai`.
-/// Non-JSON lines, comments, and `[DONE]` markers are passed through.
-fn translate_gemini_sse_chunk(bytes: &[u8], model: &str) -> Bytes {
-    use crate::proxy::translate::gemini_stream_to_openai;
-    let text = String::from_utf8_lossy(bytes);
+/// Parse SSE data lines and translate each JSON chunk.
+///
+/// Common framework for SSE stream translation: splits on newlines, passes
+/// through comments and empty lines, handles `[DONE]`, skips Anthropic-style
+/// `event:` type lines, parses each `data:` line as JSON, and invokes the
+/// translation closure.
+///
+/// The closure receives the original line and parsed JSON value, returning
+/// `Some(output_string)` to emit or `None` to drop the line entirely.
+fn translate_sse_lines<F>(text: &str, translate_chunk: F) -> String
+where
+    F: Fn(&str, &serde_json::Value) -> Option<String>,
+{
     let mut output = String::new();
     for line in text.split('\n') {
         let trimmed = line.trim();
@@ -39,18 +46,35 @@ fn translate_gemini_sse_chunk(bytes: &[u8], model: &str) -> Bytes {
             output.push_str("data: [DONE]\n\n");
             continue;
         }
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
-            if let Some(translated) = gemini_stream_to_openai(&v, model) {
-                output.push_str(&translated);
-            } else {
-                output.push_str(line);
-                output.push_str("\n\n");
+        // Skip Anthropic-style event type lines — the data: line that follows
+        // carries the JSON payload.
+        if json_str.starts_with("event: ") {
+            continue;
+        }
+        match serde_json::from_str::<serde_json::Value>(json_str) {
+            Ok(v) => {
+                if let Some(translated) = translate_chunk(line, &v) {
+                    output.push_str(&translated);
+                }
             }
-        } else {
-            output.push_str(line);
-            output.push('\n');
+            Err(_) => {
+                output.push_str(line);
+                output.push('\n');
+            }
         }
     }
+    output
+}
+
+/// Translate a Gemini SSE chunk to OpenAI SSE format.
+/// Each `data:` line is parsed as JSON and converted via `gemini_stream_to_openai`.
+/// Non-JSON lines, comments, and `[DONE]` markers are passed through.
+fn translate_gemini_sse_chunk(bytes: &[u8], model: &str) -> Bytes {
+    use crate::proxy::translate::gemini_stream_to_openai;
+    let text = String::from_utf8_lossy(bytes);
+    let output = translate_sse_lines(&text, |line, v| {
+        Some(gemini_stream_to_openai(v, model).unwrap_or_else(|| format!("{line}\n\n")))
+    });
     Bytes::from(output)
 }
 
@@ -68,40 +92,7 @@ fn translate_protocol_sse_chunk(
 ) -> Bytes {
     use crate::proxy::translate::translate_stream_chunk;
     let text = String::from_utf8_lossy(bytes);
-    let mut output = String::new();
-    for line in text.split('\n') {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with(':') {
-            output.push_str(line);
-            output.push('\n');
-            continue;
-        }
-        let json_str = trimmed.strip_prefix("data: ").unwrap_or(trimmed);
-        if json_str == "[DONE]" {
-            output.push_str("data: [DONE]\n\n");
-            continue;
-        }
-        // Try to parse event data lines. Anthropic may interleave event: and
-        // data: lines — we only translate the data portion.
-        let json_str = if json_str.starts_with("event: ") {
-            // Skip event type lines for content_block_* events — the data line
-            // that follows carries the JSON payload we need.
-            continue;
-        } else {
-            json_str
-        };
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
-            if let Some(translated) = translate_stream_chunk(&v, from, to, model) {
-                output.push_str(&translated);
-            } else {
-                // Translator returned None meaning this chunk should be dropped
-                // (e.g., content_block_stop, ping). Skip entirely.
-            }
-        } else {
-            output.push_str(line);
-            output.push('\n');
-        }
-    }
+    let output = translate_sse_lines(&text, |_line, v| translate_stream_chunk(v, from, to, model));
     Bytes::from(output)
 }
 

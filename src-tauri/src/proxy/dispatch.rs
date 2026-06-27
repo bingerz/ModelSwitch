@@ -18,7 +18,7 @@ use crate::virtual_key::ReserveResult;
 use super::attempt::{try_channel_attempt, AttemptOutcome, DispatchContext};
 use super::provider::ProviderAdaptor;
 use super::request_meta::{extract_request_meta, extract_virtual_key_id, RequestMeta};
-use super::{estimate_tokens, make_log, FailureReason, RequestFormat};
+use super::{error_response, estimate_tokens, make_log, FailureReason, RequestFormat};
 
 /// Check if a model is allowed for a virtual key, with model group awareness.
 /// A model is allowed if:
@@ -257,24 +257,23 @@ pub(crate) async fn dispatch(
                 &original_model,
                 &state.gateway.model_groups,
             ) {
-                let error_body = serde_json::json!({
-                    "error": {
-                        "message": format!("Model '{}' is not allowed for this virtual key", original_model),
-                        "type": "model_not_allowed",
-                        "code": "virtual_key_model_not_allowed"
-                    }
-                });
-                return json_response(reqwest::StatusCode::FORBIDDEN, error_body.to_string());
+                return error_response(
+                    reqwest::StatusCode::FORBIDDEN,
+                    &format!(
+                        "Model '{}' is not allowed for this virtual key",
+                        original_model
+                    ),
+                    "model_not_allowed",
+                    "virtual_key_model_not_allowed",
+                );
             }
             if virtual_key.is_model_denied(&original_model) {
-                let error_body = serde_json::json!({
-                    "error": {
-                        "message": format!("Model '{}' is denied for this virtual key", original_model),
-                        "type": "model_denied",
-                        "code": "virtual_key_model_denied"
-                    }
-                });
-                return json_response(reqwest::StatusCode::FORBIDDEN, error_body.to_string());
+                return error_response(
+                    reqwest::StatusCode::FORBIDDEN,
+                    &format!("Model '{}' is denied for this virtual key", original_model),
+                    "model_denied",
+                    "virtual_key_model_denied",
+                );
             }
         }
     }
@@ -295,16 +294,11 @@ pub(crate) async fn dispatch(
             .await
         {
             ReserveResult::Exceeded => {
-                let error_body = serde_json::json!({
-                    "error": {
-                        "message": "Virtual key budget exceeded. Please increase your budget limit or try again later.",
-                        "type": "budget_exceeded",
-                        "code": "virtual_key_budget_exceeded"
-                    }
-                });
-                return json_response(
+                return error_response(
                     reqwest::StatusCode::PAYMENT_REQUIRED,
-                    error_body.to_string(),
+                    "Virtual key budget exceeded. Please increase your budget limit or try again later.",
+                    "budget_exceeded",
+                    "virtual_key_budget_exceeded",
                 );
             }
             ReserveResult::NoBudget => {}

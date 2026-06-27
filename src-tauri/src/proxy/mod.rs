@@ -90,6 +90,24 @@ pub(crate) fn make_log(
     }
 }
 
+/// Build a JSON error response with the standard OpenAI-compatible error envelope.
+#[allow(clippy::result_large_err)]
+pub(super) fn error_response(
+    status: reqwest::StatusCode,
+    message: &str,
+    error_type: &str,
+    code: &str,
+) -> Response {
+    let error_body = serde_json::json!({
+        "error": {
+            "message": message,
+            "type": error_type,
+            "code": code,
+        }
+    });
+    json_response(status, error_body.to_string())
+}
+
 /// Validate required fields in a chat completion request.
 /// Returns OpenAI-compatible 400 error if validation fails.
 #[allow(clippy::result_large_err)]
