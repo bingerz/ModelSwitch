@@ -19,7 +19,7 @@ pub enum Provider {
     Groq,
     Together,
     Cohere,
-    XAI,
+    Xai,
     SiliconFlow,
     Yi,
     Moonshot,
@@ -53,7 +53,7 @@ impl Provider {
             "groq" => Provider::Groq,
             "together" => Provider::Together,
             "cohere" => Provider::Cohere,
-            "xai" => Provider::XAI,
+            "xai" => Provider::Xai,
             "siliconflow" => Provider::SiliconFlow,
             "yi" => Provider::Yi,
             "moonshot" => Provider::Moonshot,
@@ -74,7 +74,7 @@ impl Provider {
             Provider::Groq => "groq",
             Provider::Together => "together",
             Provider::Cohere => "cohere",
-            Provider::XAI => "xai",
+            Provider::Xai => "xai",
             Provider::SiliconFlow => "siliconflow",
             Provider::Yi => "yi",
             Provider::Moonshot => "moonshot",
@@ -239,7 +239,7 @@ impl Channel {
     /// otherwise a fixed 2-minute default. Capped at 30 minutes.
     pub fn mark_model_rate_limited(&mut self, model: &str, retry_after_secs: Option<u64>) {
         let duration_mins = retry_after_secs
-            .map(|s| s.div_ceil(60).max(1).min(30))
+            .map(|s| s.div_ceil(60).clamp(1, 30))
             .unwrap_or(2);
         let expiry = Utc::now() + chrono::Duration::minutes(duration_mins as i64);
         self.model_cooldowns.insert(model.to_string(), expiry);

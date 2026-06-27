@@ -223,9 +223,9 @@ impl ChannelManager {
             let channels = self.channels.read().await;
             channels
                 .values()
-                .filter_map(|ch_arc| {
+                .map(|ch_arc| {
                     let c = ch_arc.read();
-                    Some(ChannelConfig {
+                    ChannelConfig {
                         id: c.id.to_string(),
                         name: c.name.clone(),
                         provider: c.provider.as_str().to_string(),
@@ -262,7 +262,7 @@ impl ChannelManager {
                         models_endpoint: c.models_endpoint.clone(),
                         models_refresh_interval_secs: c.models_refresh_interval_secs,
                         tags: c.tags.clone(),
-                    })
+                    }
                 })
                 .collect()
         };

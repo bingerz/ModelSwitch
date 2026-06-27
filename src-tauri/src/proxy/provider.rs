@@ -46,10 +46,6 @@ pub(crate) trait ProviderAdaptor: Send + Sync {
     /// Default model name when the client doesn't specify one.
     fn default_model(&self) -> &'static str;
 
-    /// The wire format expected by the client-facing side of this adapter
-    /// (the "source" format — what the incoming request looks like).
-    fn request_format(&self) -> RequestFormat;
-
     /// The wire format used by the upstream provider that this adapter talks to
     /// (the "target" format — what the outgoing request must look like).
     fn provider_request_format(&self) -> RequestFormat;
@@ -143,10 +139,6 @@ impl ProviderAdaptor for OpenAIAdaptor {
         true
     }
 
-    fn request_format(&self) -> RequestFormat {
-        RequestFormat::OpenAIChat
-    }
-
     fn provider_request_format(&self) -> RequestFormat {
         RequestFormat::OpenAIChat
     }
@@ -189,10 +181,6 @@ impl ProviderAdaptor for AnthropicAdaptor {
                 .header("anthropic-version", "2023-06-01")
                 .header("Content-Type", "application/json")
         }
-    }
-
-    fn request_format(&self) -> RequestFormat {
-        RequestFormat::AnthropicMessages
     }
 
     fn provider_request_format(&self) -> RequestFormat {
@@ -256,10 +244,6 @@ impl ProviderAdaptor for GeminiAdaptor {
 
     fn needs_response_transform(&self) -> bool {
         true
-    }
-
-    fn request_format(&self) -> RequestFormat {
-        RequestFormat::OpenAIChat
     }
 
     fn provider_request_format(&self) -> RequestFormat {

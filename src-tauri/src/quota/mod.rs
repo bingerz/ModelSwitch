@@ -23,8 +23,6 @@ pub enum QuotaError {
     Network(String),
     #[error("parse: {0}")]
     Parse(String),
-    #[error("session expired")]
-    SessionExpired,
 }
 
 /// A key-value detail item (e.g. "daily_usage" = "1.23").

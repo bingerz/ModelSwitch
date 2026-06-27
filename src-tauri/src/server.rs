@@ -319,6 +319,7 @@ fn build_infra(config_path: Option<std::path::PathBuf>) -> (AppConfig, crate::ht
 /// Binds to `host:port` and drains in-flight requests on SIGINT/SIGTERM.
 /// Drain is bounded by `drain_timeout_secs` to prevent hanging.
 /// If `shutdown_notify` is provided, uses it instead of signal-based shutdown.
+#[allow(clippy::too_many_arguments)]
 pub async fn start_gateway(
     state: Arc<AppState>,
     host: &str,

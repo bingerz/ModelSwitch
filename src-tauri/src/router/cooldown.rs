@@ -16,7 +16,6 @@ const WINDOW_SIZE: usize = 20;
 #[derive(Debug, Clone)]
 struct AttemptRecord {
     success: bool,
-    at: Instant,
 }
 
 /// Tracks recent attempts per channel and computes failure rates.
@@ -47,10 +46,7 @@ impl CooldownTracker {
     pub fn record_attempt(&self, channel_id: Uuid, success: bool) {
         let mut records = self.records.lock().unwrap();
         let queue = records.entry(channel_id).or_default();
-        queue.push_back(AttemptRecord {
-            success,
-            at: Instant::now(),
-        });
+        queue.push_back(AttemptRecord { success });
         if queue.len() > WINDOW_SIZE {
             queue.pop_front();
         }

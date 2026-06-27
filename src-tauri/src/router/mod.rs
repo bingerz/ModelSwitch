@@ -21,6 +21,7 @@ use uuid::Uuid;
 pub use strategy::RoutingStrategyType;
 
 /// A group of channels for cross-group retry.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ChannelGroup {
     pub name: String,
@@ -33,11 +34,13 @@ pub struct ChannelGroup {
 /// Groups are ordered by priority (lower number = tried first). When every
 /// channel in a group has failed, [`ChannelGroups::next_group_channels`]
 /// returns the next priority group that still has untried candidates.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct ChannelGroups {
     pub groups: Vec<ChannelGroup>,
 }
 
+#[allow(dead_code)]
 impl ChannelGroups {
     pub fn new(groups: Vec<ChannelGroup>) -> Self {
         Self { groups }

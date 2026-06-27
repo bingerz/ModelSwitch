@@ -57,6 +57,7 @@ pub(super) enum AttemptOutcome {
 }
 
 /// Log a failed attempt to a channel.
+#[allow(clippy::too_many_arguments)]
 async fn log_attempt_failure(
     logger: &Arc<crate::log::DispatchLogger>,
     model: &str,
@@ -91,6 +92,7 @@ async fn log_attempt_failure(
 
 /// Record a channel failure (circuit breaker + cooldown + log) and return `Retry`.
 /// Centralises the failure-handling pattern to avoid drift across 6+ call sites.
+#[allow(clippy::too_many_arguments)]
 async fn fail_and_retry(
     state: &Arc<crate::proxy::AppState>,
     channel: &Channel,
