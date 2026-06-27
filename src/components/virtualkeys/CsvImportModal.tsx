@@ -5,6 +5,7 @@ import {
   api,
   type CreateVirtualKeyResponse,
 } from "../../lib/api";
+import { useFocusTrap } from "../../hooks/useFocusTrap";
 import { useToast } from "../Toast";
 import { dollarsToCents } from "./types";
 import { parseCsv, type ParsedRow } from "./csv-parser";
@@ -32,6 +33,8 @@ interface CreationResult {
   error: string | null;
 }
 
+type TFunc = ReturnType<typeof useTranslation>["t"];
+
 const INITIAL_SETTINGS: SharedSettings = {
   dailyBudget: "",
   monthlyBudget: "",
@@ -45,10 +48,295 @@ const INITIAL_SETTINGS: SharedSettings = {
 
 const BATCH_SIZE = 10;
 
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+interface FileDropzoneProps {
+  onFileSelected: (file: File) => void;
+  t: TFunc;
+}
+
+function FileDropzone({ onFileSelected, t }: FileDropzoneProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) onFileSelected(file);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) onFileSelected(file);
+  };
+
+  return (
+    <div
+      className="vk-csv-dropzone"
+      style={{
+        border: dragOver
+          ? "2px dashed var(--color-accent)"
+          : "2px dashed var(--color-border)",
+        borderRadius: "var(--radius-md, 8px)",
+        padding: "var(--space-4, 1.5rem)",
+        textAlign: "center",
+        cursor: "pointer",
+        transition: "border-color 0.15s ease",
+      }}
+      onClick={() => fileInputRef.current?.click()}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={handleDrop}
+    >
+      <Upload size={32} style={{ opacity: 0.5, marginBottom: "0.5rem" }} />
+      <div style={{ fontWeight: 500, marginBottom: "0.25rem" }}>
+        {t("virtualKeys.csv.dropHere")}
+      </div>
+      <div style={{ fontSize: "0.85em", color: "var(--color-text-muted)" }}>
+        {t("virtualKeys.csv.dropHint")}
+      </div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".csv,text/csv"
+        onChange={handleFileInput}
+        style={{ display: "none" }}
+      />
+    </div>
+  );
+}
+
+interface ParseErrorListProps {
+  errors: string[];
+}
+
+function ParseErrorList({ errors }: ParseErrorListProps) {
+  if (errors.length === 0) return null;
+  return (
+    <div className="form-error mt-2">
+      {errors.map((e, i) => (
+        <div key={i}>{e}</div>
+      ))}
+    </div>
+  );
+}
+
+interface SharedSettingsFormProps {
+  settings: SharedSettings;
+  onChange: <K extends keyof SharedSettings>(key: K, value: SharedSettings[K]) => void;
+  t: TFunc;
+}
+
+function SharedSettingsForm({ settings, onChange, t }: SharedSettingsFormProps) {
+  return (
+    <div className="mt-3">
+      <div
+        className="form-title"
+        style={{ fontSize: "0.9em", marginBottom: "var(--space-2)" }}
+      >
+        {t("virtualKeys.csv.sharedSettings")}
+      </div>
+
+      <div className="form-grid">
+        <label className="form-field">
+          <span>{t("virtualKeys.dailyBudget")}</span>
+          <input
+            value={settings.dailyBudget}
+            onChange={(e) => onChange("dailyBudget", e.target.value)}
+            placeholder={t("virtualKeys.dailyBudgetPlaceholder")}
+            inputMode="decimal"
+          />
+        </label>
+        <label className="form-field">
+          <span>{t("virtualKeys.monthlyBudget")}</span>
+          <input
+            value={settings.monthlyBudget}
+            onChange={(e) => onChange("monthlyBudget", e.target.value)}
+            placeholder={t("virtualKeys.monthlyBudgetPlaceholder")}
+            inputMode="decimal"
+          />
+        </label>
+      </div>
+
+      <div className="form-grid">
+        <label className="form-field">
+          <span>{t("virtualKeys.allowedModels")}</span>
+          <input
+            value={settings.allowedModels}
+            onChange={(e) => onChange("allowedModels", e.target.value)}
+            placeholder={t("virtualKeys.allowedModelsHint")}
+          />
+        </label>
+        <label className="form-field">
+          <span>{t("virtualKeys.allowedIps")}</span>
+          <input
+            value={settings.allowedIps}
+            onChange={(e) => onChange("allowedIps", e.target.value)}
+            placeholder={t("virtualKeys.allowedIpsHint")}
+          />
+        </label>
+      </div>
+
+      <div className="form-grid">
+        <label className="form-field">
+          <span>{t("virtualKeys.group")}</span>
+          <input
+            value={settings.group}
+            onChange={(e) => onChange("group", e.target.value)}
+            placeholder={t("virtualKeys.groupPlaceholder")}
+          />
+        </label>
+        <label className="form-field">
+          <span>{t("virtualKeys.rpmLimit")}</span>
+          <input
+            value={settings.rpmLimit}
+            onChange={(e) => onChange("rpmLimit", e.target.value)}
+            placeholder={t("virtualKeys.rpmLimitPlaceholder")}
+            inputMode="numeric"
+          />
+        </label>
+        <label className="form-field">
+          <span>{t("virtualKeys.tpmLimit")}</span>
+          <input
+            value={settings.tpmLimit}
+            onChange={(e) => onChange("tpmLimit", e.target.value)}
+            placeholder={t("virtualKeys.tpmLimitPlaceholder")}
+            inputMode="numeric"
+          />
+        </label>
+        <label className="form-field">
+          <span>{t("virtualKeys.expiresAt")}</span>
+          <input
+            type="datetime-local"
+            value={settings.expiresAt}
+            onChange={(e) => onChange("expiresAt", e.target.value)}
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+interface ResultsTableProps {
+  results: CreationResult[];
+  copiedAll: boolean;
+  copiedIdx: number | null;
+  onCopyAll: () => void;
+  onCopyIdx: (item: CreationResult, idx: number) => void;
+  t: TFunc;
+}
+
+function ResultsTable({
+  results,
+  copiedAll,
+  copiedIdx,
+  onCopyAll,
+  onCopyIdx,
+  t,
+}: ResultsTableProps) {
+  const successCount = results.filter((r) => r.error === null).length;
+
+  return (
+    <>
+      <div className="vk-plaintext-warning">
+        {t("virtualKeys.batch.plaintextWarning")}
+      </div>
+      <div className="vk-batch-results-toolbar">
+        <span className="meta-tag">
+          {t("virtualKeys.csv.resultsSummary", {
+            success: successCount,
+            total: results.length,
+          })}
+        </span>
+        {successCount > 0 && (
+          <button
+            type="button"
+            className={`btn btn-sm ${copiedAll ? "btn-primary" : ""}`}
+            onClick={onCopyAll}
+          >
+            {copiedAll ? <CheckCheck size={14} /> : <Copy size={14} />}
+            {copiedAll ? t("common.copied") : t("virtualKeys.batch.copyAll")}
+          </button>
+        )}
+      </div>
+      <div className="vk-batch-results-table-wrapper">
+        <table className="vk-batch-results-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>{t("virtualKeys.keyName")}</th>
+              <th>{t("virtualKeys.plaintextKey")}</th>
+              <th>{t("common.status")}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {results.map((item, idx) => (
+              <tr key={idx}>
+                <td className="mono">{idx + 1}</td>
+                <td>{item.name}</td>
+                <td>
+                  {item.plaintext ? (
+                    <code className="mono vk-batch-key-cell">{item.plaintext}</code>
+                  ) : (
+                    <span style={{ color: "var(--color-danger)" }}>--</span>
+                  )}
+                </td>
+                <td>
+                  {item.error ? (
+                    <span
+                      style={{ color: "var(--color-danger)", fontSize: "0.85em" }}
+                    >
+                      {item.error}
+                    </span>
+                  ) : (
+                    <span
+                      style={{ color: "var(--color-success)", fontSize: "0.85em" }}
+                    >
+                      {t("common.success")}
+                    </span>
+                  )}
+                </td>
+                <td>
+                  {item.plaintext && (
+                    <button
+                      type="button"
+                      className={`btn btn-sm ${copiedIdx === idx ? "btn-primary" : ""}`}
+                      onClick={() => onCopyIdx(item, idx)}
+                      aria-label={t("common.copy")}
+                      title={t("common.copy")}
+                    >
+                      {copiedIdx === idx ? (
+                        <CheckCheck size={14} />
+                      ) : (
+                        <Copy size={14} />
+                      )}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
 export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
   const { t } = useTranslation();
   const toast = useToast();
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
 
   const [parsedRows, setParsedRows] = useState<ParsedRow[] | null>(null);
   const [parseErrors, setParseErrors] = useState<string[]>([]);
@@ -60,11 +348,13 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
   const [results, setResults] = useState<CreationResult[] | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
-  const [dragOver, setDragOver] = useState(false);
 
-  const update = <K extends keyof SharedSettings>(key: K, value: SharedSettings[K]) => {
-    setSettings((prev) => ({ ...prev, [key]: value }));
-  };
+  const update = useCallback(
+    <K extends keyof SharedSettings>(key: K, value: SharedSettings[K]) => {
+      setSettings((prev) => ({ ...prev, [key]: value }));
+    },
+    [],
+  );
 
   const handleFile = useCallback(
     (file: File) => {
@@ -96,18 +386,6 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
     },
     [t],
   );
-
-  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) handleFile(file);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) handleFile(file);
-  };
 
   const handleCreate = async () => {
     if (!parsedRows || parsedRows.length === 0) return;
@@ -185,7 +463,10 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
 
       const batchResults = await Promise.all(promises);
       allResults.push(...batchResults);
-      setProgress({ done: Math.min(i + BATCH_SIZE, parsedRows.length), total: parsedRows.length });
+      setProgress({
+        done: Math.min(i + BATCH_SIZE, parsedRows.length),
+        total: parsedRows.length,
+      });
     }
 
     setResults(allResults);
@@ -205,7 +486,10 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
 
   const handleCopyAll = async () => {
     if (!results) return;
-    const text = results.filter((r) => r.plaintext).map((r) => r.plaintext).join("\n");
+    const text = results
+      .filter((r) => r.plaintext)
+      .map((r) => r.plaintext)
+      .join("\n");
     try {
       await navigator.clipboard.writeText(text);
       setCopiedAll(true);
@@ -232,10 +516,11 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
     onClose();
   };
 
-  const successCount = results?.filter((r) => r.error === null).length ?? 0;
+  useFocusTrap(modalRef, true, handleClose);
 
   return (
     <div
+      ref={modalRef}
       className="vk-batch-backdrop"
       role="dialog"
       aria-modal="true"
@@ -265,86 +550,21 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
         {/* Results view */}
         {results && (
           <>
-            <div className="vk-plaintext-warning">
-              {t("virtualKeys.batch.plaintextWarning")}
-            </div>
-            <div className="vk-batch-results-toolbar">
-              <span className="meta-tag">
-                {t("virtualKeys.csv.resultsSummary", {
-                  success: successCount,
-                  total: results.length,
-                })}
-              </span>
-              {successCount > 0 && (
-                <button
-                  type="button"
-                  className={`btn btn-sm ${copiedAll ? "btn-primary" : ""}`}
-                  onClick={handleCopyAll}
-                >
-                  {copiedAll ? <CheckCheck size={14} /> : <Copy size={14} />}
-                  {copiedAll
-                    ? t("common.copied")
-                    : t("virtualKeys.batch.copyAll")}
-                </button>
-              )}
-            </div>
-            <div className="vk-batch-results-table-wrapper">
-              <table className="vk-batch-results-table">
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>{t("virtualKeys.keyName")}</th>
-                    <th>{t("virtualKeys.plaintextKey")}</th>
-                    <th>{t("common.status")}</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {results.map((item, idx) => (
-                    <tr key={idx}>
-                      <td className="mono">{idx + 1}</td>
-                      <td>{item.name}</td>
-                      <td>
-                        {item.plaintext ? (
-                          <code className="mono vk-batch-key-cell">{item.plaintext}</code>
-                        ) : (
-                          <span style={{ color: "var(--color-danger)" }}>--</span>
-                        )}
-                      </td>
-                      <td>
-                        {item.error ? (
-                          <span style={{ color: "var(--color-danger)", fontSize: "0.85em" }}>
-                            {item.error}
-                          </span>
-                        ) : (
-                          <span style={{ color: "var(--color-success)", fontSize: "0.85em" }}>
-                            {t("common.success")}
-                          </span>
-                        )}
-                      </td>
-                      <td>
-                        {item.plaintext && (
-                          <button
-                            type="button"
-                            className={`btn btn-sm ${copiedIdx === idx ? "btn-primary" : ""}`}
-                            onClick={() => handleCopyOne(item, idx)}
-                            aria-label={t("common.copy")}
-                            title={t("common.copy")}
-                          >
-                            {copiedIdx === idx ? (
-                              <CheckCheck size={14} />
-                            ) : (
-                              <Copy size={14} />
-                            )}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
+            <ResultsTable
+              results={results}
+              copiedAll={copiedAll}
+              copiedIdx={copiedIdx}
+              onCopyAll={handleCopyAll}
+              onCopyIdx={handleCopyOne}
+              t={t}
+            />
+            <div
+              style={{
+                display: "flex",
+                gap: "var(--space-2)",
+                marginTop: "var(--space-3)",
+              }}
+            >
               <button
                 type="button"
                 className="btn btn-primary"
@@ -360,59 +580,22 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
         {!results && (
           <>
             {/* File input / drop zone */}
-            {!parsedRows && (
-              <div
-                className="vk-csv-dropzone"
-                style={{
-                  border: dragOver
-                    ? "2px dashed var(--color-accent)"
-                    : "2px dashed var(--color-border)",
-                  borderRadius: "var(--radius-md, 8px)",
-                  padding: "var(--space-4, 1.5rem)",
-                  textAlign: "center",
-                  cursor: "pointer",
-                  transition: "border-color 0.15s ease",
-                }}
-                onClick={() => fileInputRef.current?.click()}
-                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={handleDrop}
-              >
-                <Upload size={32} style={{ opacity: 0.5, marginBottom: "0.5rem" }} />
-                <div style={{ fontWeight: 500, marginBottom: "0.25rem" }}>
-                  {t("virtualKeys.csv.dropHere")}
-                </div>
-                <div style={{ fontSize: "0.85em", color: "var(--color-text-muted)" }}>
-                  {t("virtualKeys.csv.dropHint")}
-                </div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".csv,text/csv"
-                  onChange={handleFileInput}
-                  style={{ display: "none" }}
-                />
-              </div>
-            )}
+            {!parsedRows && <FileDropzone onFileSelected={handleFile} t={t} />}
 
             {/* Parse errors */}
-            {parseErrors.length > 0 && (
-              <div className="form-error mt-2">
-                {parseErrors.map((e, i) => (
-                  <div key={i}>{e}</div>
-                ))}
-              </div>
-            )}
+            <ParseErrorList errors={parseErrors} />
 
-            {/* Preview table */}
+            {/* Preview table + shared settings */}
             {parsedRows && parsedRows.length > 0 && (
               <>
-                <div style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-2)",
-                  marginBottom: "var(--space-2)",
-                }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "var(--space-2)",
+                    marginBottom: "var(--space-2)",
+                  }}
+                >
                   <FileText size={16} />
                   <span style={{ fontWeight: 500 }}>{fileName}</span>
                   <span className="meta-tag">
@@ -425,14 +608,16 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
                       setParsedRows(null);
                       setFileName("");
                       setParseErrors([]);
-                      if (fileInputRef.current) fileInputRef.current.value = "";
                     }}
                   >
                     {t("virtualKeys.csv.chooseAnother")}
                   </button>
                 </div>
 
-                <div className="vk-batch-results-table-wrapper" style={{ maxHeight: "200px" }}>
+                <div
+                  className="vk-batch-results-table-wrapper"
+                  style={{ maxHeight: "200px" }}
+                >
                   <table className="vk-batch-results-table">
                     <thead>
                       <tr>
@@ -453,94 +638,22 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
                   </table>
                 </div>
                 {parsedRows.length > 50 && (
-                  <div style={{ fontSize: "0.85em", color: "var(--color-text-muted)", marginTop: "0.25rem" }}>
-                    {t("virtualKeys.csv.showingFirst", { shown: 50, total: parsedRows.length })}
+                  <div
+                    style={{
+                      fontSize: "0.85em",
+                      color: "var(--color-text-muted)",
+                      marginTop: "0.25rem",
+                    }}
+                  >
+                    {t("virtualKeys.csv.showingFirst", {
+                      shown: 50,
+                      total: parsedRows.length,
+                    })}
                   </div>
                 )}
 
                 {/* Shared settings */}
-                <div className="mt-3">
-                  <div className="form-title" style={{ fontSize: "0.9em", marginBottom: "var(--space-2)" }}>
-                    {t("virtualKeys.csv.sharedSettings")}
-                  </div>
-
-                  <div className="form-grid">
-                    <label className="form-field">
-                      <span>{t("virtualKeys.dailyBudget")}</span>
-                      <input
-                        value={settings.dailyBudget}
-                        onChange={(e) => update("dailyBudget", e.target.value)}
-                        placeholder={t("virtualKeys.dailyBudgetPlaceholder")}
-                        inputMode="decimal"
-                      />
-                    </label>
-                    <label className="form-field">
-                      <span>{t("virtualKeys.monthlyBudget")}</span>
-                      <input
-                        value={settings.monthlyBudget}
-                        onChange={(e) => update("monthlyBudget", e.target.value)}
-                        placeholder={t("virtualKeys.monthlyBudgetPlaceholder")}
-                        inputMode="decimal"
-                      />
-                    </label>
-                  </div>
-
-                  <div className="form-grid">
-                    <label className="form-field">
-                      <span>{t("virtualKeys.allowedModels")}</span>
-                      <input
-                        value={settings.allowedModels}
-                        onChange={(e) => update("allowedModels", e.target.value)}
-                        placeholder={t("virtualKeys.allowedModelsHint")}
-                      />
-                    </label>
-                    <label className="form-field">
-                      <span>{t("virtualKeys.allowedIps")}</span>
-                      <input
-                        value={settings.allowedIps}
-                        onChange={(e) => update("allowedIps", e.target.value)}
-                        placeholder={t("virtualKeys.allowedIpsHint")}
-                      />
-                    </label>
-                  </div>
-
-                  <div className="form-grid">
-                    <label className="form-field">
-                      <span>{t("virtualKeys.group")}</span>
-                      <input
-                        value={settings.group}
-                        onChange={(e) => update("group", e.target.value)}
-                        placeholder={t("virtualKeys.groupPlaceholder")}
-                      />
-                    </label>
-                    <label className="form-field">
-                      <span>{t("virtualKeys.rpmLimit")}</span>
-                      <input
-                        value={settings.rpmLimit}
-                        onChange={(e) => update("rpmLimit", e.target.value)}
-                        placeholder={t("virtualKeys.rpmLimitPlaceholder")}
-                        inputMode="numeric"
-                      />
-                    </label>
-                    <label className="form-field">
-                      <span>{t("virtualKeys.tpmLimit")}</span>
-                      <input
-                        value={settings.tpmLimit}
-                        onChange={(e) => update("tpmLimit", e.target.value)}
-                        placeholder={t("virtualKeys.tpmLimitPlaceholder")}
-                        inputMode="numeric"
-                      />
-                    </label>
-                    <label className="form-field">
-                      <span>{t("virtualKeys.expiresAt")}</span>
-                      <input
-                        type="datetime-local"
-                        value={settings.expiresAt}
-                        onChange={(e) => update("expiresAt", e.target.value)}
-                      />
-                    </label>
-                  </div>
-                </div>
+                <SharedSettingsForm settings={settings} onChange={update} t={t} />
 
                 {error && <div className="form-error">{error}</div>}
 
@@ -551,7 +664,13 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
             )}
 
             {/* Action buttons */}
-            <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
+            <div
+              style={{
+                display: "flex",
+                gap: "var(--space-2)",
+                marginTop: "var(--space-3)",
+              }}
+            >
               <button
                 type="button"
                 className="btn btn-primary"
@@ -559,7 +678,10 @@ export function CsvImportModal({ onClose, onCreated }: CsvImportModalProps) {
                 disabled={submitting || !parsedRows || parsedRows.length === 0}
               >
                 {submitting && progress
-                  ? t("virtualKeys.csv.creating", { done: progress.done, total: progress.total })
+                  ? t("virtualKeys.csv.creating", {
+                      done: progress.done,
+                      total: progress.total,
+                    })
                   : t("virtualKeys.csv.createButton")}
               </button>
               <button
