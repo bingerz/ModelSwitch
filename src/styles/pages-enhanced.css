@@ -435,4 +435,125 @@
   color: var(--color-text-tertiary, #666);
 }
 
+/* Model Availability Matrix */
+.registry-view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.registry-view-btn {
+  padding: 6px 14px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-text-secondary, #888);
+  transition: background 0.15s, color 0.15s;
+}
+.registry-view-btn:hover {
+  background: var(--color-bg-secondary, #222);
+}
+.registry-view-btn.active {
+  background: var(--color-accent, #3b82f6);
+  color: #fff;
+}
+.matrix-container {
+  margin-top: 16px;
+}
+.matrix-controls {
+  margin-bottom: 12px;
+}
+.matrix-stats {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.matrix-stat {
+  font-size: 13px;
+  color: var(--color-text-secondary, #888);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.matrix-stat-warn {
+  color: #f59e0b;
+}
+.matrix-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--color-border, #333);
+  border-radius: 8px;
+  max-height: 600px;
+  overflow-y: auto;
+}
+.matrix-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.matrix-table th,
+.matrix-table td {
+  border: 1px solid var(--color-border, #333);
+  padding: 4px 8px;
+  text-align: center;
+  white-space: nowrap;
+}
+.matrix-corner {
+  text-align: left;
+  position: sticky;
+  left: 0;
+  background: var(--color-bg-secondary, #1e1e2e);
+  z-index: 2;
+  min-width: 150px;
+}
+.matrix-col-header {
+  min-width: 80px;
+  max-width: 120px;
+  padding: 6px 4px;
+  background: var(--color-bg-secondary, #1e1e2e);
+}
+.matrix-ch-name {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.matrix-ch-name.disabled {
+  opacity: 0.5;
+}
+.matrix-ch-provider {
+  display: block;
+  font-size: 10px;
+  color: var(--color-text-tertiary, #555);
+}
+.matrix-row-header {
+  text-align: left;
+  position: sticky;
+  left: 0;
+  background: var(--color-bg-primary, #1a1a2e);
+  z-index: 1;
+  min-width: 150px;
+  font-size: 12px;
+}
+.matrix-row-warn .matrix-row-header {
+  border-left: 2px solid #f59e0b;
+}
+.matrix-cell {
+  width: 40px;
+}
+.matrix-check {
+  color: #22c55e;
+}
+.matrix-dash {
+  color: var(--color-text-tertiary, #444);
+}
+.registry-empty {
+  padding: 32px;
+  text-align: center;
+  color: var(--color-text-secondary, #888);
+}
+
 

@@ -3,7 +3,10 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Database, Search } from "lucide-react";
 import { SectionHeader } from "./ui/SectionHeader";
+import { ModelAvailabilityMatrix } from "./ModelAvailabilityMatrix";
 import { api, type ModelRegistryItem } from "../lib/api";
+
+type RegistryView = "list" | "matrix";
 
 type SourceFilter = "all" | "builtin" | "discovered";
 
@@ -29,6 +32,7 @@ export function ModelRegistryPanel() {
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [groupByChannel, setGroupByChannel] = useState(false);
+  const [view, setView] = useState<RegistryView>("list");
 
   const { data, isLoading: loading, refetch } = useQuery({
     queryKey: ["model-registry"],
@@ -198,34 +202,57 @@ export function ModelRegistryPanel() {
 
       <div className="settings-hint">{t("registry.hint")}</div>
 
-      {filterSelect}
+      <div className="registry-view-toggle">
+        <button
+          type="button"
+          className={`registry-view-btn ${view === "list" ? "active" : ""}`}
+          onClick={() => setView("list")}
+        >
+          {t("registry.viewList")}
+        </button>
+        <button
+          type="button"
+          className={`registry-view-btn ${view === "matrix" ? "active" : ""}`}
+          onClick={() => setView("matrix")}
+        >
+          {t("registry.viewMatrix")}
+        </button>
+      </div>
 
-      {filtered.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">🗂</div>
-          <div className="empty-state-title">
-            {items.length === 0 ? t("registry.noModels") : t("registry.noResults")}
-          </div>
-          <div className="empty-state-description">
-            {items.length === 0 ? t("registry.noModelsHint") : t("registry.noResultsHint")}
-          </div>
-        </div>
-      ) : groupByChannel && grouped ? (
-        <div className="settings-table-wrapper">
-          {grouped.map(([channelName, rows]) => (
-            <div key={channelName} className="registry-group">
-              <div className="registry-group-header">
-                <span className="registry-group-title">{channelName}</span>
-                <span className="registry-group-count">
-                  {t("registry.modelsCount", { count: rows.length })}
-                </span>
-              </div>
-              {renderTable(rows)}
-            </div>
-          ))}
-        </div>
+      {view === "matrix" ? (
+        <ModelAvailabilityMatrix />
       ) : (
-        <div className="settings-table-wrapper">{renderTable(filtered)}</div>
+        <>
+          {filterSelect}
+
+          {filtered.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-state-icon">🗂</div>
+              <div className="empty-state-title">
+                {items.length === 0 ? t("registry.noModels") : t("registry.noResults")}
+              </div>
+              <div className="empty-state-description">
+                {items.length === 0 ? t("registry.noModelsHint") : t("registry.noResultsHint")}
+              </div>
+            </div>
+          ) : groupByChannel && grouped ? (
+            <div className="settings-table-wrapper">
+              {grouped.map(([channelName, rows]) => (
+                <div key={channelName} className="registry-group">
+                  <div className="registry-group-header">
+                    <span className="registry-group-title">{channelName}</span>
+                    <span className="registry-group-count">
+                      {t("registry.modelsCount", { count: rows.length })}
+                    </span>
+                  </div>
+                  {renderTable(rows)}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="settings-table-wrapper">{renderTable(filtered)}</div>
+          )}
+        </>
       )}
     </section>
   );

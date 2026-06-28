@@ -797,7 +797,20 @@
     "hoursAgo_one": "{{count}} hr ago",
     "hoursAgo_other": "{{count}} hr ago",
     "daysAgo_one": "{{count}} day ago",
-    "daysAgo_other": "{{count}} days ago"
+    "daysAgo_other": "{{count}} days ago",
+    "viewList": "List",
+    "viewMatrix": "Matrix"
+  },
+  "matrix": {
+    "showDisabled": "Show disabled channels",
+    "totalModels_one": "{{count}} model",
+    "totalModels_other": "{{count}} models",
+    "totalChannels_one": "{{count}} channel",
+    "totalChannels_other": "{{count}} channels",
+    "singleChannelModels_one": "{{count}} model with single-channel coverage",
+    "singleChannelModels_other": "{{count}} models with single-channel coverage",
+    "model": "Model",
+    "noChannels": "No channels configured"
   },
   "reports": {
     "chartMetricCost": "Cost",

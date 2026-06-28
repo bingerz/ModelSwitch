@@ -761,6 +761,21 @@
     "saved": "通知配置已保存",
     "saveFailed": "保存通知配置失败"
   },
+  "registry": {
+    "viewList": "列表",
+    "viewMatrix": "矩阵"
+  },
+  "matrix": {
+    "showDisabled": "显示已禁用通道",
+    "totalModels_one": "{{count}} 个模型",
+    "totalModels_other": "{{count}} 个模型",
+    "totalChannels_one": "{{count}} 个通道",
+    "totalChannels_other": "{{count}} 个通道",
+    "singleChannelModels_one": "{{count}} 个模型仅有单通道覆盖",
+    "singleChannelModels_other": "{{count}} 个模型仅有单通道覆盖",
+    "model": "模型",
+    "noChannels": "未配置通道"
+  },
   "reports": {
     "chartMetricCost": "成本",
     "chartMetricRequests": "请求数",
