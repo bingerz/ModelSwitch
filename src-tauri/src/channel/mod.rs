@@ -381,6 +381,22 @@ pub struct ChannelTestResult {
     pub tested_at: DateTime<Utc>,
 }
 
+/// Result of an enhanced diagnostics check with model list and auth validation.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChannelDiagnosticsResult {
+    pub channel_id: Uuid,
+    pub channel_name: String,
+    /// "authenticated", "unauthenticated", or "error"
+    pub auth_status: String,
+    /// Model IDs available on this channel (empty if auth failed)
+    pub available_models: Vec<String>,
+    /// HTTP status code from the upstream /models endpoint
+    pub status_code: Option<u16>,
+    pub latency_ms: u64,
+    pub error: Option<String>,
+    pub tested_at: DateTime<Utc>,
+}
+
 /// Shared channel storage with per-channel locking.
 ///
 /// Outer `tokio::sync::RwLock<HashMap<Uuid, _>>` is held only briefly for
@@ -491,6 +507,129 @@ impl manager::ChannelManager {
                     tested_at: Utc::now(),
                 }
             }
+        }
+    }
+
+    /// Run an enhanced diagnostics check against a single channel.
+    ///
+    /// Fetches the upstream `/models` endpoint using the channel's own API key,
+    /// providing both auth validation and the list of models available to this
+    /// specific key. Unlike [`run_channel_test`](Self::run_channel_test), this
+    /// method exercises the channel's real credentials and reports per-key
+    /// model availability.
+    pub async fn run_channel_diagnostics(&self, id: Uuid) -> ChannelDiagnosticsResult {
+        let channel = match self.get(id).await {
+            Some(c) => c,
+            None => {
+                return ChannelDiagnosticsResult {
+                    channel_id: id,
+                    channel_name: String::new(),
+                    auth_status: "error".to_string(),
+                    available_models: Vec::new(),
+                    status_code: None,
+                    latency_ms: 0,
+                    error: Some("channel not found".to_string()),
+                    tested_at: Utc::now(),
+                };
+            }
+        };
+
+        let base = channel.base_url.trim_end_matches('/');
+        let models_url = format!("{base}/models");
+        let api_key = channel.credential.api_key.clone().unwrap_or_default();
+
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(8))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                return ChannelDiagnosticsResult {
+                    channel_id: id,
+                    channel_name: channel.name.clone(),
+                    auth_status: "error".to_string(),
+                    available_models: Vec::new(),
+                    status_code: None,
+                    latency_ms: 0,
+                    error: Some(format!("failed to build HTTP client: {e}")),
+                    tested_at: Utc::now(),
+                };
+            }
+        };
+
+        let start = std::time::Instant::now();
+        let response_result = client
+            .get(&models_url)
+            .bearer_auth(&api_key)
+            .send()
+            .await;
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        match response_result {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                if resp.status().is_success() {
+                    // Parse the OpenAI-style {"data": [{"id": "..."}, ...]} payload.
+                    let available_models = match resp.json::<serde_json::Value>().await {
+                        Ok(body) => body
+                            .get("data")
+                            .and_then(|d| d.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|item| item.get("id").and_then(|v| v.as_str()))
+                                    .map(|s| s.to_string())
+                                    .collect::<Vec<String>>()
+                            })
+                            .unwrap_or_default(),
+                        Err(_) => Vec::new(),
+                    };
+
+                    ChannelDiagnosticsResult {
+                        channel_id: id,
+                        channel_name: channel.name.clone(),
+                        auth_status: "authenticated".to_string(),
+                        available_models,
+                        status_code: Some(status),
+                        latency_ms,
+                        error: None,
+                        tested_at: Utc::now(),
+                    }
+                } else if resp.status() == reqwest::StatusCode::UNAUTHORIZED
+                    || resp.status() == reqwest::StatusCode::FORBIDDEN
+                {
+                    ChannelDiagnosticsResult {
+                        channel_id: id,
+                        channel_name: channel.name.clone(),
+                        auth_status: "unauthenticated".to_string(),
+                        available_models: Vec::new(),
+                        status_code: Some(status),
+                        latency_ms,
+                        error: None,
+                        tested_at: Utc::now(),
+                    }
+                } else {
+                    ChannelDiagnosticsResult {
+                        channel_id: id,
+                        channel_name: channel.name.clone(),
+                        auth_status: "error".to_string(),
+                        available_models: Vec::new(),
+                        status_code: Some(status),
+                        latency_ms,
+                        error: Some(format!("upstream returned status {status}")),
+                        tested_at: Utc::now(),
+                    }
+                }
+            }
+            Err(e) => ChannelDiagnosticsResult {
+                channel_id: id,
+                channel_name: channel.name.clone(),
+                auth_status: "error".to_string(),
+                available_models: Vec::new(),
+                status_code: None,
+                latency_ms,
+                error: Some(e.to_string()),
+                tested_at: Utc::now(),
+            },
         }
     }
 
@@ -719,5 +858,46 @@ mod tests {
 
         let updated = manager.get(id).await.expect("channel exists");
         assert_eq!(updated.status, ChannelStatus::CircuitOpen);
+    }
+
+    // -- Channel diagnostics tests ------------------------------------------
+
+    #[tokio::test]
+    async fn diagnostics_returns_error_for_unknown_channel() {
+        let manager = make_test_manager();
+        let unknown_id = Uuid::new_v4();
+        let result = manager.run_channel_diagnostics(unknown_id).await;
+        assert_eq!(result.auth_status, "error");
+        assert!(
+            result
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("not found"),
+            "error should mention 'not found': {:?}",
+            result.error
+        );
+        assert_eq!(result.channel_id, unknown_id);
+        assert!(result.available_models.is_empty());
+        assert!(result.status_code.is_none());
+    }
+
+    #[tokio::test]
+    async fn diagnostics_result_serializes_correctly() {
+        let result = ChannelDiagnosticsResult {
+            channel_id: Uuid::new_v4(),
+            channel_name: "test".to_string(),
+            auth_status: "authenticated".to_string(),
+            available_models: vec!["gpt-4".to_string(), "gpt-3.5-turbo".to_string()],
+            status_code: Some(200),
+            latency_ms: 150,
+            error: None,
+            tested_at: Utc::now(),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("authenticated"));
+        assert!(json.contains("gpt-4"));
+        assert!(json.contains("gpt-3.5-turbo"));
+        assert!(json.contains("\"status_code\":200"));
     }
 }

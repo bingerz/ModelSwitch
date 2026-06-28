@@ -3,7 +3,7 @@
 //! channel cooldown status.
 
 use super::ApiResponse;
-use crate::channel::ChannelTestResult;
+use crate::channel::{ChannelDiagnosticsResult, ChannelTestResult};
 use crate::guardrails::GuardrailsConfig;
 use crate::mcp::McpServerHealth;
 use crate::middleware::error::ApiError;
@@ -186,6 +186,18 @@ pub async fn test_channel(
     Path(id): Path<Uuid>,
 ) -> Json<ApiResponse<ChannelTestResult>> {
     let result = state.channel_mgr.run_channel_test(id).await;
+    Json(ApiResponse::ok(result))
+}
+
+/// `POST /api/channels/{id}/diagnostics` — enhanced diagnostics with model list.
+///
+/// Fetches the upstream `/models` endpoint using the channel's own API key,
+/// returning auth status and the set of model IDs visible to that key.
+pub async fn channel_diagnostics(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+) -> Json<ApiResponse<ChannelDiagnosticsResult>> {
+    let result = state.channel_mgr.run_channel_diagnostics(id).await;
     Json(ApiResponse::ok(result))
 }
 

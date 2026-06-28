@@ -197,6 +197,11 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
             &format!("{prefix}/channels/test-all"),
             post(admin::test_all_channels),
         )
+        // Channel enhanced diagnostics
+        .route(
+            &format!("{prefix}/channels/{{id}}/diagnostics"),
+            post(admin::channel_diagnostics),
+        )
         // Channel cooldown status
         .route(
             &format!("{prefix}/channels/{{id}}/cooldown"),
