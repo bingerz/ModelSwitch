@@ -11,6 +11,89 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Header names that must never be stored in channel.custom_headers.
+/// Mirrors the request-time denylist in `proxy/attempt.rs` for defense-in-depth.
+const STORED_HEADER_DENYLIST: &[&str] = &[
+    "host",
+    "transfer-encoding",
+    "content-length",
+    "connection",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "authorization",
+    "x-api-key",
+    "cookie",
+    "forwarded",
+];
+
+/// Block cloud metadata endpoints and validate URL scheme.
+/// Allows internal/private IPs for legitimate proxy use, but always blocks
+/// 169.254.169.254 (AWS/GCP metadata) and fd00:ec2::254 (AWS IPv6 metadata).
+#[allow(clippy::result_large_err)]
+fn validate_channel_url(url_str: &str, field_name: &str) -> Result<(), axum::response::Response> {
+    let parsed = url::Url::parse(url_str).map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid URL for {field_name}: {url_str}"),
+        )
+    })?;
+
+    match parsed.scheme() {
+        "http" | "https" => {}
+        scheme => {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                format!("Unsupported scheme '{scheme}' for {field_name}. Only http/https allowed."),
+            ));
+        }
+    }
+
+    // Block cloud metadata endpoints (case-sensitive IP match in host)
+    if let Some(host) = parsed.host_str() {
+        if host == "169.254.169.254" || host == "[fd00:ec2::254]" {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                format!("Cloud metadata endpoint blocked for {field_name}"),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Remove denylisted header names from a HashMap (case-insensitive).
+/// Logs each removal at WARN level for audit trail.
+fn filter_dangerous_headers(headers: &mut HashMap<String, String>) {
+    headers.retain(|name, _value| {
+        let lower = name.to_lowercase();
+        if STORED_HEADER_DENYLIST.contains(&lower.as_str()) {
+            tracing::warn!(
+                header = %name,
+                "Rejecting denylisted header name in channel config"
+            );
+            false
+        } else {
+            // Also reject headers with CRLF injection attempts in name or value
+            if name.contains('\n') || name.contains('\r') {
+                tracing::warn!(header = %name, "Rejecting header with CRLF in name");
+                return false;
+            }
+            true
+        }
+    });
+
+    // Also check values for CRLF after the retain pass
+    headers.retain(|_name, value| {
+        if value.contains('\n') || value.contains('\r') {
+            tracing::warn!("Rejecting header value with CRLF injection");
+            false
+        } else {
+            true
+        }
+    });
+}
+
 pub async fn list_channels(State(state): State<Arc<AppState>>) -> Json<ApiResponse<Vec<Channel>>> {
     let channels = state.channel_mgr.list().await;
     Json(ApiResponse::ok(channels))
@@ -139,6 +222,17 @@ pub async fn create_channel(
             )
         })?;
 
+    // Validate URLs and sanitize headers (defense-in-depth at storage time)
+    let mut sanitized_headers = req.headers;
+    filter_dangerous_headers(&mut sanitized_headers);
+
+    if let Some(ref proxy_url) = req.proxy_url {
+        validate_channel_url(proxy_url, "proxy_url")?;
+    }
+    if let Some(ref models_endpoint) = req.models_endpoint {
+        validate_channel_url(models_endpoint, "models_endpoint")?;
+    }
+
     let channel = Channel {
         id,
         name: req.name,
@@ -172,7 +266,7 @@ pub async fn create_channel(
         excluded_models: req.excluded_models,
         model_cooldowns: std::collections::HashMap::new(),
         proxy_url: req.proxy_url,
-        headers: req.headers,
+        headers: sanitized_headers,
         max_retries: req.max_retries,
         models_endpoint: req.models_endpoint,
         models_refresh_interval_secs: req.models_refresh_interval_secs.unwrap_or(300),
@@ -207,6 +301,17 @@ pub async fn update_channel(
         .await
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Channel not found"))?;
 
+    // Validate URLs and sanitize headers (defense-in-depth at storage time)
+    let mut sanitized_headers = req.headers;
+    filter_dangerous_headers(&mut sanitized_headers);
+
+    if let Some(ref proxy_url) = req.proxy_url {
+        validate_channel_url(proxy_url, "proxy_url")?;
+    }
+    if let Some(ref models_endpoint) = req.models_endpoint {
+        validate_channel_url(models_endpoint, "models_endpoint")?;
+    }
+
     existing.name = req.name;
     existing.provider = Provider::from_str(&req.provider);
     existing.priority = req.priority;
@@ -230,7 +335,7 @@ pub async fn update_channel(
     existing.excluded_models = req.excluded_models;
     existing.api_keys = req.api_keys;
     existing.proxy_url = req.proxy_url;
-    existing.headers = req.headers;
+    existing.headers = sanitized_headers;
     existing.max_retries = req.max_retries;
     existing.models_endpoint = req.models_endpoint;
     existing.models_refresh_interval_secs = req.models_refresh_interval_secs.unwrap_or(300);
@@ -270,6 +375,7 @@ pub async fn update_channel(
                         "name": channel.name,
                         "provider": format!("{:?}", channel.provider),
                         "enabled": channel.enabled,
+                        "api_keys_count": channel.api_keys.len(),
                     }),
                 )
                 .await;
@@ -317,5 +423,63 @@ pub async fn delete_channel(
         StatusCode::NO_CONTENT.into_response()
     } else {
         ApiError::new(StatusCode::NOT_FOUND, "Channel not found")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn filter_removes_authorization_header() {
+        let mut headers = HashMap::new();
+        headers.insert("Authorization".to_string(), "Bearer secret".to_string());
+        headers.insert("X-Custom".to_string(), "value".to_string());
+        filter_dangerous_headers(&mut headers);
+        assert!(!headers.contains_key("Authorization"));
+        assert!(headers.contains_key("X-Custom"));
+    }
+
+    #[test]
+    fn filter_removes_denylisted_case_insensitive() {
+        let mut headers = HashMap::new();
+        headers.insert("HOST".to_string(), "evil.com".to_string());
+        headers.insert("X-API-KEY".to_string(), "stolen".to_string());
+        filter_dangerous_headers(&mut headers);
+        assert!(headers.is_empty());
+    }
+
+    #[test]
+    fn filter_removes_crlf_injection() {
+        let mut headers = HashMap::new();
+        headers.insert("X-Safe\r\nInjected: evil".to_string(), "value".to_string());
+        headers.insert("X-Value".to_string(), "data\r\nHost: evil".to_string());
+        filter_dangerous_headers(&mut headers);
+        assert!(headers.is_empty());
+    }
+
+    #[test]
+    fn validate_url_rejects_metadata_endpoint() {
+        assert!(
+            validate_channel_url("http://169.254.169.254/latest/meta-data/", "proxy_url").is_err()
+        );
+        assert!(validate_channel_url(
+            "http://[fd00:ec2::254]/latest/meta-data/",
+            "models_endpoint"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn validate_url_rejects_non_http_scheme() {
+        assert!(validate_channel_url("file:///etc/passwd", "proxy_url").is_err());
+        assert!(validate_channel_url("ftp://example.com/", "models_endpoint").is_err());
+    }
+
+    #[test]
+    fn validate_url_accepts_https() {
+        assert!(validate_channel_url("https://api.openai.com", "proxy_url").is_ok());
+        assert!(validate_channel_url("http://10.0.0.5:8080", "proxy_url").is_ok());
     }
 }
