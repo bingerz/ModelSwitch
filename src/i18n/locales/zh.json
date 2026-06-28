@@ -761,6 +761,15 @@
     "saved": "通知配置已保存",
     "saveFailed": "保存通知配置失败"
   },
+  "reports": {
+    "chartMetricCost": "成本",
+    "chartMetricRequests": "请求数",
+    "chartMetricTokens": "Token",
+    "projectedMonthly": "月度预测成本",
+    "periodTotal": "周期总计",
+    "avgDaily": "日均成本",
+    "daysRemaining": "剩余天数"
+  },
   "playground": {
     "title": "API 测试台",
     "subtitle": "通过网关发送测试请求",

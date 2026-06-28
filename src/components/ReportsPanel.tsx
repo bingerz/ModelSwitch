@@ -8,6 +8,7 @@ import { useToast } from "./Toast";
 import { StatTile } from "./ui/StatTile";
 import { SectionHeader } from "./ui/SectionHeader";
 import { EmptyState } from "./ui/EmptyState";
+import { CostTrendChart } from "./reports/CostTrendChart";
 import "../styles/pages-enhanced.css";
 
 type GroupBy = "day" | "week" | "month";
@@ -199,6 +200,13 @@ export function ReportsPanel() {
             accent="amber"
           />
         </div>
+      )}
+
+      {report && report.rows.length > 0 && (
+        <CostTrendChart
+          rows={report.rows}
+          avgDailyCostCents={report.summary.avg_daily_cost_cents}
+        />
       )}
 
       {/* Data table */}

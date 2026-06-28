@@ -799,6 +799,15 @@
     "daysAgo_one": "{{count}} day ago",
     "daysAgo_other": "{{count}} days ago"
   },
+  "reports": {
+    "chartMetricCost": "Cost",
+    "chartMetricRequests": "Requests",
+    "chartMetricTokens": "Tokens",
+    "projectedMonthly": "Projected Monthly Cost",
+    "periodTotal": "Period Total",
+    "avgDaily": "Avg Daily Cost",
+    "daysRemaining": "Days Remaining"
+  },
   "portal": {
     "title": "Employee Portal",
     "loginSubtitle": "Enter your virtual key to view usage",
