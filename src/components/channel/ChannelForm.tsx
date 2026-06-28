@@ -31,6 +31,11 @@ const INITIAL_FORM: FormState = {
   tags: "",
   modelsEndpoint: "",
   modelsRefreshInterval: "",
+  maxConcurrent: 0,
+  maxRetries: 3,
+  proxyUrl: "",
+  apiKeys: "",
+  headers: "",
 };
 
 export function ChannelForm({ onSave }: { onSave: () => void }) {
@@ -153,6 +158,15 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
     }
     setSubmitting(true);
     try {
+      // Parse headers JSON string into an object; default to empty on failure.
+      let parsedHeaders: Record<string, string> = {};
+      if (form.headers.trim()) {
+        try {
+          parsedHeaders = JSON.parse(form.headers) as Record<string, string>;
+        } catch {
+          parsedHeaders = {};
+        }
+      }
       await api.createChannel({
         name: form.name,
         provider: form.provider,
@@ -187,6 +201,14 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
         models_refresh_interval_secs: form.modelsRefreshInterval
           ? parseInt(form.modelsRefreshInterval, 10)
           : 300,
+        max_concurrent: form.maxConcurrent,
+        max_retries: form.maxRetries,
+        proxy_url: form.proxyUrl.trim() || null,
+        api_keys: form.apiKeys
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        headers: parsedHeaders,
       });
       toast.success(t("channels.created"));
       onSave();

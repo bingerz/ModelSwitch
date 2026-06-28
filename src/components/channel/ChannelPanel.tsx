@@ -55,7 +55,7 @@ export function ChannelPanel() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<
-    "all" | "healthy" | "circuit_open" | "disabled"
+    "all" | "healthy" | "circuit_open" | "half_open" | "disabled"
   >("all");
 
   const handleDelete = async (id: string) => {
@@ -153,6 +153,7 @@ export function ChannelPanel() {
     if (statusFilter !== "all") {
       if (statusFilter === "healthy" && ch.status !== "healthy") return false;
       if (statusFilter === "circuit_open" && ch.status !== "circuit_open") return false;
+      if (statusFilter === "half_open" && ch.status !== "half_open") return false;
       if (statusFilter === "disabled" && ch.status !== "disabled") return false;
     }
     if (searchQuery.trim()) {
@@ -229,6 +230,7 @@ export function ChannelPanel() {
           <option value="all">{t("channels.allStatus")}</option>
           <option value="healthy">{t("channels.healthy")}</option>
           <option value="circuit_open">{t("channels.circuitOpen")}</option>
+          <option value="half_open">{t("channels.halfOpen")}</option>
           <option value="disabled">{t("channels.disabled")}</option>
         </select>
       </div>

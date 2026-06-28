@@ -50,6 +50,13 @@ export function EditChannelForm({
       : "",
     credentialType: "api_key",
     credentialValue: "",
+    maxConcurrent: channel.max_concurrent ?? 0,
+    maxRetries: channel.max_retries ?? 3,
+    proxyUrl: channel.proxy_url ?? "",
+    apiKeys: (channel.api_keys ?? []).join("\n"),
+    headers: channel.headers
+      ? JSON.stringify(channel.headers, null, 2)
+      : "",
   });
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -102,6 +109,15 @@ export function EditChannelForm({
     }
     setSubmitting(true);
     try {
+      // Parse headers JSON string into an object; default to empty on failure.
+      let parsedHeaders: Record<string, string> = {};
+      if (form.headers.trim()) {
+        try {
+          parsedHeaders = JSON.parse(form.headers) as Record<string, string>;
+        } catch {
+          parsedHeaders = {};
+        }
+      }
       await api.updateChannel(channel.id, {
         name: form.name,
         provider: form.provider,
@@ -133,6 +149,14 @@ export function EditChannelForm({
         models_refresh_interval_secs: form.modelsRefreshInterval
           ? parseInt(form.modelsRefreshInterval, 10)
           : 300,
+        max_concurrent: form.maxConcurrent,
+        max_retries: form.maxRetries,
+        proxy_url: form.proxyUrl.trim() || null,
+        api_keys: form.apiKeys
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        headers: parsedHeaders,
       });
       toast.success(t("channels.updated"));
       onSave();

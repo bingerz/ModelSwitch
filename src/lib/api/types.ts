@@ -11,7 +11,7 @@ export interface Channel {
   input_cost_per_mtok: number | null;
   output_cost_per_mtok: number | null;
   enabled: boolean;
-  status: "healthy" | "circuit_open" | "disabled";
+  status: "healthy" | "circuit_open" | "half_open" | "disabled";
   circuit_open_until: string | null;
   base_url: string;
   model_mapping: Record<string, string>;

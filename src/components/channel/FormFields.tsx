@@ -31,6 +31,11 @@ export interface FormState {
   modelsEndpoint: string;
   modelsRefreshInterval: string;
   modelMapping: Record<string, string>;
+  maxConcurrent: number;
+  maxRetries: number;
+  proxyUrl: string;
+  headers: string;
+  apiKeys: string;
 }
 
 export interface FormFieldsProps {
@@ -99,6 +104,16 @@ export function FormFields({
             <option value="deepseek">{t("channels.deepseek")}</option>
             <option value="gemini">{t("channels.gemini")}</option>
             <option value="openrouter">{t("channels.openrouter")}</option>
+            <option value="ollama">{t("channels.providerOllama")}</option>
+            <option value="mistral">{t("channels.providerMistral")}</option>
+            <option value="groq">{t("channels.providerGroq")}</option>
+            <option value="together">{t("channels.providerTogether")}</option>
+            <option value="cohere">{t("channels.providerCohere")}</option>
+            <option value="xai">{t("channels.providerXai")}</option>
+            <option value="siliconflow">{t("channels.providerSiliconflow")}</option>
+            <option value="yi">{t("channels.providerYi")}</option>
+            <option value="moonshot">{t("channels.providerMoonshot")}</option>
+            <option value="zhipu">{t("channels.providerZhipu")}</option>
             <option value="custom">{t("channels.custom")}</option>
           </select>
         </label>
@@ -352,6 +367,66 @@ export function FormFields({
               min={0}
             />
             <small className="form-hint">{t("channels.modelsRefreshIntervalHint")}</small>
+          </label>
+          <label className="form-field">
+            <span>{t("channels.maxConcurrent")}</span>
+            <input
+              type="number"
+              value={values.maxConcurrent}
+              onChange={(e) => onChange({ maxConcurrent: Number(e.target.value) })}
+              placeholder="10"
+              min={0}
+            />
+            <small className="form-hint">{t("channels.maxConcurrentDesc")}</small>
+          </label>
+          <label className="form-field">
+            <span>{t("channels.maxRetries")}</span>
+            <input
+              type="number"
+              value={values.maxRetries}
+              onChange={(e) => onChange({ maxRetries: Number(e.target.value) })}
+              placeholder="3"
+              min={0}
+            />
+            <small className="form-hint">{t("channels.maxRetriesDesc")}</small>
+          </label>
+          <label className="form-field">
+            <span>{t("channels.proxyUrl")}</span>
+            <input
+              type="text"
+              value={values.proxyUrl}
+              onChange={(e) => onChange({ proxyUrl: e.target.value })}
+              placeholder="http://proxy:8080"
+            />
+            <small className="form-hint">{t("channels.proxyUrlDesc")}</small>
+          </label>
+          <label className="form-field">
+            <span>{t("channels.apiKeys")}</span>
+            <textarea
+              value={values.apiKeys}
+              onChange={(e) => onChange({ apiKeys: e.target.value })}
+              placeholder={"sk-...\nsk-..."}
+              rows={3}
+              style={{
+                fontFamily: "monospace",
+                fontSize: "var(--text-xs)",
+              }}
+            />
+            <small className="form-hint">{t("channels.apiKeysDesc")}</small>
+          </label>
+          <label className="form-field">
+            <span>{t("channels.customHeaders")}</span>
+            <textarea
+              value={values.headers}
+              onChange={(e) => onChange({ headers: e.target.value })}
+              placeholder={'{"X-Custom":"value"}'}
+              rows={3}
+              style={{
+                fontFamily: "monospace",
+                fontSize: "var(--text-xs)",
+              }}
+            />
+            <small className="form-hint">{t("channels.customHeadersDesc")}</small>
           </label>
         </div>
       )}
