@@ -50,7 +50,7 @@ interface ChatCompletionResponse {
   };
 }
 
-/** localStorage key used to persist the virtual key between sessions. */
+/** sessionStorage key used to persist the virtual key between sessions. */
 const VK_STORAGE_KEY = "playground_vk";
 
 /** Lower bound for max_tokens — keep requests well-formed. */
@@ -65,20 +65,19 @@ const DEFAULT_MAX_TOKENS = 1024;
 
 /**
  * Resolve the bearer token to send on a playground request.
- * Falls back to the admin token when no virtual key is configured
- * (covers open-proxy mode and admin-issued test requests).
+ * Returns null when no virtual key is entered, so the Authorization
+ * header is omitted entirely (open-proxy mode) or the proxy returns
+ * 401 (virtual-key mode). Never falls back to the admin token.
  */
 function resolveToken(virtualKey: string): string | null {
-  const trimmed = virtualKey.trim();
-  if (trimmed) return trimmed;
-  return localStorage.getItem("admin_token");
+  return virtualKey.trim() || null;
 }
 
 export function Playground() {
   const { t } = useTranslation();
 
   const [virtualKey, setVirtualKey] = useState<string>(
-    () => localStorage.getItem(VK_STORAGE_KEY) ?? "",
+    () => sessionStorage.getItem(VK_STORAGE_KEY) ?? "",
   );
   const [showKey, setShowKey] = useState(false);
   const [model, setModel] = useState("");
@@ -99,7 +98,7 @@ export function Playground() {
 
   // Persist virtual key whenever it changes.
   useEffect(() => {
-    localStorage.setItem(VK_STORAGE_KEY, virtualKey);
+    sessionStorage.setItem(VK_STORAGE_KEY, virtualKey);
   }, [virtualKey]);
 
   const fetchModels = useCallback(async () => {
