@@ -138,10 +138,34 @@ export function ModelAvailabilityMatrix() {
  * Minimal glob matcher: `*` matches any sequence, `?` matches a single char.
  * Case-insensitive. Anything else is matched literally.
  */
+/** Simple glob matching: * matches any sequence, ? matches one char.
+ * Iterative character-by-character matcher — no RegExp construction,
+ * avoiding ReDoS risk from admin-configured excluded_models patterns.
+ */
 function simpleGlob(pattern: string, text: string): boolean {
-  const regexStr = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*/g, ".*")
-    .replace(/\?/g, ".");
-  return new RegExp(`^${regexStr}$`, "i").test(text);
+  const p = pattern.toLowerCase();
+  const t = text.toLowerCase();
+  const memo = new Map<string, boolean>();
+  function match(pi: number, ti: number): boolean {
+    const key = `${pi}:${ti}`;
+    if (memo.has(key)) return memo.get(key)!;
+    if (pi >= p.length) { return ti >= t.length; }
+    const pc = p[pi];
+    let result = false;
+    if (pc === "*") {
+      if (pi === p.length - 1) { result = true; }
+      else {
+        for (let i = ti; i <= t.length && !result; i++) {
+          result = match(pi + 1, i);
+        }
+      }
+    } else if (pc === "?") {
+      result = ti < t.length && match(pi + 1, ti + 1);
+    } else {
+      result = ti < t.length && t[ti] === pc && match(pi + 1, ti + 1);
+    }
+    memo.set(key, result);
+    return result;
+  }
+  return match(0, 0);
 }
