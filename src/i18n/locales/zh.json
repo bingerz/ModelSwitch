@@ -793,5 +793,16 @@
     "promptTokens": "提示 Token",
     "completionTokens": "完成 Token",
     "totalTokens": "总计 Token"
+  },
+  "diagnostics": {
+    "button": "诊断",
+    "title": "诊断: {{name}}",
+    "running": "正在运行诊断...",
+    "authOk": "已认证",
+    "authFailed": "认证失败",
+    "authError": "连接错误",
+    "availableModels": "可用模型 ({{count}})",
+    "noModels": "未返回模型列表。API 密钥可能无效或端点不支持模型列表。",
+    "testedAt": "测试时间 {{time}}"
   }
 }

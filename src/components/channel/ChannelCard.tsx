@@ -29,6 +29,7 @@ export interface ChannelCardProps {
   selected?: boolean;
   onToggleSelect?: () => void;
   onTest?: () => void;
+  onDiagnostics?: () => void;
 }
 
 export function ChannelCard({
@@ -48,6 +49,7 @@ export function ChannelCard({
   selected,
   onToggleSelect,
   onTest,
+  onDiagnostics,
 }: ChannelCardProps) {
   const { t } = useTranslation();
   const statusKey = (ch.status as ChannelStatus) ?? "disabled";
@@ -195,6 +197,17 @@ export function ChannelCard({
                     }}
                   >
                     {t("channels.testAll")}
+                  </button>
+                )}
+                {onDiagnostics && (
+                  <button
+                    className="channel-overflow-item"
+                    onClick={() => {
+                      onCloseOverflow();
+                      onDiagnostics();
+                    }}
+                  >
+                    {t("diagnostics.button")}
                   </button>
                 )}
                 <button

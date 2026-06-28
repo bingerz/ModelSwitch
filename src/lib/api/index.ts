@@ -41,6 +41,7 @@ export interface Api {
   resetCircuit: typeof channelsApi.resetCircuit;
   testChannel: typeof channelsApi.testChannel;
   testAllChannels: typeof channelsApi.testAllChannels;
+  channelDiagnostics: typeof channelsApi.channelDiagnostics;
   batchEnableChannels: typeof channelsApi.batchEnableChannels;
   batchDisableChannels: typeof channelsApi.batchDisableChannels;
   batchDeleteChannels: typeof channelsApi.batchDeleteChannels;

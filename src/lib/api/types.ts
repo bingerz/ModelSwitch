@@ -507,6 +507,17 @@ export interface SingleChannelTestResult {
   error: string | null;
 }
 
+export interface ChannelDiagnosticsResult {
+  channel_id: string;
+  channel_name: string;
+  auth_status: "authenticated" | "unauthenticated" | "error";
+  available_models: string[];
+  status_code: number | null;
+  latency_ms: number;
+  error: string | null;
+  tested_at: string;
+}
+
 export interface McpHealthEntry {
   name: string;
   healthy: boolean;

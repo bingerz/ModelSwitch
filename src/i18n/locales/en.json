@@ -866,5 +866,34 @@
     "promptTokens": "Prompt Tokens",
     "completionTokens": "Completion Tokens",
     "totalTokens": "Total Tokens"
+  },
+  "diagnostics": {
+    "button": "Diagnostics",
+    "title": "Diagnostics: {{name}}",
+    "running": "Running diagnostics...",
+    "authOk": "Authenticated",
+    "authFailed": "Authentication Failed",
+    "authError": "Connection Error",
+    "availableModels": "Available Models ({{count}})",
+    "noModels": "No models returned. The API key may be invalid or the endpoint may not support model listing.",
+    "testedAt": "Tested at {{time}}"
+  },
+  "insights": {
+    "title": "Smart Insights",
+    "circuitOpen": "Channel '{{name}}' circuit breaker is open",
+    "circuitOpenDesc": "Requests to this channel are failing. Check the API key or upstream availability.",
+    "highFailureRate": "Elevated failure rate ({{pct}}%)",
+    "highFailureRateDesc": "{{failures}} out of {{total}} recent requests failed.",
+    "highLatency": "Channel '{{name}}' has high latency ({{ms}}ms avg)",
+    "highLatencyDesc": "Consider adding a faster fallback channel or adjusting priority.",
+    "frequentRetries": "Frequent retries detected",
+    "frequentRetriesDesc": "{{count}} requests required multiple retries, indicating upstream instability.",
+    "consecutiveFailures": "Channel '{{name}}' has {{n}} consecutive failures",
+    "consecutiveFailuresDesc": "This channel may be approaching circuit-breaker threshold.",
+    "costSpike": "Recent cost spike detected",
+    "costSpikeDesc": "Last 10 requests averaged {{recent}} per request vs {{overall}} overall.",
+    "allHealthy": "All systems healthy",
+    "allHealthyDesc": "No anomalies detected in the last {{n}} requests.",
+    "insufficientData": "Insufficient data for analysis"
   }
 }

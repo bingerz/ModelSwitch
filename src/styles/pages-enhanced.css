@@ -280,3 +280,159 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Diagnostics Modal */
+.diag-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.diag-modal {
+  background: var(--color-bg-primary, #1a1a2e);
+  border: 1px solid var(--color-border, #333);
+  border-radius: 12px;
+  max-width: 600px;
+  width: 90%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+.diag-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border, #333);
+}
+.diag-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.diag-modal-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  color: var(--color-text-secondary, #888);
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.diag-modal-close:hover {
+  background: var(--color-bg-secondary, #222);
+}
+.diag-modal-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+.diag-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 0;
+  color: var(--color-text-secondary, #888);
+}
+.diag-loading .ui-spin {
+  animation: diag-spin 1s linear infinite;
+}
+@keyframes diag-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+.diag-error-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  color: #ef4444;
+  margin-bottom: 16px;
+}
+.diag-status-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.diag-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.diag-badge-ok {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+.diag-badge-warn {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+.diag-badge-err {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+.diag-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--color-text-secondary, #888);
+}
+.diag-error-detail {
+  padding: 8px 12px;
+  background: rgba(239, 68, 68, 0.05);
+  border-radius: 6px;
+  font-size: 13px;
+  color: #ef4444;
+  margin-bottom: 16px;
+}
+.diag-models-section {
+  margin-top: 16px;
+}
+.diag-section-title {
+  font-size: 14px;
+  margin: 0 0 8px 0;
+  color: var(--color-text-primary, #e0e0e0);
+}
+.diag-models-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.diag-model-tag {
+  padding: 3px 8px;
+  background: var(--color-bg-secondary, #222);
+  border: 1px solid var(--color-border, #333);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: monospace;
+}
+.diag-no-models {
+  color: var(--color-text-secondary, #888);
+  font-size: 13px;
+}
+.diag-timestamp {
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--color-text-tertiary, #666);
+}
+
+

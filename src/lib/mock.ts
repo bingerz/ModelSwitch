@@ -533,6 +533,21 @@ export const mockApi: typeof api = {
     return [];
   },
 
+  // Channel diagnostics
+  channelDiagnostics: async (id: string) => {
+    await simDelay();
+    return {
+      channel_id: id,
+      channel_name: "Mock Channel",
+      auth_status: "authenticated" as const,
+      available_models: ["gpt-4", "gpt-3.5-turbo"],
+      status_code: 200,
+      latency_ms: 42,
+      error: null,
+      tested_at: new Date().toISOString(),
+    };
+  },
+
   // MCP health
   mcpHealth: async () => {
     await simDelay();

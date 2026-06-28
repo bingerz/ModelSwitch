@@ -8,6 +8,7 @@ import { ChannelCard } from "./ChannelCard";
 import { ChannelForm } from "./ChannelForm";
 import { EditChannelForm } from "./EditChannelForm";
 import { BatchOperationsBar } from "./BatchOperationsBar";
+import { DiagnosticsModal } from "./DiagnosticsModal";
 
 export function ChannelPanel() {
   const { t } = useTranslation();
@@ -19,6 +20,7 @@ export function ChannelPanel() {
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [overflowOpenId, setOverflowOpenId] = useState<string | null>(null);
+  const [diagnosticsId, setDiagnosticsId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<
@@ -80,6 +82,10 @@ export function ChannelPanel() {
     } catch {
       toast.error(t("channels.testError"));
     }
+  };
+
+  const handleDiagnostics = (id: string) => {
+    setDiagnosticsId(id);
   };
 
   const handleToggle = async (ch: Channel) => {
@@ -276,6 +282,7 @@ export function ChannelPanel() {
                         selected={selectedIds.has(ch.id)}
                         onToggleSelect={() => toggleSelect(ch.id)}
                         onTest={() => handleTest(ch.id)}
+                        onDiagnostics={() => handleDiagnostics(ch.id)}
                         confirmDelete={confirmDeleteId === ch.id}
                         overflowOpen={overflowOpenId === ch.id}
                         onEdit={() => setEditingId(ch.id)}
@@ -298,6 +305,16 @@ export function ChannelPanel() {
           );
         })}
       </div>
+
+      {diagnosticsId && (
+        <DiagnosticsModal
+          channelId={diagnosticsId}
+          channelName={
+            channels.find((c) => c.id === diagnosticsId)?.name ?? ""
+          }
+          onClose={() => setDiagnosticsId(null)}
+        />
+      )}
     </section>
   );
 }

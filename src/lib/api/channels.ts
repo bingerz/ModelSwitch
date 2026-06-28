@@ -5,6 +5,7 @@ import { request } from "./client";
 import type {
   Channel,
   ChannelCooldownInfo,
+  ChannelDiagnosticsResult,
   ChannelStatusInfo,
   ChannelTestResult,
   PingResult,
@@ -54,6 +55,11 @@ export const channelsApi = {
 
   testAllChannels: () =>
     request<ChannelTestResult[]>("/api/channels/test-all", { method: "POST" }),
+
+  channelDiagnostics: (id: string) =>
+    request<ChannelDiagnosticsResult>(`/api/channels/${id}/diagnostics`, {
+      method: "POST",
+    }),
 
   // Batch operations
   batchEnableChannels: (ids: string[]) =>
