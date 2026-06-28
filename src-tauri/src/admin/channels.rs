@@ -47,6 +47,14 @@ mod tests {
             tpm_limit: None,
             account_group: None,
             max_concurrent: None,
+            excluded_models: vec![],
+            tags: vec![],
+            models_endpoint: None,
+            models_refresh_interval_secs: None,
+            max_retries: None,
+            proxy_url: None,
+            headers: HashMap::new(),
+            api_keys: vec![],
         };
         let created = create_channel(State(state.clone()), Json(req))
             .await
@@ -79,6 +87,14 @@ mod tests {
             tpm_limit: None,
             account_group: None,
             max_concurrent: None,
+            excluded_models: vec![],
+            tags: vec![],
+            models_endpoint: None,
+            models_refresh_interval_secs: None,
+            max_retries: None,
+            proxy_url: None,
+            headers: HashMap::new(),
+            api_keys: vec![],
         };
         let created = create_channel(State(state.clone()), Json(req))
             .await
@@ -116,6 +132,14 @@ mod tests {
                 tpm_limit: None,
                 account_group: None,
                 max_concurrent: None,
+                excluded_models: vec![],
+                tags: vec![],
+                models_endpoint: None,
+                models_refresh_interval_secs: None,
+                max_retries: None,
+                proxy_url: None,
+                headers: HashMap::new(),
+                api_keys: vec![],
             };
             let created = create_channel(State(state.clone()), Json(req))
                 .await

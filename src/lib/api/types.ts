@@ -164,6 +164,7 @@ export interface UpdateChannelData {
   account_group?: string | null;
   max_concurrent?: number | null;
   excluded_models?: string[];
+  api_keys?: string[];
   proxy_url?: string | null;
   headers?: Record<string, string>;
   max_retries?: number | null;

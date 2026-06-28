@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { api, type Channel } from "../../lib/api";
+import { api, type Channel, type UpdateChannelData } from "../../lib/api";
 import { useQuota } from "../../hooks/useQuota";
 import type { QuotaInfo } from "../../lib/api";
 import { useToast } from "../Toast";
@@ -9,6 +9,37 @@ import { ChannelForm } from "./ChannelForm";
 import { EditChannelForm } from "./EditChannelForm";
 import { BatchOperationsBar } from "./BatchOperationsBar";
 import { DiagnosticsModal } from "./DiagnosticsModal";
+
+/** Convert a Channel to UpdateChannelData, preserving all fields to prevent
+ *  silent data loss on partial updates (toggle, drag-drop). */
+function channelToUpdateData(ch: Channel, overrides: Partial<UpdateChannelData>): UpdateChannelData {
+  return {
+    name: ch.name,
+    provider: ch.provider,
+    priority: ch.priority,
+    weight: ch.weight,
+    cost_per_token: ch.cost_per_token,
+    input_cost_per_mtok: ch.input_cost_per_mtok,
+    output_cost_per_mtok: ch.output_cost_per_mtok,
+    base_url: ch.base_url,
+    enabled: ch.enabled,
+    model_mapping: ch.model_mapping,
+    cooldown_minutes: ch.cooldown_minutes,
+    rpm_limit: ch.rpm_limit,
+    tpm_limit: ch.tpm_limit,
+    account_group: ch.account_group,
+    excluded_models: ch.excluded_models,
+    tags: ch.tags,
+    models_endpoint: ch.models_endpoint,
+    models_refresh_interval_secs: ch.models_refresh_interval_secs,
+    max_concurrent: ch.max_concurrent,
+    api_keys: ch.api_keys,
+    proxy_url: ch.proxy_url,
+    headers: ch.headers,
+    max_retries: ch.max_retries,
+    ...overrides,
+  };
+}
 
 export function ChannelPanel() {
   const { t } = useTranslation();
@@ -90,17 +121,7 @@ export function ChannelPanel() {
 
   const handleToggle = async (ch: Channel) => {
     try {
-      await api.updateChannel(ch.id, {
-        name: ch.name,
-        provider: ch.provider,
-        priority: ch.priority,
-        weight: ch.weight,
-        cost_per_token: ch.cost_per_token,
-        base_url: ch.base_url,
-        enabled: !ch.enabled,
-        model_mapping: ch.model_mapping,
-        cooldown_minutes: ch.cooldown_minutes,
-      });
+      await api.updateChannel(ch.id, channelToUpdateData(ch, { enabled: !ch.enabled }));
       refresh();
     } catch {
       toast.error(t("channels.toggleFailed"));
@@ -116,17 +137,7 @@ export function ChannelPanel() {
     const ch = channels.find((c) => c.id === dragId);
     if (ch && ch.priority !== targetPriority) {
       try {
-        await api.updateChannel(ch.id, {
-          name: ch.name,
-          provider: ch.provider,
-          priority: targetPriority,
-          weight: ch.weight,
-          cost_per_token: ch.cost_per_token,
-          base_url: ch.base_url,
-          enabled: ch.enabled,
-          model_mapping: ch.model_mapping,
-          cooldown_minutes: ch.cooldown_minutes,
-        });
+        await api.updateChannel(ch.id, channelToUpdateData(ch, { priority: targetPriority }));
         refresh();
       } catch {
         refresh();

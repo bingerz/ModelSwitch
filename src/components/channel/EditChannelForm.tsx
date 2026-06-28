@@ -108,6 +108,8 @@ export function EditChannelForm({
         priority: form.priority,
         weight: form.weight,
         cost_per_token: form.costPerToken ? parseFloat(form.costPerToken) : null,
+        input_cost_per_mtok: form.inputCostPerMtok ? parseFloat(form.inputCostPerMtok) : null,
+        output_cost_per_mtok: form.outputCostPerMtok ? parseFloat(form.outputCostPerMtok) : null,
         base_url: form.baseUrl,
         enabled: channel.enabled,
         model_mapping: form.modelMapping,

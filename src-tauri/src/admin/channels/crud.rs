@@ -46,6 +46,22 @@ pub struct CreateChannelRequest {
     pub account_group: Option<String>,
     #[serde(default)]
     pub max_concurrent: Option<u32>,
+    #[serde(default)]
+    pub excluded_models: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub models_endpoint: Option<String>,
+    #[serde(default)]
+    pub models_refresh_interval_secs: Option<u64>,
+    #[serde(default)]
+    pub max_retries: Option<u32>,
+    #[serde(default)]
+    pub proxy_url: Option<String>,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    #[serde(default)]
+    pub api_keys: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -152,15 +168,15 @@ pub async fn create_channel(
         tpm_limit: req.tpm_limit,
         account_group: req.account_group,
         max_concurrent: req.max_concurrent,
-        api_keys: vec![],
-        excluded_models: vec![],
+        api_keys: req.api_keys,
+        excluded_models: req.excluded_models,
         model_cooldowns: std::collections::HashMap::new(),
-        proxy_url: None,
-        headers: std::collections::HashMap::new(),
-        max_retries: None,
-        models_endpoint: None,
-        models_refresh_interval_secs: 300,
-        tags: vec![],
+        proxy_url: req.proxy_url,
+        headers: req.headers,
+        max_retries: req.max_retries,
+        models_endpoint: req.models_endpoint,
+        models_refresh_interval_secs: req.models_refresh_interval_secs.unwrap_or(300),
+        tags: req.tags,
     };
 
     let created = state.channel_mgr.create(channel).await;
