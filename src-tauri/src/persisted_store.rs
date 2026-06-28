@@ -802,4 +802,119 @@ mod async_tests {
 
         let _ = std::fs::remove_file(&path);
     }
+
+    /// After `persist()`, the data file must exist, contain valid JSON, and
+    /// no `.tmp` file should remain. Combines the atomic-rename completion
+    /// check with a content-validity check in a single test.
+    #[tokio::test]
+    async fn async_persist_uses_atomic_write() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-atomic-write-{}.json",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let tmp_path = path.with_extension("json.tmp");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&tmp_path);
+
+        let store: PersistedStore<String, TestData> = PersistedStore::new(path.clone());
+        {
+            let mut w = store.write().await;
+            w.insert(
+                "alpha".to_string(),
+                TestData {
+                    name: "first".to_string(),
+                    value: 7,
+                },
+            );
+        }
+        store.persist().await;
+
+        // Atomic rename completed: real file exists, temp file gone.
+        assert!(path.exists(), "data file should exist after persist");
+        assert!(
+            !tmp_path.exists(),
+            "no .tmp file should remain after atomic rename"
+        );
+
+        // File content must be valid JSON parseable back into the map.
+        let raw = std::fs::read_to_string(&path).expect("data file should be readable");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&raw).expect("persisted data must be valid JSON");
+        assert!(
+            parsed.get("alpha").is_some(),
+            "persisted JSON should contain the stored key"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `load()` uses `entry(k).or_insert(v)` semantics — existing in-memory
+    /// entries must NOT be overwritten by disk data. New keys from disk are
+    /// merged in, but in-memory values win on conflict.
+    #[tokio::test]
+    async fn async_load_merges_without_overwriting() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-merge-{}.json",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        // Disk file contains: loaded_only, shared_key (value=1)
+        let disk_json = r#"{"loaded_only":{"name":"from_disk","value":1},"shared_key":{"name":"from_disk","value":1}}"#;
+        std::fs::write(&path, disk_json).expect("write disk file");
+
+        let store: PersistedStore<String, TestData> = PersistedStore::new(path.clone());
+        {
+            let mut w = store.write().await;
+            // in-memory only entry
+            w.insert(
+                "memory_only".to_string(),
+                TestData {
+                    name: "from_memory".to_string(),
+                    value: 99,
+                },
+            );
+            // shared with disk — in-memory value must win
+            w.insert(
+                "shared_key".to_string(),
+                TestData {
+                    name: "from_memory".to_string(),
+                    value: 100,
+                },
+            );
+        }
+
+        store.load().await;
+
+        {
+            let r = store.read().await;
+            // Disk-only key should be merged in.
+            let loaded = r
+                .get("loaded_only")
+                .expect("disk-only key should be merged in");
+            assert_eq!(loaded.value, 1, "loaded_only should retain disk value");
+            assert_eq!(loaded.name, "from_disk");
+
+            // Memory-only key should still be present.
+            let mem = r
+                .get("memory_only")
+                .expect("memory-only key should still be present");
+            assert_eq!(mem.value, 99);
+
+            // Shared key should retain the in-memory value (NOT overwritten).
+            let shared = r
+                .get("shared_key")
+                .expect("shared_key must exist after merge");
+            assert_eq!(
+                shared.value, 100,
+                "load() must not overwrite existing in-memory entries (or_insert semantics)"
+            );
+            assert_eq!(
+                shared.name, "from_memory",
+                "in-memory value should win on key collision"
+            );
+        }
+
+        let _ = std::fs::remove_file(&path);
+    }
 }

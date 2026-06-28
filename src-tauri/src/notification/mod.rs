@@ -668,12 +668,17 @@ mod tests {
 
     #[tokio::test]
     async fn check_smtp_ip_allows_private_range() {
-        let ip: std::net::IpAddr = "10.0.0.1".parse().unwrap();
-        let result = check_smtp_ip(&ip);
-        assert!(
-            result.is_ok(),
-            "private IP 10.0.0.1 should be allowed for SMTP"
-        );
+        // SMTP host validation intentionally allows private ranges so that
+        // internal SMTP relays (e.g., 10.x, 192.168.x, 172.16-31.x) work.
+        for literal in ["10.0.0.1", "192.168.1.1", "172.16.0.1"] {
+            let ip: std::net::IpAddr = literal.parse().unwrap();
+            let result = check_smtp_ip(&ip);
+            assert!(
+                result.is_ok(),
+                "private IP {literal} should be allowed for SMTP: {:?}",
+                result.err()
+            );
+        }
     }
 
     /// DNS resolution failure for a nonexistent host must return `Ok(())` —
