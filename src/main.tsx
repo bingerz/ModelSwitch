@@ -20,6 +20,7 @@ import "./styles/components/misc.css";
 import "./styles/ui.css";
 import "./styles/login.css";
 import "./styles/portal.css";
+import "./styles/playground.css";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

@@ -59,8 +59,11 @@ const NotificationPanel = lazy(() =>
 const ReportsPanel = lazy(() =>
   import("./components/ReportsPanel").then((m) => ({ default: m.ReportsPanel }))
 );
+const Playground = lazy(() =>
+  import("./components/playground/Playground").then((m) => ({ default: m.Playground }))
+);
 
-type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "logs" | "cost" | "quota" | "settings" | "audit" | "redemption" | "metrics" | "guardrails" | "notifications" | "registry" | "reports";
+type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "logs" | "cost" | "quota" | "settings" | "audit" | "redemption" | "metrics" | "guardrails" | "notifications" | "registry" | "reports" | "playground";
 type Theme = "light" | "dark";
 
 // React Query client — sensible defaults for a management console.
@@ -106,6 +109,10 @@ function getTabGroups(t: (key: string) => string): { title: string; tabs: { id: 
         { id: "registry", label: t("nav.registry") },
         { id: "reports", label: t("nav.reports") },
       ],
+    },
+    {
+      title: t("nav.tools"),
+      tabs: [{ id: "playground", label: t("nav.playground") }],
     },
     {
       title: t("nav.system"),
@@ -212,7 +219,7 @@ function AppInner() {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key >= "1" && e.key <= "9") {
         e.preventDefault();
-        const tabs: TabId[] = ["dashboard", "channels", "virtualKeys", "mcp", "logs", "cost", "quota", "settings", "audit", "redemption", "metrics", "guardrails", "notifications", "registry", "reports"];
+        const tabs: TabId[] = ["dashboard", "channels", "virtualKeys", "mcp", "logs", "cost", "quota", "settings", "audit", "redemption", "metrics", "guardrails", "notifications", "registry", "reports", "playground"];
         const idx = parseInt(e.key, 10) - 1;
         if (tabs[idx]) {
           setActiveTab(tabs[idx]);
@@ -442,6 +449,11 @@ function AppInner() {
           {activeTab === "reports" && (
             <PanelBoundary name="Reports">
               <ReportsPanel />
+            </PanelBoundary>
+          )}
+          {activeTab === "playground" && (
+            <PanelBoundary name="Playground">
+              <Playground />
             </PanelBoundary>
           )}
         </main>

@@ -99,7 +99,10 @@
     "metrics": "指标",
     "guardrails": "内容护栏",
     "notifications": "通知",
-    "registry": "模型注册表"
+    "registry": "模型注册表",
+    "reports": "报表",
+    "tools": "工具",
+    "playground": "API 测试台"
   },
   "login": {
     "brand": "ModelSwitch",
@@ -757,5 +760,29 @@
     "smtpUseTls": "要求 STARTTLS",
     "saved": "通知配置已保存",
     "saveFailed": "保存通知配置失败"
+  },
+  "playground": {
+    "title": "API 测试台",
+    "subtitle": "通过网关发送测试请求",
+    "virtualKey": "虚拟密钥",
+    "virtualKeyHelp": "输入虚拟密钥 (ms-vk-...)，如网关为开放代理模式则留空",
+    "model": "模型",
+    "systemPrompt": "系统提示词",
+    "userMessage": "用户消息",
+    "temperature": "温度",
+    "maxTokens": "最大 Token 数",
+    "stream": "流式",
+    "send": "发送请求",
+    "sending": "发送中...",
+    "response": "响应",
+    "latency": "延迟",
+    "tokens": "Token",
+    "noResponse": "发送请求以查看响应",
+    "fetchingModels": "加载模型中...",
+    "noModels": "无可用模型。请检查虚拟密钥或通道配置。",
+    "error": "请求失败",
+    "promptTokens": "提示 Token",
+    "completionTokens": "完成 Token",
+    "totalTokens": "总计 Token"
   }
 }

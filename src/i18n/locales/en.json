@@ -100,7 +100,9 @@
     "guardrails": "Guardrails",
     "notifications": "Notifications",
     "registry": "Model Registry",
-    "reports": "Reports"
+    "reports": "Reports",
+    "tools": "Tools",
+    "playground": "API Playground"
   },
   "login": {
     "brand": "ModelSwitch",
@@ -831,5 +833,29 @@
     "loadFailed": "Failed to load usage data",
     "refreshError": "Last refresh failed — showing cached data",
     "backToLogin": "Back to login"
+  },
+  "playground": {
+    "title": "API Playground",
+    "subtitle": "Send test requests through the gateway",
+    "virtualKey": "Virtual Key",
+    "virtualKeyHelp": "Enter a virtual key (ms-vk-...) or leave empty if gateway is in open-proxy mode",
+    "model": "Model",
+    "systemPrompt": "System Prompt",
+    "userMessage": "User Message",
+    "temperature": "Temperature",
+    "maxTokens": "Max Tokens",
+    "stream": "Stream",
+    "send": "Send Request",
+    "sending": "Sending...",
+    "response": "Response",
+    "latency": "Latency",
+    "tokens": "Tokens",
+    "noResponse": "Send a request to see the response",
+    "fetchingModels": "Loading models...",
+    "noModels": "No models available. Check your virtual key or channel configuration.",
+    "error": "Request failed",
+    "promptTokens": "Prompt Tokens",
+    "completionTokens": "Completion Tokens",
+    "totalTokens": "Total Tokens"
   }
 }
