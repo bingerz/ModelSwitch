@@ -99,8 +99,17 @@ impl RedisRateLimitBackend {
             .await
             .context("failed to connect to Redis")?;
 
+        // Redact credentials from URL for safe logging
+        let safe_url = url::Url::parse(url)
+            .map(|mut u| {
+                let _ = u.set_username("");
+                let _ = u.set_password(None);
+                u.to_string()
+            })
+            .unwrap_or_else(|_| "[invalid URL]".to_string());
+
         tracing::info!(
-            redis_url = %url,
+            redis_url = %safe_url,
             key_prefix = %prefix,
             "Redis rate limit backend connected"
         );
