@@ -5,7 +5,9 @@ mod services;
 mod tls;
 
 // Re-export public API for backward compatibility.
-pub use tls::{check_cert_freshness, start_tls_reload_watcher, TlsReloadState};
+pub use tls::{
+    check_cert_freshness, start_tls_reload_watcher, HotReloadingCertResolver, TlsReloadState,
+};
 // Re-export so existing callers (and tests in this file) can reach it.
 pub use routes::build_router;
 // Re-export gateway state builder (implemented in `services`).
@@ -15,8 +17,6 @@ use crate::config;
 use crate::proxy::AppState;
 use crate::shutdown::shutdown_signal;
 
-use std::fs::File;
-use std::io::BufReader;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{oneshot, Notify};
@@ -110,7 +110,16 @@ pub async fn start_gateway(
     };
 
     if tls_config.enable {
-        let tls_acceptor = build_tls_acceptor(&tls_config);
+        let (tls_acceptor, cert_resolver) = build_tls_acceptor(&tls_config);
+
+        // Start the TLS hot-reload watcher. It shares a `watch::channel`
+        // with the accept loop so it exits promptly on shutdown.
+        let reload_state = TlsReloadState::new(
+            tls::validate_tls_path(&tls_config.cert, "cert"),
+            tls::validate_tls_path(&tls_config.key, "key"),
+        );
+        let (reload_tx, reload_rx) = tokio::sync::watch::channel(false);
+        start_tls_reload_watcher(reload_state, cert_resolver, reload_rx);
 
         let shutdown_fut: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
             match shutdown_notify {
@@ -179,6 +188,8 @@ pub async fn start_gateway(
                 );
             }
         }
+        // Signal the reload watcher to exit cleanly.
+        let _ = reload_tx.send(true);
         tracing::info!("Gateway TLS server exited");
     } else {
         let shutdown_fut: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
@@ -268,43 +279,33 @@ async fn bind_with_retry(
     None
 }
 
-/// Load TLS cert/key from config and build a TlsAcceptor.
+/// Load TLS cert/key from config and build a `TlsAcceptor` with hot-reload
+/// support. Returns the acceptor and the resolver (for the reload watcher).
 /// Panics on startup-time misconfiguration (missing/unparseable cert or key).
-fn build_tls_acceptor(tls_config: &config::TlsConfig) -> tokio_rustls::TlsAcceptor {
+fn build_tls_acceptor(
+    tls_config: &config::TlsConfig,
+) -> (
+    tokio_rustls::TlsAcceptor,
+    std::sync::Arc<tls::HotReloadingCertResolver>,
+) {
     let cert_path = tls::validate_tls_path(&tls_config.cert, "cert");
     let key_path = tls::validate_tls_path(&tls_config.key, "key");
 
-    let cert_file = File::open(&cert_path).unwrap_or_else(|_| {
-        panic!("TLS cert file cannot be opened");
-    });
-    let mut cert_reader = BufReader::new(cert_file);
-    let certs: Vec<rustls::pki_types::CertificateDer<'static>> =
-        rustls_pemfile::certs(&mut cert_reader)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap_or_else(|e| {
-                tracing::error!("Failed to parse TLS certificate: {}", e);
-                panic!("TLS cert parse error");
-            });
+    let resolver =
+        tls::HotReloadingCertResolver::from_files(&cert_path, &key_path).unwrap_or_else(|e| {
+            tracing::error!("Failed to load TLS cert/key: {}", e);
+            panic!("TLS cert/key load error: {}", e);
+        });
 
-    let key_file = File::open(&key_path).unwrap_or_else(|_| {
-        panic!("TLS key file cannot be opened");
-    });
-    let mut key_reader = BufReader::new(key_file);
-    let key = rustls_pemfile::private_key(&mut key_reader)
-        .unwrap_or_else(|e| {
-            tracing::error!("Failed to parse TLS private key: {}", e);
-            panic!("TLS key parse error");
-        })
-        .expect("No private key found in TLS key file");
+    let resolver_arc = std::sync::Arc::new(resolver);
 
     let tls_server_config = rustls::ServerConfig::builder()
         .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .unwrap_or_else(|e| {
-            tracing::error!("Failed to build TLS config: {}", e);
-            panic!("TLS config error: {}", e);
-        });
-    tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(tls_server_config))
+        .with_cert_resolver(std::sync::Arc::clone(&resolver_arc)
+            as std::sync::Arc<dyn rustls::server::ResolvesServerCert>);
+
+    let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(tls_server_config));
+    (acceptor, resolver_arc)
 }
 
 #[cfg(test)]
