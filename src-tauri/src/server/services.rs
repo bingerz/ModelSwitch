@@ -349,37 +349,37 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
     // Initialize Redis backend for distributed rate limiting if configured.
     // Uses a dedicated thread + runtime so the async init can run safely from
     // sync context (works whether the caller is sync Tauri setup or async CLI).
-    let redis_backend: Option<Arc<RedisRateLimitBackend>> =
-        if let Some(redis_cfg) = &config.gateway.redis {
-            let url = redis_cfg.url.clone();
-            let prefix = redis_cfg.key_prefix.clone();
-            let init = std::thread::spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("Failed to create Redis init runtime");
-                rt.block_on(RedisRateLimitBackend::new(&url, &prefix))
-            });
-            match init.join() {
-                Ok(Ok(backend)) => {
-                    tracing::info!("Distributed rate limiting enabled via Redis");
-                    Some(Arc::new(backend))
-                }
-                Ok(Err(e)) => {
-                    tracing::error!(
-                        error = %e,
-                        "Failed to connect to Redis for rate limiting — falling back to in-memory"
-                    );
-                    None
-                }
-                Err(_) => {
-                    tracing::error!("Redis init thread panicked — falling back to in-memory");
-                    None
-                }
+    let redis_backend: Option<Arc<RedisRateLimitBackend>> = if let Some(redis_cfg) =
+        &config.gateway.redis
+    {
+        let url = redis_cfg.url.clone();
+        let prefix = redis_cfg.key_prefix.clone();
+        let init = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create Redis init runtime");
+            rt.block_on(RedisRateLimitBackend::new(&url, &prefix))
+        });
+        match init.join() {
+            Ok(Ok(backend)) => {
+                tracing::info!("Distributed rate limiting enabled via Redis");
+                Some(Arc::new(backend))
             }
-        } else {
-            None
-        };
+            Ok(Err(_e)) => {
+                tracing::error!(
+                    "Failed to connect to Redis for rate limiting — falling back to in-memory (check [redis] url in config)"
+                );
+                None
+            }
+            Err(_) => {
+                tracing::error!("Redis init thread panicked — falling back to in-memory");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // Construct rate limiters with optional Redis backend.
     let rate_limiter = if let Some(ref backend) = redis_backend {
