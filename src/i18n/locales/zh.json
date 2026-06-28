@@ -804,5 +804,23 @@
     "availableModels": "可用模型 ({{count}})",
     "noModels": "未返回模型列表。API 密钥可能无效或端点不支持模型列表。",
     "testedAt": "测试时间 {{time}}"
+  },
+  "insights": {
+    "title": "智能洞察",
+    "circuitOpen": "通道 '{{name}}' 熔断器已开启",
+    "circuitOpenDesc": "此通道的请求正在失败。请检查 API 密钥或上游可用性。",
+    "highFailureRate": "故障率偏高 ({{pct}}%)",
+    "highFailureRateDesc": "最近 {{total}} 个请求中有 {{failures}} 个失败。",
+    "highLatency": "通道 '{{name}}' 延迟较高 (平均 {{ms}}ms)",
+    "highLatencyDesc": "建议添加更快的备用通道或调整优先级。",
+    "frequentRetries": "检测到频繁重试",
+    "frequentRetriesDesc": "{{count}} 个请求需要多次重试，表明上游不稳定。",
+    "consecutiveFailures": "通道 '{{name}}' 连续失败 {{n}} 次",
+    "consecutiveFailuresDesc": "此通道可能即将触发熔断。",
+    "costSpike": "检测到近期成本激增",
+    "costSpikeDesc": "最近 10 个请求平均 {{recent}} / 次，总体平均 {{overall}} / 次。",
+    "allHealthy": "系统运行正常",
+    "allHealthyDesc": "最近 {{n}} 个请求中未检测到异常。",
+    "insufficientData": "数据不足，无法分析"
   }
 }

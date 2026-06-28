@@ -9,6 +9,7 @@ import { ChannelHealth } from "./ChannelHealth";
 import { LiveBadge } from "./LiveBadge";
 import { PerformanceCard } from "./PerformanceCard";
 import { QuotaSummary } from "./QuotaSummary";
+import { SmartInsights } from "./SmartInsights";
 import { StatCard } from "./StatCard";
 import { TopEntities } from "./TopEntities";
 import { RefreshCw, TriangleAlert, Zap } from "./icons";
@@ -267,6 +268,8 @@ export function StatusDashboard() {
           <ActivityChart logs={logs} />
         </div>
       </div>
+
+      <SmartInsights channels={channels} stats={stats} logs={logs} />
     </section>
   );
 }

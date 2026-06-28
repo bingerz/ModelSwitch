@@ -23,4 +23,7 @@ export {
   RefreshCw,
   Loader,
   Inbox,
+  Brain,
+  RotateCw,
 } from "lucide-react";
+export type { LucideIcon } from "lucide-react";
