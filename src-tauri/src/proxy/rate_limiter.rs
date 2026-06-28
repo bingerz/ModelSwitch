@@ -223,6 +223,9 @@ pub struct RateLimiter {
     /// Global TPM window — independent lock, never blocks per-channel ops.
     global_tpm: Mutex<BucketedWindow>,
     global_tpm_limit: Option<u64>,
+    /// Optional Redis backend for distributed rate limiting.
+    /// When present, check/record operations use Redis for cross-instance enforcement.
+    redis: Option<Arc<crate::proxy::redis_rate_limit::RedisRateLimitBackend>>,
 }
 
 impl RateLimiter {
@@ -231,6 +234,20 @@ impl RateLimiter {
             channels: RwLock::new(HashMap::new()),
             global_tpm: Mutex::new(BucketedWindow::new(WINDOW_MS)),
             global_tpm_limit,
+            redis: None,
+        }
+    }
+
+    /// Construct a `RateLimiter` backed by a Redis backend for distributed
+    /// enforcement. Per-channel limits and `current_tpm()` continue to be
+    /// tracked in-memory so the routing strategy retains low-latency local reads.
+    pub fn with_redis(
+        global_tpm_limit: Option<u64>,
+        redis: Arc<crate::proxy::redis_rate_limit::RedisRateLimitBackend>,
+    ) -> Self {
+        Self {
+            redis: Some(redis),
+            ..Self::new(global_tpm_limit)
         }
     }
 
@@ -271,8 +288,88 @@ impl RateLimiter {
 
     /// Check if a request with the given estimated token count is allowed.
     /// Returns (allowed, reason).
-    pub fn check(&self, channel_id: Uuid, estimated_tokens: u64) -> (bool, &'static str) {
-        // Check global TPM first (independent lock)
+    ///
+    /// When a Redis backend is configured, the Redis checks are authoritative
+    /// for distributed enforcement. If any Redis check returns an error, the
+    /// limiter falls back to the in-memory path rather than failing open —
+    /// in-memory counters may be stale (this instance only) but still provide
+    /// protection against total bypass during Redis outages.
+    pub async fn check(&self, channel_id: Uuid, estimated_tokens: u64) -> (bool, &'static str) {
+        // Redis path — authoritative distributed enforcement.
+        if let Some(redis) = &self.redis {
+            let mut redis_ok = true;
+
+            // Check global TPM.
+            if let Some(global_limit) = self.global_tpm_limit {
+                match redis.check_global_tpm(estimated_tokens, global_limit).await {
+                    Ok(false) => return (false, "global_tpm_exceeded"),
+                    Ok(true) => {}
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Redis global TPM check failed — falling back to in-memory"
+                        );
+                        redis_ok = false;
+                    }
+                }
+            }
+
+            // Read limits from local state (limits are always stored locally).
+            // Extract the values and drop the guard before awaiting —
+            // parking_lot::MutexGuard is !Send and would make the future !Send.
+            let arc = self.get_or_create_channel(channel_id);
+            let (rpm_limit, tpm_limit) = {
+                let state = arc.lock();
+                (state.limits.rpm, state.limits.tpm)
+            };
+
+            if redis_ok {
+                match redis.check_channel_rpm(channel_id, rpm_limit).await {
+                    Ok(false) => return (false, "channel_rpm_exceeded"),
+                    Ok(true) => {}
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Redis channel RPM check failed — falling back to in-memory"
+                        );
+                        redis_ok = false;
+                    }
+                }
+            }
+
+            if redis_ok {
+                if let Some(tpm_limit) = tpm_limit {
+                    match redis
+                        .check_channel_tpm(channel_id, estimated_tokens, Some(tpm_limit))
+                        .await
+                    {
+                        Ok(false) => return (false, "channel_tpm_exceeded"),
+                        Ok(true) => {}
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "Redis channel TPM check failed — falling back to in-memory"
+                            );
+                            redis_ok = false;
+                        }
+                    }
+                }
+            }
+
+            // If Redis succeeded for all checks, return the result.
+            if redis_ok {
+                return (true, "ok");
+            }
+
+            // Redis failed somewhere — fall through to in-memory checks below.
+            tracing::warn!(
+                "Redis rate limit check degraded — using in-memory fallback for channel"
+            );
+        }
+
+        // In-memory path — used when Redis is not configured OR when Redis
+        // checks failed (fallback for safety, since fail-open would bypass
+        // limits entirely during Redis outages).
         if let Some(global_limit) = self.global_tpm_limit {
             let global = self.global_tpm.lock();
             if !global.check_and_add(estimated_tokens, global_limit) {
@@ -280,16 +377,13 @@ impl RateLimiter {
             }
         }
 
-        // Get channel Arc (brief read lock), then lock only this channel
         let arc = self.get_or_create_channel(channel_id);
         let state = arc.lock();
 
-        // Check per-channel RPM
         if state.windows.rpm.current_total() >= state.limits.rpm {
             return (false, "channel_rpm_exceeded");
         }
 
-        // Check per-channel TPM (only if limit is configured)
         if let Some(tpm_limit) = state.limits.tpm {
             if state.windows.tpm.current_total() + estimated_tokens > tpm_limit {
                 return (false, "channel_tpm_exceeded");
@@ -300,19 +394,35 @@ impl RateLimiter {
     }
 
     /// Record that a request was dispatched to a channel.
-    pub fn record(&self, channel_id: Uuid, tokens: u64) {
-        // Per-channel recording (independent lock)
-        let arc = self.get_or_create_channel(channel_id);
+    ///
+    /// Always writes to in-memory counters (so `current_tpm()` stays populated
+    /// for the routing strategy). Additionally writes to Redis when configured
+    /// for distributed enforcement — on Redis error the in-memory write still
+    /// succeeds and a warning is logged.
+    pub async fn record(&self, channel_id: Uuid, tokens: u64) {
+        // In-memory write — always performed so current_tpm() / routing reads work.
         {
+            let arc = self.get_or_create_channel(channel_id);
             let mut state = arc.lock();
             state.windows.tpm.add(tokens);
             state.windows.rpm.add(1);
         }
-
-        // Global TPM recording (independent lock)
-        if self.global_tpm_limit.is_some() {
+        {
             let mut global = self.global_tpm.lock();
             global.add(tokens);
+        }
+
+        // Redis write — authoritative distributed counters.
+        if let Some(redis) = &self.redis {
+            if let Err(e) = redis.record_channel(channel_id, tokens).await {
+                tracing::warn!(
+                    error = %e,
+                    "Redis channel record failed — distributed counters may drift"
+                );
+            }
+            if let Err(e) = redis.record_global_tpm(tokens).await {
+                tracing::warn!(error = %e, "Redis global TPM record failed");
+            }
         }
     }
 
@@ -359,6 +469,8 @@ impl RateLimiter {
 pub struct KeyRateLimiter {
     rpm_windows: RwLock<HashMap<Uuid, Arc<Mutex<BucketedWindow>>>>,
     tpm_windows: RwLock<HashMap<Uuid, Arc<Mutex<BucketedWindow>>>>,
+    /// Optional Redis backend for distributed per-key rate limiting.
+    redis: Option<Arc<crate::proxy::redis_rate_limit::RedisRateLimitBackend>>,
 }
 
 impl KeyRateLimiter {
@@ -366,6 +478,16 @@ impl KeyRateLimiter {
         Self {
             rpm_windows: RwLock::new(HashMap::new()),
             tpm_windows: RwLock::new(HashMap::new()),
+            redis: None,
+        }
+    }
+
+    /// Construct a `KeyRateLimiter` backed by a Redis backend for distributed
+    /// enforcement across gateway instances.
+    pub fn with_redis(redis: Arc<crate::proxy::redis_rate_limit::RedisRateLimitBackend>) -> Self {
+        Self {
+            redis: Some(redis),
+            ..Self::new()
         }
     }
 
@@ -389,17 +511,43 @@ impl KeyRateLimiter {
     /// Check if a request is allowed under the RPM limit.
     /// Does NOT increment the counter — call `record` after the request succeeds.
     /// Returns `true` if allowed, `false` if RPM limit exceeded.
-    pub fn check(&self, key_id: Uuid, rpm_limit: u32) -> bool {
+    ///
+    /// When Redis is configured, the check delegates to the distributed
+    /// backend. On Redis error the check falls back to the in-memory window
+    /// (which may be stale for this instance only) rather than failing open,
+    /// so a Redis outage cannot bypass per-key limits entirely.
+    pub async fn check(&self, key_id: Uuid, rpm_limit: u32) -> bool {
+        if let Some(redis) = &self.redis {
+            match redis.check_key_rpm(key_id, rpm_limit).await {
+                Ok(allowed) => return allowed,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Redis key RPM check failed — falling back to in-memory"
+                    );
+                    // Fall through to in-memory check below.
+                }
+            }
+        }
         let arc = self.get_or_create(key_id, &self.rpm_windows);
         let window = arc.lock();
         window.current_total() < rpm_limit as u64
     }
 
     /// Record a request for a key (increment RPM counter).
-    pub fn record(&self, key_id: Uuid) {
-        let arc = self.get_or_create(key_id, &self.rpm_windows);
-        let mut window = arc.lock();
-        window.add(1);
+    ///
+    /// Dual-writes to in-memory and Redis when configured.
+    pub async fn record(&self, key_id: Uuid) {
+        {
+            let arc = self.get_or_create(key_id, &self.rpm_windows);
+            let mut window = arc.lock();
+            window.add(1);
+        }
+        if let Some(redis) = &self.redis {
+            if let Err(e) = redis.record_key_rpm(key_id).await {
+                tracing::warn!(error = %e, "Redis key RPM record failed");
+            }
+        }
     }
 
     /// Check if a request is allowed under the TPM limit.
@@ -412,7 +560,24 @@ impl KeyRateLimiter {
     ///
     /// Returns `true` when the request may proceed, `false` when the key
     /// is already at or above its per-minute token cap.
-    pub fn check_tpm(&self, key_id: Uuid, tpm_limit: u32) -> bool {
+    ///
+    /// When Redis is configured, the check delegates to the distributed
+    /// backend. On Redis error the check falls back to the in-memory window
+    /// (which may be stale for this instance only) rather than failing open,
+    /// so a Redis outage cannot bypass per-key limits entirely.
+    pub async fn check_tpm(&self, key_id: Uuid, tpm_limit: u32) -> bool {
+        if let Some(redis) = &self.redis {
+            match redis.check_key_tpm(key_id, tpm_limit).await {
+                Ok(allowed) => return allowed,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Redis key TPM check failed — falling back to in-memory"
+                    );
+                    // Fall through to in-memory check below.
+                }
+            }
+        }
         let arc = self.get_or_create(key_id, &self.tpm_windows);
         let window = arc.lock();
         window.current_total() < tpm_limit as u64
@@ -423,13 +588,22 @@ impl KeyRateLimiter {
     /// `tokens` should be the sum of input and output tokens (use 0 for
     /// any unknown component). Safe to call with `0` — it simply records
     /// nothing meaningful for the window.
-    pub fn record_tokens(&self, key_id: Uuid, tokens: u64) {
+    ///
+    /// Dual-writes to in-memory and Redis when configured.
+    pub async fn record_tokens(&self, key_id: Uuid, tokens: u64) {
         if tokens == 0 {
             return;
         }
-        let arc = self.get_or_create(key_id, &self.tpm_windows);
-        let mut window = arc.lock();
-        window.add(tokens);
+        {
+            let arc = self.get_or_create(key_id, &self.tpm_windows);
+            let mut window = arc.lock();
+            window.add(tokens);
+        }
+        if let Some(redis) = &self.redis {
+            if let Err(e) = redis.record_key_tokens(key_id, tokens).await {
+                tracing::warn!(error = %e, "Redis key TPM record failed");
+            }
+        }
     }
 }
 
@@ -443,55 +617,55 @@ impl Default for KeyRateLimiter {
 mod tests {
     use super::*;
 
-    #[test]
-    fn check_allows_first_request() {
+    #[tokio::test]
+    async fn check_allows_first_request() {
         let limiter = RateLimiter::new(None);
         let ch_id = Uuid::new_v4();
-        let (allowed, _) = limiter.check(ch_id, 1000);
+        let (allowed, _) = limiter.check(ch_id, 1000).await;
         assert!(allowed);
     }
 
-    #[test]
-    fn record_tracks_requests() {
+    #[tokio::test]
+    async fn record_tracks_requests() {
         let limiter = RateLimiter::new(None);
         let ch_id = Uuid::new_v4();
         limiter.set_channel_rpm_limit(ch_id, 2);
-        limiter.record(ch_id, 100);
-        assert!(limiter.check(ch_id, 10).0);
-        limiter.record(ch_id, 100);
+        limiter.record(ch_id, 100).await;
+        assert!(limiter.check(ch_id, 10).await.0);
+        limiter.record(ch_id, 100).await;
         // Now at RPM limit (2), next check should fail
-        assert!(!limiter.check(ch_id, 10).0);
+        assert!(!limiter.check(ch_id, 10).await.0);
     }
 
-    #[test]
-    fn global_tpm_rejects_when_exceeded() {
+    #[tokio::test]
+    async fn global_tpm_rejects_when_exceeded() {
         let limiter = RateLimiter::new(Some(100));
         let ch_id = Uuid::new_v4();
-        limiter.record(ch_id, 90);
-        let (allowed, reason) = limiter.check(ch_id, 20);
+        limiter.record(ch_id, 90).await;
+        let (allowed, reason) = limiter.check(ch_id, 20).await;
         assert!(!allowed);
         assert_eq!(reason, "global_tpm_exceeded");
     }
 
-    #[test]
-    fn channel_rpm_uses_configured_limit() {
+    #[tokio::test]
+    async fn channel_rpm_uses_configured_limit() {
         let limiter = RateLimiter::new(None);
         let ch_id = Uuid::new_v4();
         limiter.set_channel_rpm_limit(ch_id, 2);
-        limiter.record(ch_id, 100);
-        limiter.record(ch_id, 100);
-        let (allowed, reason) = limiter.check(ch_id, 10);
+        limiter.record(ch_id, 100).await;
+        limiter.record(ch_id, 100).await;
+        let (allowed, reason) = limiter.check(ch_id, 10).await;
         assert!(!allowed);
         assert_eq!(reason, "channel_rpm_exceeded");
     }
 
-    #[test]
-    fn channel_tpm_enforced_when_configured() {
+    #[tokio::test]
+    async fn channel_tpm_enforced_when_configured() {
         let limiter = RateLimiter::new(None);
         let ch_id = Uuid::new_v4();
         limiter.set_channel_tpm_limit(ch_id, 1000);
-        limiter.record(ch_id, 900);
-        let (allowed, reason) = limiter.check(ch_id, 200);
+        limiter.record(ch_id, 900).await;
+        let (allowed, reason) = limiter.check(ch_id, 200).await;
         assert!(!allowed);
         assert_eq!(reason, "channel_tpm_exceeded");
     }
@@ -505,13 +679,13 @@ mod tests {
         assert_eq!(window.current_total(), 30);
     }
 
-    #[test]
-    fn current_tpm_reflects_recorded_usage() {
+    #[tokio::test]
+    async fn current_tpm_reflects_recorded_usage() {
         let limiter = RateLimiter::new(None);
         let ch_id = Uuid::new_v4();
         assert_eq!(limiter.current_tpm(ch_id), 0);
-        limiter.record(ch_id, 500);
-        limiter.record(ch_id, 300);
+        limiter.record(ch_id, 500).await;
+        limiter.record(ch_id, 300).await;
         assert_eq!(limiter.current_tpm(ch_id), 800);
     }
 
@@ -645,70 +819,70 @@ mod tests {
     // KeyRateLimiter tests (RPM + TPM)
     // -----------------------------------------------------------------------
 
-    #[test]
-    fn key_rate_limiter_rpm_check_and_record() {
+    #[tokio::test]
+    async fn key_rate_limiter_rpm_check_and_record() {
         let limiter = KeyRateLimiter::new();
         let key = Uuid::new_v4();
 
         // Limit of 2 RPM: first two requests are allowed.
-        assert!(limiter.check(key, 2));
-        limiter.record(key);
-        assert!(limiter.check(key, 2));
-        limiter.record(key);
+        assert!(limiter.check(key, 2).await);
+        limiter.record(key).await;
+        assert!(limiter.check(key, 2).await);
+        limiter.record(key).await;
         // Third request within the window should be rejected.
-        assert!(!limiter.check(key, 2));
+        assert!(!limiter.check(key, 2).await);
     }
 
-    #[test]
-    fn key_rate_limiter_tpm_check_allows_below_limit() {
+    #[tokio::test]
+    async fn key_rate_limiter_tpm_check_allows_below_limit() {
         let limiter = KeyRateLimiter::new();
         let key = Uuid::new_v4();
 
         // No tokens recorded yet — should always be allowed.
-        assert!(limiter.check_tpm(key, 1000));
+        assert!(limiter.check_tpm(key, 1000).await);
 
         // Record some tokens and stay under the limit.
-        limiter.record_tokens(key, 500);
-        assert!(limiter.check_tpm(key, 1000));
+        limiter.record_tokens(key, 500).await;
+        assert!(limiter.check_tpm(key, 1000).await);
     }
 
-    #[test]
-    fn key_rate_limiter_tpm_check_blocks_at_or_above_limit() {
+    #[tokio::test]
+    async fn key_rate_limiter_tpm_check_blocks_at_or_above_limit() {
         let limiter = KeyRateLimiter::new();
         let key = Uuid::new_v4();
 
         // Reach the limit exactly — further requests must be blocked.
-        limiter.record_tokens(key, 1000);
-        assert!(!limiter.check_tpm(key, 1000));
-        assert!(!limiter.check_tpm(key, 999));
+        limiter.record_tokens(key, 1000).await;
+        assert!(!limiter.check_tpm(key, 1000).await);
+        assert!(!limiter.check_tpm(key, 999).await);
     }
 
-    #[test]
-    fn key_rate_limiter_tpm_is_independent_of_rpm() {
+    #[tokio::test]
+    async fn key_rate_limiter_tpm_is_independent_of_rpm() {
         let limiter = KeyRateLimiter::new();
         let key = Uuid::new_v4();
 
         // Saturate RPM — TPM check must remain unaffected.
-        limiter.record(key);
-        limiter.record(key);
-        assert!(!limiter.check(key, 2));
+        limiter.record(key).await;
+        limiter.record(key).await;
+        assert!(!limiter.check(key, 2).await);
         // TPM check should still pass since no tokens recorded.
-        assert!(limiter.check_tpm(key, 100));
+        assert!(limiter.check_tpm(key, 100).await);
 
         // Conversely, saturate TPM — RPM check should still pass
         // (fresh window since only one RPM entry recorded above).
-        limiter.record_tokens(key, 200);
-        assert!(!limiter.check_tpm(key, 200));
+        limiter.record_tokens(key, 200).await;
+        assert!(!limiter.check_tpm(key, 200).await);
         // RPM window has two entries; with limit 3 the next request is allowed.
-        assert!(limiter.check(key, 3));
+        assert!(limiter.check(key, 3).await);
     }
 
-    #[test]
-    fn key_rate_limiter_record_tokens_zero_is_noop() {
+    #[tokio::test]
+    async fn key_rate_limiter_record_tokens_zero_is_noop() {
         let limiter = KeyRateLimiter::new();
         let key = Uuid::new_v4();
-        limiter.record_tokens(key, 0);
+        limiter.record_tokens(key, 0).await;
         // Window should still be empty.
-        assert!(limiter.check_tpm(key, 1));
+        assert!(limiter.check_tpm(key, 1).await);
     }
 }

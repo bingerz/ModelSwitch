@@ -414,8 +414,8 @@ mod tests {
         assert!(ch1_count > 20 && ch1_count < 80);
     }
 
-    #[test]
-    fn usage_based_prefers_lower_utilization() {
+    #[tokio::test]
+    async fn usage_based_prefers_lower_utilization() {
         let limiter = Arc::new(RateLimiter::new(None));
         let ch_high = make_channel("high", 1, 100, 0);
         let ch_mid = make_channel("mid", 1, 100, 0);
@@ -427,9 +427,9 @@ mod tests {
         limiter.set_channel_tpm_limit(ch_low.id, 10_000);
 
         // Record usage — high is 80%, mid is 50%, low is 10%
-        limiter.record(ch_high.id, 8_000);
-        limiter.record(ch_mid.id, 5_000);
-        limiter.record(ch_low.id, 1_000);
+        limiter.record(ch_high.id, 8_000).await;
+        limiter.record(ch_mid.id, 5_000).await;
+        limiter.record(ch_low.id, 1_000).await;
 
         let candidates = vec![ch_high.clone(), ch_mid.clone(), ch_low.clone()];
         let strategy = UsageBasedStrategy::new(limiter);
@@ -444,8 +444,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn usage_based_treats_no_limit_as_available() {
+    #[tokio::test]
+    async fn usage_based_treats_no_limit_as_available() {
         let limiter = Arc::new(RateLimiter::new(None));
         let ch_with_limit = make_channel("limited", 1, 100, 0);
         let ch_with_limit_2 = make_channel("limited2", 1, 100, 0);
@@ -453,9 +453,9 @@ mod tests {
 
         // Set limits on two channels
         limiter.set_channel_tpm_limit(ch_with_limit.id, 1_000);
-        limiter.record(ch_with_limit.id, 900); // 90% utilized
+        limiter.record(ch_with_limit.id, 900).await; // 90% utilized
         limiter.set_channel_tpm_limit(ch_with_limit_2.id, 1_000);
-        limiter.record(ch_with_limit_2.id, 800); // 80% utilized
+        limiter.record(ch_with_limit_2.id, 800).await; // 80% utilized
 
         // No limit on ch_no_limit — ratio is 0 (preferred)
         let candidates = vec![

@@ -58,7 +58,7 @@ pub async fn virtual_key_middleware(
 
             // Enforce per-key RPM rate limit.
             if let Some(rpm_limit) = vk.rpm_limit {
-                if !state.billing.key_rate_limiter.check(vk.id, rpm_limit) {
+                if !state.billing.key_rate_limiter.check(vk.id, rpm_limit).await {
                     return Err((
                         StatusCode::TOO_MANY_REQUESTS,
                         "Virtual key RPM limit exceeded",
@@ -70,7 +70,12 @@ pub async fn virtual_key_middleware(
             // usage). Actual token consumption is recorded post-response in the
             // dispatch path once the upstream returns real usage counts.
             if let Some(tpm_limit) = vk.tpm_limit {
-                if !state.billing.key_rate_limiter.check_tpm(vk.id, tpm_limit) {
+                if !state
+                    .billing
+                    .key_rate_limiter
+                    .check_tpm(vk.id, tpm_limit)
+                    .await
+                {
                     return Err((
                         StatusCode::TOO_MANY_REQUESTS,
                         "Virtual key TPM limit exceeded",
@@ -79,7 +84,7 @@ pub async fn virtual_key_middleware(
             }
 
             // Record this request against the key's RPM window.
-            state.billing.key_rate_limiter.record(vk.id);
+            state.billing.key_rate_limiter.record(vk.id).await;
 
             // Inject virtual key ID for downstream spend tracking.
             // Handler extractors only see HeaderMap, not request extensions,
@@ -350,7 +355,11 @@ mod tests {
             .await;
 
         // Record enough token usage to exceed the TPM limit.
-        state.billing.key_rate_limiter.record_tokens(vk.id, 101);
+        state
+            .billing
+            .key_rate_limiter
+            .record_tokens(vk.id, 101)
+            .await;
 
         let app = axum::Router::new()
             .route("/v1/test", axum::routing::any(|| async { "ok" }))

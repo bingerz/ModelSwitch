@@ -939,7 +939,7 @@ async fn record_post_response_telemetry(rec: &TelemetryRecord<'_>) {
         // This is the post-response complement to the pre-request `check_tpm`
         // gate in the virtual-key middleware.
         let total_tokens = rec.input_tokens.unwrap_or(0) + rec.output_tokens.unwrap_or(0);
-        rec.key_rate_limiter.record_tokens(vk, total_tokens);
+        rec.key_rate_limiter.record_tokens(vk, total_tokens).await;
     }
 
     // 3. Accumulate spend into per-provider budget tracker.

@@ -16,6 +16,7 @@ use crate::provider_budget::ProviderBudgetStore;
 use crate::proxy::cache::{CacheMode, InFlightRequests, RequestCache};
 use crate::proxy::payload_rules::{ChannelPayloadRules, PayloadRules};
 use crate::proxy::rate_limiter::{KeyRateLimiter, RateLimiter};
+use crate::proxy::redis_rate_limit::RedisRateLimitBackend;
 use crate::proxy::{
     AppState, BillingState, CacheState, LimitsState, McpState, ProxyParams, RouterState,
     SecurityState,
@@ -344,7 +345,54 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         cache_mode,
     ));
     let payload_rules = Arc::new(ChannelPayloadRules::new());
-    let rate_limiter = Arc::new(RateLimiter::new(None));
+
+    // Initialize Redis backend for distributed rate limiting if configured.
+    // Uses a dedicated thread + runtime so the async init can run safely from
+    // sync context (works whether the caller is sync Tauri setup or async CLI).
+    let redis_backend: Option<Arc<RedisRateLimitBackend>> =
+        if let Some(redis_cfg) = &config.gateway.redis {
+            let url = redis_cfg.url.clone();
+            let prefix = redis_cfg.key_prefix.clone();
+            let init = std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("Failed to create Redis init runtime");
+                rt.block_on(RedisRateLimitBackend::new(&url, &prefix))
+            });
+            match init.join() {
+                Ok(Ok(backend)) => {
+                    tracing::info!("Distributed rate limiting enabled via Redis");
+                    Some(Arc::new(backend))
+                }
+                Ok(Err(e)) => {
+                    tracing::error!(
+                        error = %e,
+                        "Failed to connect to Redis for rate limiting — falling back to in-memory"
+                    );
+                    None
+                }
+                Err(_) => {
+                    tracing::error!("Redis init thread panicked — falling back to in-memory");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+    // Construct rate limiters with optional Redis backend.
+    let rate_limiter = if let Some(ref backend) = redis_backend {
+        Arc::new(RateLimiter::with_redis(None, Arc::clone(backend)))
+    } else {
+        Arc::new(RateLimiter::new(None))
+    };
+    let key_rate_limiter = if let Some(ref backend) = redis_backend {
+        Arc::new(KeyRateLimiter::with_redis(Arc::clone(backend)))
+    } else {
+        Arc::new(KeyRateLimiter::new())
+    };
+
     let quota_store = Arc::new(QuotaStore::new());
     let virtual_key_store = Arc::new(VirtualKeyStore::new());
     let provider_budget_store = Arc::new(ProviderBudgetStore::new());
@@ -487,7 +535,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
             quota_store: Arc::clone(&quota_store),
             virtual_key_store: Arc::clone(&virtual_key_store),
             provider_budgets: Arc::clone(&provider_budget_store),
-            key_rate_limiter: Arc::new(KeyRateLimiter::new()),
+            key_rate_limiter,
         },
         mcp: McpState {
             mcp_manager: Arc::clone(&mcp_manager),

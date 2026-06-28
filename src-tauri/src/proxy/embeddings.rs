@@ -141,7 +141,8 @@ async fn check_embedding_pre_dispatch(
     let (allowed, rate_reason) = state
         .limits
         .rate_limiter
-        .check(channel_id, estimated_tokens);
+        .check(channel_id, estimated_tokens)
+        .await;
     if !allowed {
         tracing::warn!(
             channel = %channel.name,
@@ -187,7 +188,8 @@ async fn build_embedding_request(
             state
                 .limits
                 .rate_limiter
-                .record(channel.id, estimated_tokens);
+                .record(channel.id, estimated_tokens)
+                .await;
             state.channel_mgr.mark_circuit_open(channel.id).await;
             return Err(json_response(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -266,7 +268,8 @@ async fn handle_embedding_response(
     state
         .limits
         .rate_limiter
-        .record(channel.id, estimated_tokens);
+        .record(channel.id, estimated_tokens)
+        .await;
 
     // ── Record metrics ──
     let status_label = if status.is_success() {
@@ -398,7 +401,8 @@ pub async fn handle_embeddings(
             state
                 .limits
                 .rate_limiter
-                .record(channel_id, EMBEDDINGS_ESTIMATED_TOKENS);
+                .record(channel_id, EMBEDDINGS_ESTIMATED_TOKENS)
+                .await;
             state.channel_mgr.mark_circuit_open(channel_id).await;
 
             crate::metrics::requests_total()

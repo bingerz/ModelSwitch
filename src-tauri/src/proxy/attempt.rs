@@ -254,7 +254,8 @@ async fn send_with_timeout(
                         state
                             .limits
                             .rate_limiter
-                            .record(ctx.channel.id, estimated_tokens);
+                            .record(ctx.channel.id, estimated_tokens)
+                            .await;
                         return Err(fail_and_retry(
                             state,
                             ctx.channel,
@@ -279,7 +280,8 @@ async fn send_with_timeout(
     state
         .limits
         .rate_limiter
-        .record(ctx.channel.id, estimated_tokens);
+        .record(ctx.channel.id, estimated_tokens)
+        .await;
 
     match resp_result {
         Ok(r) => Ok((r, active_guard)),
@@ -570,7 +572,8 @@ async fn bootstrap_sse_stream(
             state
                 .limits
                 .rate_limiter
-                .record(ctx.channel.id, estimated_tokens);
+                .record(ctx.channel.id, estimated_tokens)
+                .await;
             state.channel_mgr.mark_circuit_open(ctx.channel.id).await;
             state
                 .router
@@ -755,7 +758,8 @@ pub(super) async fn try_channel_attempt(
     let (allowed, rate_reason) = state
         .limits
         .rate_limiter
-        .check(ctx.channel.id, estimated_tokens);
+        .check(ctx.channel.id, estimated_tokens)
+        .await;
     if !allowed {
         tracing::warn!(
             channel = %ctx.channel.name,
