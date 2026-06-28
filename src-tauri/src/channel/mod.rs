@@ -540,6 +540,7 @@ impl manager::ChannelManager {
 
         let client = match reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(8))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
         {
             Ok(c) => c,
