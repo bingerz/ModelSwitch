@@ -544,6 +544,7 @@ impl manager::ChannelManager {
         {
             Ok(c) => c,
             Err(e) => {
+                tracing::warn!(error = %e, "failed to build HTTP client for channel diagnostics");
                 return ChannelDiagnosticsResult {
                     channel_id: id,
                     channel_name: channel.name.clone(),
@@ -551,7 +552,7 @@ impl manager::ChannelManager {
                     available_models: Vec::new(),
                     status_code: None,
                     latency_ms: 0,
-                    error: Some(format!("failed to build HTTP client: {e}")),
+                    error: Some("failed to build HTTP client".to_string()),
                     tested_at: Utc::now(),
                 };
             }
@@ -620,16 +621,19 @@ impl manager::ChannelManager {
                     }
                 }
             }
-            Err(e) => ChannelDiagnosticsResult {
-                channel_id: id,
-                channel_name: channel.name.clone(),
-                auth_status: "error".to_string(),
-                available_models: Vec::new(),
-                status_code: None,
-                latency_ms,
-                error: Some(e.to_string()),
-                tested_at: Utc::now(),
-            },
+            Err(e) => {
+                tracing::warn!(error = %e, "upstream request failed for channel diagnostics");
+                ChannelDiagnosticsResult {
+                    channel_id: id,
+                    channel_name: channel.name.clone(),
+                    auth_status: "error".to_string(),
+                    available_models: Vec::new(),
+                    status_code: None,
+                    latency_ms,
+                    error: Some("upstream request failed".to_string()),
+                    tested_at: Utc::now(),
+                }
+            }
         }
     }
 
