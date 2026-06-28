@@ -837,5 +837,25 @@
     "allHealthy": "系统运行正常",
     "allHealthyDesc": "最近 {{n}} 个请求中未检测到异常。",
     "insufficientData": "数据不足，无法分析"
+  },
+  "backup": {
+    "title": "备份与恢复",
+    "exportTitle": "导出配置",
+    "exportDesc": "将所有通道配置、补全比率和设置下载为 JSON 文件。适用于备份或迁移到其他实例。",
+    "redactSensitive": "导出时隐藏 API 密钥和凭据",
+    "exportButton": "导出配置",
+    "exportSuccess": "成功导出 {{count}} 个通道",
+    "exportFailed": "导出失败",
+    "importTitle": "导入配置",
+    "importDesc": "上传之前导出的配置文件。通道将被创建（跳过已存在的名称）。API 密钥需在导入后手动添加。",
+    "dropzone": "点击选择 JSON 文件",
+    "previewTitle": "配置预览",
+    "channels": "{{count}} 个通道",
+    "ratios": "{{count}} 个补全比率",
+    "containsSensitive": "此文件包含敏感数据（API 密钥/凭据）。",
+    "noCredentialsNote": "此文件不包含 API 密钥。导入后需手动添加凭据。",
+    "applyImport": "应用导入",
+    "importSuccess": "导入了 {{created}} 个通道，跳过了 {{skipped}} 个已存在",
+    "importFailed": "导入失败"
   }
 }

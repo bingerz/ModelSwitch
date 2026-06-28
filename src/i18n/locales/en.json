@@ -908,5 +908,25 @@
     "allHealthy": "All systems healthy",
     "allHealthyDesc": "No anomalies detected in the last {{n}} requests.",
     "insufficientData": "Insufficient data for analysis"
+  },
+  "backup": {
+    "title": "Backup & Restore",
+    "exportTitle": "Export Configuration",
+    "exportDesc": "Download all channel configurations, completion ratios, and settings as a JSON file. Useful for backup or migrating to another instance.",
+    "redactSensitive": "Redact API keys and credentials from export",
+    "exportButton": "Export Config",
+    "exportSuccess": "Exported {{count}} channels successfully",
+    "exportFailed": "Export failed",
+    "importTitle": "Import Configuration",
+    "importDesc": "Upload a previously exported config file. Channels will be created (skipping existing names). API keys must be added manually after import.",
+    "dropzone": "Click to select a JSON file",
+    "previewTitle": "Config Preview",
+    "channels": "{{count}} channels",
+    "ratios": "{{count}} completion ratios",
+    "containsSensitive": "This file contains sensitive data (API keys/credentials).",
+    "noCredentialsNote": "This file does not contain API keys. You'll need to add credentials manually after import.",
+    "applyImport": "Apply Import",
+    "importSuccess": "Imported {{created}} channels, skipped {{skipped}} existing",
+    "importFailed": "Import failed"
   }
 }

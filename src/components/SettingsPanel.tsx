@@ -13,6 +13,7 @@ import { GatewayInfoSection } from "./settings/GatewayInfoSection";
 import { CacheManagementSection } from "./settings/CacheManagementSection";
 import { ProviderBudgetsSection } from "./settings/ProviderBudgetsSection";
 import { CompletionRatiosSection } from "./settings/CompletionRatiosSection";
+import { BackupRestore } from "./settings/BackupRestore";
 
 interface SettingsData {
   cache: CacheStats | null;
@@ -74,6 +75,7 @@ export function SettingsPanel() {
         initialRatios={data?.ratios ?? {}}
         onRefresh={refresh}
       />
+      <BackupRestore />
 
       {/* Quick Links to Feature Panels */}
       <div className="settings-section">
