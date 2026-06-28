@@ -284,24 +284,38 @@ mod tests {
         let tracker = Arc::new(LatencyTracker::new());
         let fast = make_channel("fast", 1, 100, 100);
         let slow = make_channel("slow", 1, 100, 5000);
+        // Third channel with extreme latency — always excluded by top_k=2
+        let worst = make_channel("worst", 1, 100, 999_999);
 
-        // Record latency data in the tracker
         tracker.record(fast.id, 100);
         tracker.record(slow.id, 5000);
+        tracker.record(worst.id, 999_999);
 
-        let candidates = vec![slow.clone(), fast.clone()];
+        let candidates = vec![slow.clone(), fast.clone(), worst.clone()];
 
         let strategy = LatencyBasedStrategy::new(Arc::clone(&tracker));
-        // With only top_k=2, both are candidates. Run many times to check bias.
         let mut fast_count = 0;
+        let mut worst_count = 0;
         for _ in 0..100 {
             let selected = strategy.select(&candidates).unwrap();
             if selected.avg_latency_ms == 100 {
                 fast_count += 1;
             }
+            if selected.id == worst.id {
+                worst_count += 1;
+            }
         }
-        // Should pick fast channel roughly 50%+ of the time (both in top_k)
-        assert!(fast_count > 20);
+
+        // worst (ranked 3rd by raw latency) is always excluded by top_k=2
+        assert_eq!(
+            worst_count, 0,
+            "worst latency channel (999999ms) should never be selected"
+        );
+        // fast is in the top-2 — conservative threshold
+        assert!(
+            fast_count > 20,
+            "fast channel should be in top-2, got {fast_count}/100"
+        );
     }
 
     #[test]
@@ -319,30 +333,43 @@ mod tests {
     #[test]
     fn latency_strategy_prefers_better_throughput() {
         let tracker = Arc::new(LatencyTracker::new());
-        // Channel A: 5000ms for 2000 tokens = 2.5ms/token (fast throughput)
         let fast = make_channel("fast_throughput", 1, 100, 0);
-        // Channel B: 1000ms for 100 tokens = 10ms/token (slow throughput)
         let slow = make_channel("slow_throughput", 1, 100, 0);
+        // Third channel with very poor throughput — should always be excluded by top_k=2
+        let worst = make_channel("worst_throughput", 1, 100, 0);
 
+        // fast:  2.5 ms/token (5000ms / 2000 tokens)
+        // slow: 10  ms/token (1000ms / 100 tokens)
+        // worst: 100 ms/token (10000ms / 100 tokens)
         tracker.record_with_tokens(fast.id, 5000, Some(2000));
         tracker.record_with_tokens(slow.id, 1000, Some(100));
+        tracker.record_with_tokens(worst.id, 10000, Some(100));
 
-        let candidates = vec![slow.clone(), fast.clone()];
+        let candidates = vec![slow.clone(), fast.clone(), worst.clone()];
         let strategy = LatencyBasedStrategy::new(Arc::clone(&tracker));
 
-        // With top_k=2, both are candidates, but fast should be preferred more often
         let mut fast_count = 0;
+        let mut worst_count = 0;
         for _ in 0..100 {
             let selected = strategy.select(&candidates).unwrap();
             if selected.id == fast.id {
                 fast_count += 1;
             }
+            if selected.id == worst.id {
+                worst_count += 1;
+            }
         }
-        // fast (2.5ms/token) is scored lower than slow (10ms/token)
-        // With top_k=2, both are eligible, but fast should be picked more
+
+        // worst (ranked 3rd) is always excluded by top_k=2 — deterministic
+        assert_eq!(
+            worst_count, 0,
+            "worst throughput channel (100ms/token) should never be selected"
+        );
+        // fast is in the top-2 and picked via uniform random — conservative
+        // threshold for Binomial(100, 0.5)
         assert!(
-            fast_count > 40,
-            "fast throughput channel should be preferred, got {fast_count}/100"
+            fast_count > 20,
+            "fast throughput channel should be in top-2, got {fast_count}/100"
         );
     }
 
