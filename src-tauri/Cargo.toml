@@ -98,6 +98,9 @@ base64 = "0.22"
 jsonwebtoken = "9"
 aes-gcm = "0.10"
 
+# Distributed rate limiting (Redis backend)
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+
 [dev-dependencies]
 wiremock = "0.6"
 rsa = "0.9"

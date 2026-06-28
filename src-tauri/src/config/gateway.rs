@@ -235,6 +235,48 @@ pub struct GatewayConfig {
     /// Enterprise authentication (LDAP/AD, OIDC SSO).
     #[serde(default)]
     pub auth: AuthConfig,
+    /// Redis configuration for distributed rate limiting.
+    /// When absent, the gateway uses in-memory rate limiting (single-instance mode).
+    #[serde(default)]
+    pub redis: Option<RedisConfig>,
+}
+
+/// Redis configuration for distributed rate limiting.
+///
+/// When configured, rate limit counters (per-channel RPM/TPM, per-key RPM/TPM,
+/// global TPM) are shared across all gateway instances via Redis, enabling
+/// accurate enforcement in multi-instance deployments behind a load balancer.
+///
+/// When absent (the default), the gateway uses in-memory rate limiting —
+/// suitable for single-instance deployments.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedisConfig {
+    /// Redis connection URL (e.g., `redis://localhost:6379` or `rediss://secure-redis.example.com:6379`).
+    pub url: String,
+    /// Key prefix for all rate limit keys in Redis. Defaults to `"modelswitch"`.
+    #[serde(default = "default_redis_prefix")]
+    pub key_prefix: String,
+    /// Maximum number of connections in the pool. Defaults to 8.
+    #[serde(default = "default_redis_pool_size")]
+    pub pool_size: usize,
+}
+
+fn default_redis_prefix() -> String {
+    "modelswitch".to_string()
+}
+
+fn default_redis_pool_size() -> usize {
+    8
+}
+
+impl Default for RedisConfig {
+    fn default() -> Self {
+        Self {
+            url: "redis://localhost:6379".to_string(),
+            key_prefix: default_redis_prefix(),
+            pool_size: default_redis_pool_size(),
+        }
+    }
 }
 
 // ── Default value functions ───────────────────────────
@@ -402,6 +444,7 @@ impl Default for GatewayConfig {
             notification: crate::notification::NotificationConfig::default(),
             rate_limit_algorithm: crate::proxy::rate_limiter::RateLimitAlgorithm::default(),
             auth: AuthConfig::default(),
+            redis: None,
         }
     }
 }
