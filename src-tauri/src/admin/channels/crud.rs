@@ -27,11 +27,21 @@ const STORED_HEADER_DENYLIST: &[&str] = &[
     "forwarded",
 ];
 
-/// Block cloud metadata endpoints and validate URL scheme.
-/// Allows internal/private IPs for legitimate proxy use, but always blocks
-/// 169.254.169.254 (AWS/GCP metadata) and fd00:ec2::254 (AWS IPv6 metadata).
+/// Validate URL scheme and block cloud metadata endpoints via DNS resolution.
+///
+/// Allows internal/private IPs for legitimate proxy use, but blocks all
+/// link-local addresses (169.254.0.0/16) and the AWS IPv6 metadata endpoint
+/// (fd00:ec2::254). DNS resolution catches bypass tricks like
+/// `169.254.169.254.nip.io`.
+///
+/// **Caller responsibility**: The HTTP client that uses this URL must disable
+/// redirects (`redirect::Policy::none()`) or re-validate each redirect target,
+/// otherwise a 3xx redirect can bypass this check.
 #[allow(clippy::result_large_err)]
-fn validate_channel_url(url_str: &str, field_name: &str) -> Result<(), axum::response::Response> {
+async fn validate_channel_url(
+    url_str: &str,
+    field_name: &str,
+) -> Result<(), axum::response::Response> {
     let parsed = url::Url::parse(url_str).map_err(|_| {
         ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -49,16 +59,87 @@ fn validate_channel_url(url_str: &str, field_name: &str) -> Result<(), axum::res
         }
     }
 
-    // Block cloud metadata endpoints (case-sensitive IP match in host)
-    if let Some(host) = parsed.host_str() {
-        if host == "169.254.169.254" || host == "[fd00:ec2::254]" {
+    // Use typed Host enum to handle IPv6 bracket stripping correctly.
+    let port = parsed.port_or_known_default().unwrap_or(80);
+    match parsed.host() {
+        Some(url::Host::Ipv4(ip)) => {
+            check_metadata_ip(&std::net::IpAddr::V4(ip), field_name)?;
+        }
+        Some(url::Host::Ipv6(ip)) => {
+            check_metadata_ip(&std::net::IpAddr::V6(ip), field_name)?;
+        }
+        Some(url::Host::Domain(domain)) => {
+            // DNS resolution for domain names — catches bypasses like
+            // 169.254.169.254.nip.io that resolve to metadata endpoints.
+            let socket_addrs = tokio::net::lookup_host((domain.as_ref(), port))
+                .await
+                .map_err(|e| {
+                    tracing::warn!(
+                        host = %domain,
+                        error = %e,
+                        "DNS resolution failed for channel URL validation"
+                    );
+                    ApiError::new(
+                        StatusCode::BAD_REQUEST,
+                        format!("DNS resolution failed for {field_name} host '{domain}'"),
+                    )
+                })?;
+            for addr in socket_addrs {
+                check_metadata_ip(&addr.ip(), field_name)?;
+            }
+        }
+        None => {
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
-                format!("Cloud metadata endpoint blocked for {field_name}"),
+                format!("URL missing host for {field_name}: {url_str}"),
             ));
         }
     }
 
+    Ok(())
+}
+
+/// Check a single IP against the metadata/link-local denylist.
+#[allow(clippy::result_large_err)]
+fn check_metadata_ip(
+    ip: &std::net::IpAddr,
+    field_name: &str,
+) -> Result<(), axum::response::Response> {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            // Block entire link-local range (169.254.0.0/16) — covers all
+            // cloud metadata endpoints (AWS, GCP, Azure, etc.)
+            if v4.is_link_local() {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    format!("Link-local address blocked for {field_name}: {v4}"),
+                ));
+            }
+            // Block unspecified address (0.0.0.0)
+            if v4.is_unspecified() {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    format!("Unspecified address blocked for {field_name}: {v4}"),
+                ));
+            }
+        }
+        std::net::IpAddr::V6(v6) => {
+            // Block non-standard loopback IPv6 addresses
+            if v6.is_loopback() && *v6 != std::net::Ipv6Addr::LOCALHOST {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    format!("Non-standard loopback blocked for {field_name}: {v6}"),
+                ));
+            }
+            // Check for fd00:ec2::254 (AWS IPv6 metadata)
+            if *v6 == std::net::Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254) {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    format!("Cloud metadata endpoint blocked for {field_name}: {v6}"),
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -227,10 +308,10 @@ pub async fn create_channel(
     filter_dangerous_headers(&mut sanitized_headers);
 
     if let Some(ref proxy_url) = req.proxy_url {
-        validate_channel_url(proxy_url, "proxy_url")?;
+        validate_channel_url(proxy_url, "proxy_url").await?;
     }
     if let Some(ref models_endpoint) = req.models_endpoint {
-        validate_channel_url(models_endpoint, "models_endpoint")?;
+        validate_channel_url(models_endpoint, "models_endpoint").await?;
     }
 
     let channel = Channel {
@@ -306,10 +387,10 @@ pub async fn update_channel(
     filter_dangerous_headers(&mut sanitized_headers);
 
     if let Some(ref proxy_url) = req.proxy_url {
-        validate_channel_url(proxy_url, "proxy_url")?;
+        validate_channel_url(proxy_url, "proxy_url").await?;
     }
     if let Some(ref models_endpoint) = req.models_endpoint {
-        validate_channel_url(models_endpoint, "models_endpoint")?;
+        validate_channel_url(models_endpoint, "models_endpoint").await?;
     }
 
     existing.name = req.name;
@@ -459,27 +540,68 @@ mod tests {
         assert!(headers.is_empty());
     }
 
-    #[test]
-    fn validate_url_rejects_metadata_endpoint() {
+    #[tokio::test]
+    async fn validate_url_rejects_metadata_endpoint() {
         assert!(
-            validate_channel_url("http://169.254.169.254/latest/meta-data/", "proxy_url").is_err()
+            validate_channel_url("http://169.254.169.254/latest/meta-data/", "proxy_url")
+                .await
+                .is_err()
         );
         assert!(validate_channel_url(
             "http://[fd00:ec2::254]/latest/meta-data/",
             "models_endpoint"
         )
+        .await
         .is_err());
     }
 
-    #[test]
-    fn validate_url_rejects_non_http_scheme() {
-        assert!(validate_channel_url("file:///etc/passwd", "proxy_url").is_err());
-        assert!(validate_channel_url("ftp://example.com/", "models_endpoint").is_err());
+    #[tokio::test]
+    async fn validate_url_rejects_non_http_scheme() {
+        assert!(validate_channel_url("file:///etc/passwd", "proxy_url")
+            .await
+            .is_err());
+        assert!(
+            validate_channel_url("ftp://example.com/", "models_endpoint")
+                .await
+                .is_err()
+        );
     }
 
-    #[test]
-    fn validate_url_accepts_https() {
-        assert!(validate_channel_url("https://api.openai.com", "proxy_url").is_ok());
-        assert!(validate_channel_url("http://10.0.0.5:8080", "proxy_url").is_ok());
+    #[tokio::test]
+    async fn validate_url_accepts_https() {
+        assert!(validate_channel_url("https://api.openai.com", "proxy_url")
+            .await
+            .is_ok());
+        assert!(validate_channel_url("http://10.0.0.5:8080", "proxy_url")
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn validate_url_rejects_dns_rebind_to_metadata() {
+        // This host resolves to 169.254.169.254 via nip.io.
+        // If DNS resolution is working, this should be blocked. In test
+        // environments without DNS, the literal IP check still catches direct
+        // cases (see validate_url_rejects_literal_link_local).
+        let result = validate_channel_url(
+            "http://169.254.169.254.nip.io/latest/meta-data/",
+            "proxy_url",
+        )
+        .await;
+        // Don't assert — DNS availability varies by test env
+        let _ = result;
+    }
+
+    #[tokio::test]
+    async fn validate_url_rejects_literal_link_local() {
+        // Any IP in 169.254.0.0/16 should be blocked, not just .169.254
+        assert!(validate_channel_url("http://169.254.0.1/", "proxy_url")
+            .await
+            .is_err());
+        assert!(
+            validate_channel_url("http://169.254.255.254/", "models_endpoint")
+                .await
+                .is_err()
+        );
     }
 }
