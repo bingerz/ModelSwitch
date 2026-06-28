@@ -71,19 +71,17 @@ async fn validate_channel_url(
         Some(url::Host::Domain(domain)) => {
             // DNS resolution for domain names — catches bypasses like
             // 169.254.169.254.nip.io that resolve to metadata endpoints.
-            let socket_addrs = tokio::net::lookup_host((domain.as_ref(), port))
-                .await
-                .map_err(|e| {
-                    tracing::warn!(
-                        host = %domain,
-                        error = %e,
-                        "DNS resolution failed for channel URL validation"
-                    );
-                    ApiError::new(
-                        StatusCode::BAD_REQUEST,
-                        format!("DNS resolution failed for {field_name} host '{domain}'"),
-                    )
-                })?;
+            let socket_addrs = tokio::net::lookup_host((domain, port)).await.map_err(|e| {
+                tracing::warn!(
+                    host = %domain,
+                    error = %e,
+                    "DNS resolution failed for channel URL validation"
+                );
+                ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    format!("DNS resolution failed for {field_name} host '{domain}'"),
+                )
+            })?;
             for addr in socket_addrs {
                 check_metadata_ip(&addr.ip(), field_name)?;
             }
