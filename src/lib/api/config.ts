@@ -66,4 +66,11 @@ export const configApi = {
   // Model registry inspection
   modelRegistry: () =>
     request<ModelRegistryResponse>("/api/model-registry"),
+
+  // Routing strategy
+  updateRoutingStrategy: (strategy: string) =>
+    request<string>("/api/gateway/routing-strategy", {
+      method: "PUT",
+      body: JSON.stringify({ strategy }),
+    }),
 };

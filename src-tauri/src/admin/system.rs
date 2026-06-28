@@ -231,6 +231,60 @@ fn format_uptime(secs: u64) -> String {
     }
 }
 
+// ─── Routing Strategy ─────────────────────────────────────
+
+#[derive(Debug, serde::Deserialize)]
+pub struct UpdateRoutingStrategyRequest {
+    pub strategy: String,
+}
+
+/// `PUT /api/gateway/routing-strategy` — update routing strategy at runtime.
+///
+/// Accepts one of: `weighted_random`, `latency`, `least_busy`, `usage`,
+/// `lowest_cost`. The new value takes effect immediately for subsequent
+/// dispatch and embedding requests without restarting the gateway.
+#[allow(clippy::result_large_err)]
+pub async fn update_routing_strategy(
+    State(state): State<Arc<crate::proxy::AppState>>,
+    Json(req): Json<UpdateRoutingStrategyRequest>,
+) -> Result<Json<ApiResponse<String>>, axum::response::Response> {
+    let strategy = match req.strategy.as_str() {
+        "weighted_random" => crate::router::RoutingStrategyType::WeightedRandom,
+        "latency" => crate::router::RoutingStrategyType::Latency,
+        "least_busy" => crate::router::RoutingStrategyType::LeastBusy,
+        "usage" => crate::router::RoutingStrategyType::Usage,
+        "lowest_cost" => crate::router::RoutingStrategyType::LowestCost,
+        _ => {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Unknown routing strategy '{}'. Valid options: weighted_random, latency, least_busy, usage, lowest_cost",
+                    req.strategy
+                ),
+            ));
+        }
+    };
+
+    let old = *state.routing_strategy.read();
+    *state.routing_strategy.write() = strategy;
+
+    state
+        .audit_log
+        .record(
+            "routing_strategy.update",
+            "admin-api",
+            "gateway",
+            serde_json::json!({
+                "old": format!("{old}"),
+                "new": format!("{strategy}"),
+            }),
+        )
+        .await;
+
+    tracing::info!(old = %old, new = %strategy, "Routing strategy updated");
+
+    Ok(Json(ApiResponse::ok(format!("{strategy}"))))
+}
 /// Reload configuration from disk and update channels.
 pub async fn reload_config(
     State(state): State<Arc<AppState>>,
@@ -400,5 +454,42 @@ mod tests {
         let result = cache_stats(State(state)).await;
         assert!(result.ok);
         assert!(result.data.get("entries").is_some());
+    }
+
+    #[tokio::test]
+    async fn update_routing_strategy_changes_value() {
+        let state = build_test_state(vec![]);
+
+        assert_eq!(
+            *state.routing_strategy.read(),
+            crate::router::RoutingStrategyType::WeightedRandom
+        );
+
+        let result = update_routing_strategy(
+            State(Arc::clone(&state)),
+            Json(UpdateRoutingStrategyRequest {
+                strategy: "latency".to_string(),
+            }),
+        )
+        .await
+        .expect("valid strategy should succeed");
+        assert_eq!(result.data, "latency");
+        assert_eq!(
+            *state.routing_strategy.read(),
+            crate::router::RoutingStrategyType::Latency
+        );
+    }
+
+    #[tokio::test]
+    async fn update_routing_strategy_rejects_unknown_value() {
+        let state = build_test_state(vec![]);
+        let response = update_routing_strategy(
+            State(state),
+            Json(UpdateRoutingStrategyRequest {
+                strategy: "unknown_strategy".to_string(),
+            }),
+        )
+        .await;
+        assert!(response.is_err(), "unknown strategy should be rejected");
     }
 }

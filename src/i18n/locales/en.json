@@ -670,7 +670,14 @@
     "budgetDeleteFailed": "Failed to delete budget",
     "deleteBudget": "Delete",
     "advancedFeatures": "Advanced Features",
-    "advancedFeaturesHint": "Additional features are available in the sidebar: Guardrails, Notifications, Redemption Codes, and Metrics."
+    "advancedFeaturesHint": "Additional features are available in the sidebar: Guardrails, Notifications, Redemption Codes, and Metrics.",
+    "strategyWeightedRandom": "Weighted Random",
+    "strategyLatency": "Latency-based",
+    "strategyLeastBusy": "Least Busy",
+    "strategyUsage": "Usage-based",
+    "strategyLowestCost": "Lowest Cost",
+    "routingStrategyUpdated": "Routing strategy updated",
+    "routingStrategyUpdateFailed": "Failed to update routing strategy"
   },
   "toast": {
     "gatewayStarted": "Gateway started",

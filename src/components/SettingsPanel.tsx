@@ -62,7 +62,7 @@ export function SettingsPanel() {
       />
 
       <GeneralSettings onRefresh={refresh} />
-      <GatewayInfoSection gatewayInfo={data?.info ?? null} />
+      <GatewayInfoSection gatewayInfo={data?.info ?? null} onRefresh={refresh} />
       <CacheManagementSection
         cacheStats={data?.cache ?? null}
         onRefresh={refresh}

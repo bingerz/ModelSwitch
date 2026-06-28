@@ -1,14 +1,47 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Server } from "lucide-react";
-import type { GatewayInfo } from "../../lib/api";
+import { api, type GatewayInfo } from "../../lib/api";
+import { useToast } from "../Toast";
 
 interface GatewayInfoSectionProps {
   gatewayInfo: GatewayInfo | null;
+  onRefresh?: () => Promise<void>;
 }
 
+const STRATEGY_OPTIONS = [
+  { value: "weighted_random", labelKey: "settings.strategyWeightedRandom" },
+  { value: "latency", labelKey: "settings.strategyLatency" },
+  { value: "least_busy", labelKey: "settings.strategyLeastBusy" },
+  { value: "usage", labelKey: "settings.strategyUsage" },
+  { value: "lowest_cost", labelKey: "settings.strategyLowestCost" },
+] as const;
+
 /** Live gateway snapshot — version, uptime, channel health, routing. */
-export function GatewayInfoSection({ gatewayInfo }: GatewayInfoSectionProps) {
+export function GatewayInfoSection({
+  gatewayInfo,
+  onRefresh,
+}: GatewayInfoSectionProps) {
   const { t } = useTranslation();
+  const toast = useToast();
+  const [saving, setSaving] = useState(false);
+
+  const handleStrategyChange = async (
+    e: React.ChangeEvent<HTMLSelectElement>,
+  ) => {
+    const newStrategy = e.target.value;
+    if (newStrategy === gatewayInfo?.routing_strategy) return;
+    setSaving(true);
+    try {
+      await api.updateRoutingStrategy(newStrategy);
+      toast.success(t("settings.routingStrategyUpdated"));
+      await onRefresh?.();
+    } catch {
+      toast.error(t("settings.routingStrategyUpdateFailed"));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   if (!gatewayInfo) return null;
 
@@ -52,8 +85,20 @@ export function GatewayInfoSection({ gatewayInfo }: GatewayInfoSectionProps) {
           <span className="settings-stat-label">
             {t("dashboard.routingStrategy")}
           </span>
-          <span className="settings-stat-value">
-            {gatewayInfo.routing_strategy}
+          <span className="settings-stat-value" style={{ padding: 0 }}>
+            <select
+              className="settings-select"
+              value={gatewayInfo.routing_strategy}
+              onChange={handleStrategyChange}
+              disabled={saving}
+              aria-label={t("dashboard.routingStrategy")}
+            >
+              {STRATEGY_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {t(opt.labelKey)}
+                </option>
+              ))}
+            </select>
           </span>
         </div>
         <div className="settings-stat">

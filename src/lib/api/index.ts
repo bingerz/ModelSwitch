@@ -77,6 +77,7 @@ export interface Api {
   completionRatios: typeof configApi.completionRatios;
   updateCompletionRatios: typeof configApi.updateCompletionRatios;
   modelRegistry: typeof configApi.modelRegistry;
+  updateRoutingStrategy: typeof configApi.updateRoutingStrategy;
 
   // MCP (flat)
   mcpHealth: typeof mcpHealth;

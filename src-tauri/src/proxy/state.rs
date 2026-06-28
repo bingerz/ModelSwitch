@@ -122,6 +122,9 @@ pub struct AppState {
     /// Runtime-updatable completion ratios (mirrors the startup value from
     /// [`ProxyParams::completion_ratios`] but mutable at runtime via admin API).
     pub completion_ratios: Arc<parking_lot::RwLock<HashMap<String, f64>>>,
+    /// Runtime-updatable routing strategy (mirrors the startup value from
+    /// [`ProxyParams::routing_strategy`] but mutable at runtime via admin API).
+    pub routing_strategy: Arc<parking_lot::RwLock<crate::router::RoutingStrategyType>>,
     /// LDAP/AD authentication configuration. None = LDAP disabled.
     pub ldap_config: Option<crate::config::LdapConfig>,
     /// OIDC SSO configuration. None = OIDC disabled.

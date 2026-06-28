@@ -211,6 +211,9 @@ fn build_state(
             crate::notification::NotificationConfig::default(),
         )),
         completion_ratios: Arc::new(parking_lot::RwLock::new(HashMap::new())),
+        routing_strategy: Arc::new(parking_lot::RwLock::new(
+            crate::router::RoutingStrategyType::WeightedRandom,
+        )),
         ldap_config: None,
         oidc_config: None,
         oidc_state_secret: "test-state-secret".to_string(),

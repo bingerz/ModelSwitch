@@ -151,6 +151,10 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
             delete(admin::delete_provider_budget),
         )
         .route(&format!("{prefix}/gateway/info"), get(admin::gateway_info))
+        .route(
+            &format!("{prefix}/gateway/routing-strategy"),
+            put(admin::update_routing_strategy),
+        )
         .route(&format!("{prefix}/audit-log"), get(admin::get_audit_log))
         // ── Feature module routes ────────────────────────────
         // Guardrails config

@@ -373,6 +373,11 @@ export const mockApi: typeof api = {
     return mockData.buildGatewayInfo();
   },
 
+  updateRoutingStrategy: async (strategy: string) => {
+    await simDelay();
+    return strategy;
+  },
+
   providerBudgets: async () => {
     await simDelay();
     return mockData.buildProviderBudgets(new Date());

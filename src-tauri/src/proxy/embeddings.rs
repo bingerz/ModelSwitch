@@ -79,7 +79,10 @@ async fn select_embedding_channel(
     match router::select_channel(
         channels,
         model,
-        state.gateway.routing_strategy,
+        {
+            let strategy = *state.routing_strategy.read();
+            strategy
+        },
         &ctx,
         account_group,
     )

@@ -559,6 +559,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         completion_ratios: Arc::new(parking_lot::RwLock::new(
             config.gateway.completion_ratios.clone(),
         )),
+        routing_strategy: Arc::new(parking_lot::RwLock::new(routing_strategy)),
         ldap_config: config.gateway.auth.ldap.clone(),
         oidc_config: config.gateway.auth.oidc.clone(),
         oidc_state_secret,

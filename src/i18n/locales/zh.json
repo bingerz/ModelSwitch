@@ -670,7 +670,14 @@
     "budgetDeleteFailed": "删除预算失败",
     "deleteBudget": "删除",
     "advancedFeatures": "高级功能",
-    "advancedFeaturesHint": "侧边栏提供更多功能：内容护栏、通知、兑换码和指标。"
+    "advancedFeaturesHint": "侧边栏提供更多功能：内容护栏、通知、兑换码和指标。",
+    "strategyWeightedRandom": "加权随机",
+    "strategyLatency": "最低延迟",
+    "strategyLeastBusy": "最少请求",
+    "strategyUsage": "基于用量",
+    "strategyLowestCost": "最低成本",
+    "routingStrategyUpdated": "路由策略已更新",
+    "routingStrategyUpdateFailed": "更新路由策略失败"
   },
   "toast": {
     "gatewayStarted": "网关已启动",

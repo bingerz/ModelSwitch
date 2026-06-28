@@ -255,6 +255,9 @@ fn build_test_state_with_opts(
             crate::notification::NotificationConfig::default(),
         )),
         completion_ratios: Arc::new(parking_lot::RwLock::new(HashMap::new())),
+        routing_strategy: Arc::new(parking_lot::RwLock::new(
+            crate::router::RoutingStrategyType::WeightedRandom,
+        )),
         model_registry,
         ldap_config: None,
         oidc_config: None,
