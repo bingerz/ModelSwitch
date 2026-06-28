@@ -560,11 +560,7 @@ impl manager::ChannelManager {
         };
 
         let start = std::time::Instant::now();
-        let response_result = client
-            .get(&models_url)
-            .bearer_auth(&api_key)
-            .send()
-            .await;
+        let response_result = client.get(&models_url).bearer_auth(&api_key).send().await;
         let latency_ms = start.elapsed().as_millis() as u64;
 
         match response_result {
@@ -874,11 +870,7 @@ mod tests {
         let result = manager.run_channel_diagnostics(unknown_id).await;
         assert_eq!(result.auth_status, "error");
         assert!(
-            result
-                .error
-                .as_deref()
-                .unwrap_or("")
-                .contains("not found"),
+            result.error.as_deref().unwrap_or("").contains("not found"),
             "error should mention 'not found': {:?}",
             result.error
         );
