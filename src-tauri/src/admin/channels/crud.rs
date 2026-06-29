@@ -173,6 +173,27 @@ fn filter_dangerous_headers(headers: &mut HashMap<String, String>) {
     });
 }
 
+/// Validate quota polling config for SSRF and header injection risks.
+#[allow(clippy::result_large_err)]
+async fn validate_quota_config(
+    quota: &crate::config::QuotaConfig,
+) -> Result<(), axum::response::Response> {
+    if let Some(ref url) = quota.balance_url {
+        if !url.is_empty() {
+            validate_channel_url(url, "quota.balance_url").await?;
+        }
+    }
+    if let Some(ref prefix) = quota.auth_prefix {
+        if prefix.contains('\n') || prefix.contains('\r') {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "CRLF characters not allowed in quota.auth_prefix",
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub async fn list_channels(State(state): State<Arc<AppState>>) -> Json<ApiResponse<Vec<Channel>>> {
     let channels = state.channel_mgr.list().await;
     Json(ApiResponse::ok(channels))
@@ -315,6 +336,9 @@ pub async fn create_channel(
     if let Some(ref models_endpoint) = req.models_endpoint {
         validate_channel_url(models_endpoint, "models_endpoint").await?;
     }
+    if let Some(ref quota) = req.quota {
+        validate_quota_config(quota).await?;
+    }
 
     let channel = Channel {
         id,
@@ -394,6 +418,9 @@ pub async fn update_channel(
     }
     if let Some(ref models_endpoint) = req.models_endpoint {
         validate_channel_url(models_endpoint, "models_endpoint").await?;
+    }
+    if let Some(ref quota) = req.quota {
+        validate_quota_config(quota).await?;
     }
 
     existing.name = req.name;
@@ -607,5 +634,47 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn validate_quota_rejects_metadata_balance_url() {
+        let quota = crate::config::QuotaConfig {
+            strategy: Some("http_api".to_string()),
+            balance_url: Some("http://169.254.169.254/balance".to_string()),
+            balance_path: None,
+            limit_path: None,
+            usage_path: None,
+            auth_prefix: None,
+            refresh_secs: None,
+        };
+        assert!(validate_quota_config(&quota).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn validate_quota_rejects_crlf_in_auth_prefix() {
+        let quota = crate::config::QuotaConfig {
+            strategy: Some("http_api".to_string()),
+            balance_url: Some("https://api.example.com/balance".to_string()),
+            balance_path: None,
+            limit_path: None,
+            usage_path: None,
+            auth_prefix: Some("Bearer x\r\nHost: evil.com".to_string()),
+            refresh_secs: None,
+        };
+        assert!(validate_quota_config(&quota).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn validate_quota_accepts_valid_config() {
+        let quota = crate::config::QuotaConfig {
+            strategy: Some("http_api".to_string()),
+            balance_url: Some("https://api.openai.com/balance".to_string()),
+            balance_path: None,
+            limit_path: None,
+            usage_path: None,
+            auth_prefix: Some("Bearer".to_string()),
+            refresh_secs: Some(300),
+        };
+        assert!(validate_quota_config(&quota).await.is_ok());
     }
 }
