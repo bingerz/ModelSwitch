@@ -363,6 +363,11 @@ export const mockApi: typeof api = {
     return { flushed: true, remaining: 0 };
   },
 
+  updateCacheMode: async (mode: string) => {
+    await simDelay();
+    return { mode: mode.charAt(0).toUpperCase() + mode.slice(1), previous: "On" };
+  },
+
   reloadConfig: async () => {
     await simDelay();
     return { created: 0, updated: 1, removed: 0 };
@@ -674,6 +679,36 @@ export const mockApi: typeof api = {
   updatePayloadRules: async (channelId: string, _rules: unknown) => {
     await simDelay();
     return { channel_id: channelId, updated: true };
+  },
+
+  // Model routing configuration (read-only)
+  modelRouting: async () => {
+    await simDelay();
+    return {
+      model_aliases: {
+        "gpt-4": "gpt-4-turbo-preview",
+        "claude-3": "claude-3-opus-20240229",
+      },
+      model_groups: {
+        "premium": ["gpt-4-turbo-preview", "claude-3-opus-20240229"],
+        "economy": ["gpt-3.5-turbo", "claude-3-haiku-20240307"],
+      },
+      model_fallbacks: {
+        "gpt-4-turbo-preview": ["gpt-4", "gpt-3.5-turbo"],
+        "claude-3-opus-20240229": ["claude-3-sonnet-20240229"],
+      },
+      context_window_fallbacks: {
+        "gpt-4-turbo-preview": ["gpt-4-32k"],
+      },
+      model_pricing: {
+        "gpt-4-turbo-preview": { input_per_mtok: 10.0, output_per_mtok: 30.0 },
+        "claude-3-opus-20240229": { input_per_mtok: 15.0, output_per_mtok: 75.0 },
+      },
+      group_ratios: {
+        "premium": 1.0,
+        "economy": 0.5,
+      },
+    };
   },
 
   // Reports

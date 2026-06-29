@@ -556,3 +556,19 @@ export interface ReloadConfigResult {
   updated: number;
   removed: number;
 }
+
+// ─── Model Routing Types ────────────────────────────────
+
+export interface ModelPricing {
+  input_per_mtok: number;
+  output_per_mtok: number;
+}
+
+export interface ModelRoutingInfo {
+  model_aliases: Record<string, string>;
+  model_groups: Record<string, string[]>;
+  model_fallbacks: Record<string, string[]>;
+  context_window_fallbacks: Record<string, string[]>;
+  model_pricing: Record<string, ModelPricing>;
+  group_ratios: Record<string, number>;
+}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { RotateCcw } from "lucide-react";
 import { api, type Channel } from "../../lib/api";
 import type { QuotaInfo } from "../../lib/api";
 import { STATUS_DOT, type ChannelStatus } from "./types";
@@ -30,6 +31,7 @@ export interface ChannelCardProps {
   onToggleSelect?: () => void;
   onTest?: () => void;
   onDiagnostics?: () => void;
+  onResetCircuit?: () => void | Promise<void>;
 }
 
 export function ChannelCard({
@@ -50,6 +52,7 @@ export function ChannelCard({
   onToggleSelect,
   onTest,
   onDiagnostics,
+  onResetCircuit,
 }: ChannelCardProps) {
   const { t } = useTranslation();
   const statusKey = (ch.status as ChannelStatus) ?? "disabled";
@@ -61,9 +64,21 @@ export function ChannelCard({
     circuit_open_until: string | null;
   } | null>(null);
 
+  const [resetting, setResetting] = useState(false);
+
   useEffect(() => {
     api.channelCooldown(ch.id).then(setCooldown).catch(() => {});
   }, [ch.id]);
+
+  const handleResetCircuit = async () => {
+    if (!onResetCircuit || resetting) return;
+    setResetting(true);
+    try {
+      await onResetCircuit();
+    } finally {
+      setResetting(false);
+    }
+  };
 
   return (
     <div
@@ -164,6 +179,26 @@ export function ChannelCard({
         <button className="btn btn-sm" onClick={onToggle}>
           {ch.enabled ? t("common.disable") : t("common.enable")}
         </button>
+        {onResetCircuit &&
+          (ch.status === "circuit_open" || ch.status === "half_open") && (
+            <button
+              className="btn btn-sm"
+              onClick={handleResetCircuit}
+              disabled={resetting}
+              title={t("channels.resetCircuit")}
+            >
+              <RotateCcw
+                size={14}
+                style={{
+                  display: "inline",
+                  verticalAlign: "middle",
+                  marginRight: "var(--space-1)",
+                }}
+                className={resetting ? "ui-spin" : ""}
+              />
+              {t("channels.resetCircuit")}
+            </button>
+          )}
         <div className="channel-actions-overflow-wrapper">
           <button
             className="btn btn-sm btn-overflow"
@@ -210,6 +245,18 @@ export function ChannelCard({
                     {t("diagnostics.button")}
                   </button>
                 )}
+                {onResetCircuit &&
+                  (ch.status === "circuit_open" || ch.status === "half_open") && (
+                    <button
+                      className="channel-overflow-item"
+                      onClick={() => {
+                        onCloseOverflow();
+                        onResetCircuit();
+                      }}
+                    >
+                      {t("channels.resetCircuit")}
+                    </button>
+                  )}
                 <button
                   className={`channel-overflow-item ${confirmDelete ? "danger-confirm" : "danger"}`}
                   onClick={onDelete}

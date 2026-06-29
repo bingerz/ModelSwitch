@@ -79,6 +79,10 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
         .route(&format!("{prefix}/cache/flush"), post(admin::flush_cache))
         .route(&format!("{prefix}/cache/stats"), get(admin::cache_stats))
         .route(
+            &format!("{prefix}/cache/mode"),
+            put(admin::update_cache_mode),
+        )
+        .route(
             &format!("{prefix}/config/reload"),
             post(admin::reload_config),
         )
@@ -151,6 +155,10 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
             delete(admin::delete_provider_budget),
         )
         .route(&format!("{prefix}/gateway/info"), get(admin::gateway_info))
+        .route(
+            &format!("{prefix}/gateway/model-routing"),
+            get(admin::model_routing_info),
+        )
         .route(
             &format!("{prefix}/gateway/routing-strategy"),
             put(admin::update_routing_strategy),

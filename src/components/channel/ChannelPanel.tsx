@@ -119,6 +119,16 @@ export function ChannelPanel() {
     setDiagnosticsId(id);
   };
 
+  const handleResetCircuit = async (id: string) => {
+    try {
+      await api.resetCircuit(id);
+      toast.success(t("channels.circuitResetSuccess"));
+      refresh();
+    } catch {
+      toast.error(t("channels.circuitResetFailed"));
+    }
+  };
+
   const handleToggle = async (ch: Channel) => {
     try {
       await api.updateChannel(ch.id, channelToUpdateData(ch, { enabled: !ch.enabled }));
@@ -296,6 +306,7 @@ export function ChannelPanel() {
                         onToggleSelect={() => toggleSelect(ch.id)}
                         onTest={() => handleTest(ch.id)}
                         onDiagnostics={() => handleDiagnostics(ch.id)}
+                        onResetCircuit={() => handleResetCircuit(ch.id)}
                         confirmDelete={confirmDeleteId === ch.id}
                         overflowOpen={overflowOpenId === ch.id}
                         onEdit={() => setEditingId(ch.id)}

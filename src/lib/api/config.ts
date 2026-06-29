@@ -8,6 +8,7 @@ import type {
   FlushCacheResult,
   GatewayInfo,
   ModelRegistryResponse,
+  ModelRoutingInfo,
   NotificationConfig,
   ProviderBudgetEntry,
   ReloadConfigResult,
@@ -18,6 +19,12 @@ export const configApi = {
 
   flushCache: () =>
     request<FlushCacheResult>("/api/cache/flush", { method: "POST" }),
+
+  updateCacheMode: (mode: string) =>
+    request<{ mode: string; previous: string }>("/api/cache/mode", {
+      method: "PUT",
+      body: JSON.stringify({ mode }),
+    }),
 
   reloadConfig: () =>
     request<ReloadConfigResult>("/api/config/reload", { method: "POST" }),
@@ -73,4 +80,8 @@ export const configApi = {
       method: "PUT",
       body: JSON.stringify({ strategy }),
     }),
+
+  // Model routing configuration (read-only)
+  modelRouting: () =>
+    request<ModelRoutingInfo>("/api/gateway/model-routing"),
 };

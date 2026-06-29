@@ -2,6 +2,7 @@ use super::{ApiResponse, PaginationParams};
 use crate::channel::{Channel, Provider};
 use crate::log::DispatchLog;
 use crate::middleware::error::ApiError;
+use crate::proxy::cache::CacheMode;
 use crate::proxy::AppState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -182,6 +183,63 @@ fn parse_counter_value(metrics_text: &str, metric_name: &str) -> u64 {
     0
 }
 
+// ─── Cache Mode ────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateCacheModeRequest {
+    pub mode: String,
+}
+
+/// `PUT /api/cache/mode` — update cache mode at runtime.
+///
+/// Accepts one of: `on`, `off`, `readonly`, `writeonly`.
+/// The new value takes effect immediately for subsequent cache lookups
+/// without restarting the gateway.
+#[allow(clippy::result_large_err)]
+pub async fn update_cache_mode(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<UpdateCacheModeRequest>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, axum::response::Response> {
+    let mode = match req.mode.to_lowercase().as_str() {
+        "on" | "enabled" | "true" => CacheMode::On,
+        "off" | "disabled" | "false" => CacheMode::Off,
+        "readonly" | "read-only" | "ro" => CacheMode::ReadOnly,
+        "writeonly" | "write-only" | "wo" => CacheMode::WriteOnly,
+        _ => {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Unknown cache mode '{}'. Valid options: on, off, readonly, writeonly",
+                    req.mode
+                ),
+            ));
+        }
+    };
+
+    let old = state.cache.request_cache.mode();
+    state.cache.request_cache.set_mode(mode);
+
+    state
+        .audit_log
+        .record(
+            "cache_mode.update",
+            "admin-api",
+            "cache",
+            serde_json::json!({
+                "old": format!("{old:?}"),
+                "new": format!("{mode:?}"),
+            }),
+        )
+        .await;
+
+    tracing::info!(old = ?old, new = ?mode, "Cache mode updated");
+
+    Ok(Json(ApiResponse::ok(serde_json::json!({
+        "mode": format!("{mode:?}"),
+        "previous": format!("{old:?}"),
+    }))))
+}
+
 // ─── Gateway Info ──────────────────────────────────────────
 
 /// Gateway runtime info: version, uptime, configuration summary.
@@ -285,6 +343,28 @@ pub async fn update_routing_strategy(
 
     Ok(Json(ApiResponse::ok(format!("{strategy}"))))
 }
+
+/// `GET /api/gateway/model-routing` — read-only view of model routing
+/// configuration loaded at startup from `config.toml`.
+///
+/// Exposes alias, group, fallback, context-window fallback, pricing, and
+/// group-ratio maps so operators can inspect the effective routing tables
+/// without restarting the gateway or reading TOML directly.
+pub async fn model_routing_info(
+    State(state): State<Arc<AppState>>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    let g = &state.gateway;
+
+    Json(ApiResponse::ok(serde_json::json!({
+        "model_aliases": g.model_aliases,
+        "model_groups": g.model_groups,
+        "model_fallbacks": g.model_fallbacks,
+        "context_window_fallbacks": g.context_window_fallbacks,
+        "model_pricing": g.model_pricing,
+        "group_ratios": g.group_ratios,
+    })))
+}
+
 /// Reload configuration from disk and update channels.
 pub async fn reload_config(
     State(state): State<Arc<AppState>>,
@@ -491,5 +571,70 @@ mod tests {
         )
         .await;
         assert!(response.is_err(), "unknown strategy should be rejected");
+    }
+
+    #[tokio::test]
+    async fn model_routing_info_returns_ok() {
+        let state = build_test_state(vec![]);
+        let result = model_routing_info(State(state)).await;
+        assert!(result.ok);
+        // Every routing section should be present, even when empty.
+        for key in [
+            "model_aliases",
+            "model_groups",
+            "model_fallbacks",
+            "context_window_fallbacks",
+            "model_pricing",
+            "group_ratios",
+        ] {
+            assert!(
+                result.data.get(key).is_some(),
+                "model_routing_info should include {key}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn update_cache_mode_changes_value() {
+        let state = build_test_state(vec![]);
+
+        // Default mode should be On
+        assert_eq!(state.cache.request_cache.mode(), CacheMode::On);
+
+        let result = update_cache_mode(
+            State(Arc::clone(&state)),
+            Json(UpdateCacheModeRequest {
+                mode: "off".to_string(),
+            }),
+        )
+        .await
+        .expect("valid mode should succeed");
+        assert_eq!(result.data["mode"], "Off");
+        assert_eq!(state.cache.request_cache.mode(), CacheMode::Off);
+
+        // Change to ReadOnly
+        let result = update_cache_mode(
+            State(Arc::clone(&state)),
+            Json(UpdateCacheModeRequest {
+                mode: "readonly".to_string(),
+            }),
+        )
+        .await
+        .expect("valid mode should succeed");
+        assert_eq!(result.data["mode"], "ReadOnly");
+        assert_eq!(state.cache.request_cache.mode(), CacheMode::ReadOnly);
+    }
+
+    #[tokio::test]
+    async fn update_cache_mode_rejects_unknown_value() {
+        let state = build_test_state(vec![]);
+        let response = update_cache_mode(
+            State(state),
+            Json(UpdateCacheModeRequest {
+                mode: "bogus".to_string(),
+            }),
+        )
+        .await;
+        assert!(response.is_err(), "unknown cache mode should be rejected");
     }
 }

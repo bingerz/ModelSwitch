@@ -62,8 +62,11 @@ const ReportsPanel = lazy(() =>
 const Playground = lazy(() =>
   import("./components/playground/Playground").then((m) => ({ default: m.Playground }))
 );
+const ModelRoutingPanel = lazy(() =>
+  import("./components/ModelRoutingPanel").then((m) => ({ default: m.ModelRoutingPanel }))
+);
 
-type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "logs" | "cost" | "quota" | "settings" | "audit" | "redemption" | "metrics" | "guardrails" | "notifications" | "registry" | "reports" | "playground";
+type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "modelRouting" | "logs" | "cost" | "quota" | "settings" | "audit" | "redemption" | "metrics" | "guardrails" | "notifications" | "registry" | "reports" | "playground";
 type Theme = "light" | "dark";
 
 // React Query client — sensible defaults for a management console.
@@ -96,6 +99,7 @@ function getTabGroups(t: (key: string) => string): { title: string; tabs: { id: 
         { id: "channels", label: t("nav.channels") },
         { id: "virtualKeys", label: t("nav.virtualKeys") },
         { id: "mcp", label: t("nav.mcp") },
+        { id: "modelRouting", label: t("nav.modelRouting") },
       ],
     },
     {
@@ -219,7 +223,7 @@ function AppInner() {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key >= "1" && e.key <= "9") {
         e.preventDefault();
-        const tabs: TabId[] = ["dashboard", "channels", "virtualKeys", "mcp", "logs", "cost", "quota", "settings", "audit", "redemption", "metrics", "guardrails", "notifications", "registry", "reports", "playground"];
+        const tabs: TabId[] = ["dashboard", "channels", "virtualKeys", "mcp", "modelRouting", "logs", "cost", "quota", "settings", "audit", "redemption", "metrics", "guardrails", "notifications", "registry", "reports", "playground"];
         const idx = parseInt(e.key, 10) - 1;
         if (tabs[idx]) {
           setActiveTab(tabs[idx]);
@@ -394,6 +398,11 @@ function AppInner() {
           {activeTab === "mcp" && (
             <PanelBoundary name="MCP Servers">
               <McpServersPanel />
+            </PanelBoundary>
+          )}
+          {activeTab === "modelRouting" && (
+            <PanelBoundary name="Model Routing">
+              <ModelRoutingPanel />
             </PanelBoundary>
           )}
           {activeTab === "logs" && (

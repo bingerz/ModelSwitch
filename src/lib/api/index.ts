@@ -67,6 +67,7 @@ export interface Api {
   // Config / gateway (flat)
   cacheStats: typeof configApi.cacheStats;
   flushCache: typeof configApi.flushCache;
+  updateCacheMode: typeof configApi.updateCacheMode;
   reloadConfig: typeof configApi.reloadConfig;
   gatewayInfo: typeof configApi.gatewayInfo;
   providerBudgets: typeof configApi.providerBudgets;
@@ -78,6 +79,7 @@ export interface Api {
   updateCompletionRatios: typeof configApi.updateCompletionRatios;
   modelRegistry: typeof configApi.modelRegistry;
   updateRoutingStrategy: typeof configApi.updateRoutingStrategy;
+  modelRouting: typeof configApi.modelRouting;
 
   // MCP (flat)
   mcpHealth: typeof mcpHealth;

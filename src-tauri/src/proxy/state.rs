@@ -46,6 +46,9 @@ pub struct ProxyParams {
     /// Per-model completion ratio multiplier (default 1.0). Adjusts output
     /// token cost relative to input. Example: {"gpt-4": 2.0}.
     pub completion_ratios: HashMap<String, f64>,
+    /// Group ratio multipliers for budgeting. Key = group name, Value = ratio.
+    /// Example: {"premium": 1.5, "economy": 0.5}
+    pub group_ratios: HashMap<String, f64>,
 }
 
 /// Router state (session affinity, active request tracking, latency tracking).

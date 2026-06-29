@@ -212,6 +212,7 @@ fn build_test_state_with_opts(
             model_groups: HashMap::new(),
             model_pricing: HashMap::new(),
             completion_ratios: HashMap::new(),
+            group_ratios: HashMap::new(),
         },
         router: RouterState {
             session_affinity: SessionAffinity::default(),

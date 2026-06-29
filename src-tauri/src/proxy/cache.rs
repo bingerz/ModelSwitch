@@ -44,7 +44,7 @@ pub struct RequestCache {
     state: RwLock<CacheState>,
     ttl: Duration,
     max_entries: usize,
-    mode: CacheMode,
+    mode: RwLock<CacheMode>,
 }
 
 struct CacheState {
@@ -70,7 +70,7 @@ impl RequestCache {
             }),
             ttl,
             max_entries,
-            mode,
+            mode: RwLock::new(mode),
         }
     }
 
@@ -106,7 +106,12 @@ impl RequestCache {
     /// Read-only: expired entries are reported as misses but left in place.
     /// Actual eviction is handled by the periodic `sweep_expired()` task.
     pub fn get(&self, key: u128, key_material: &str) -> Option<String> {
-        if !self.mode.can_read() {
+        if !self
+            .mode
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .can_read()
+        {
             return None;
         }
         let state = self.state.read().unwrap_or_else(|e| e.into_inner());
@@ -154,7 +159,12 @@ impl RequestCache {
 
     /// Insert a response into the cache.
     pub fn insert(&self, key: u128, key_material: String, response_body: String) {
-        if !self.mode.can_write() {
+        if !self
+            .mode
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .can_write()
+        {
             return;
         }
         let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
@@ -204,7 +214,12 @@ impl RequestCache {
 
     /// Returns the current cache mode.
     pub fn mode(&self) -> CacheMode {
-        self.mode
+        *self.mode.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Update the cache mode at runtime.
+    pub fn set_mode(&self, mode: CacheMode) {
+        *self.mode.write().unwrap_or_else(|e| e.into_inner()) = mode;
     }
 }
 

@@ -102,7 +102,8 @@
     "registry": "Model Registry",
     "reports": "Reports",
     "tools": "Tools",
-    "playground": "API Playground"
+    "playground": "API Playground",
+    "modelRouting": "Model Routing"
   },
   "login": {
     "brand": "ModelSwitch",
@@ -280,6 +281,8 @@
     "testError": "Test error",
     "resetCircuit": "Reset Circuit",
     "circuitReset": "Circuit breaker reset",
+    "circuitResetSuccess": "Circuit breaker reset successfully",
+    "circuitResetFailed": "Failed to reset circuit breaker",
     "cooldownActive": "Cooldown",
     "cooldownRemaining": "{{secs}}s remaining"
   },
@@ -641,6 +644,12 @@
     "reloadFailed": "Failed to reload config",
     "cacheFlushed": "Cache flushed",
     "cacheFlushFailed": "Failed to flush cache",
+    "cacheModeOn": "On",
+    "cacheModeOff": "Off",
+    "cacheModeReadOnly": "Read Only",
+    "cacheModeWriteOnly": "Write Only",
+    "cacheModeUpdated": "Cache mode updated",
+    "cacheModeUpdateFailed": "Failed to update cache mode",
     "demoMode": "Demo Mode",
     "demoModeHint": "Uses simulated data for all API calls. Reloads the page when toggled.",
     "enableDemoMode": "Enable Demo Mode",
@@ -955,5 +964,29 @@
     "applyImport": "Apply Import",
     "importSuccess": "Imported {{created}} channels, skipped {{skipped}} existing",
     "importFailed": "Import failed"
+  },
+  "modelRouting": {
+    "title": "Model Routing Configuration",
+    "aliases": "Model Aliases",
+    "groups": "Model Groups",
+    "fallbacks": "Fallback Chains",
+    "contextFallbacks": "Context Window Fallbacks",
+    "pricing": "Model Pricing",
+    "groupRatios": "Group Ratios",
+    "alias": "Alias",
+    "canonical": "Canonical Name",
+    "group": "Group",
+    "models": "Models",
+    "model": "Model",
+    "fallbackList": "Fallbacks",
+    "inputCost": "Input ($/Mtok)",
+    "outputCost": "Output ($/Mtok)",
+    "ratio": "Ratio",
+    "noAliases": "No model aliases configured",
+    "noGroups": "No model groups configured",
+    "noFallbacks": "No fallback chains configured",
+    "noContextFallbacks": "No context window fallbacks configured",
+    "noPricing": "No custom pricing configured",
+    "noRatios": "No group ratios configured"
   }
 }

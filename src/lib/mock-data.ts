@@ -885,7 +885,7 @@ export function buildMcpToolInfos(): McpToolInfo[] {
 export function buildCacheStats(): CacheStats {
   return {
     entries: 342,
-    mode: "lazy",
+    mode: "On",
     hits: 4127,
     misses: 8720,
     evictions: 89,
