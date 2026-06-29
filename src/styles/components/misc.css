@@ -351,16 +351,20 @@
 
 .appearance-row {
   display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
   padding: var(--space-2) 0;
+  width: 100%;
 }
 
 .appearance-row-label {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -368,6 +372,7 @@
   font-size: var(--text-sm);
   font-weight: 600;
   color: var(--color-text);
+  white-space: nowrap;
 }
 
 .appearance-row-hint {
@@ -377,8 +382,8 @@
 }
 
 .appearance-control {
+  flex: 0 0 auto;
   flex-shrink: 0;
-  min-width: 140px;
 }
 
 .appearance-divider {
