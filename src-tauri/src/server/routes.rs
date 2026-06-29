@@ -254,6 +254,7 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
             put(admin::update_sanitizer_config),
         )
         .route(&format!("{prefix}/auth/me"), get(admin::auth::auth_me))
+        .route(&format!("{prefix}/auth/status"), get(admin::auth_status))
 }
 
 /// Portal routes — employee self-service, authenticated by virtual key.

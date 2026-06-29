@@ -948,5 +948,31 @@
     "noContextFallbacks": "未配置上下文窗口回退",
     "noPricing": "未配置自定义定价",
     "noRatios": "未配置组比率"
+  },
+  "security": {
+    "title": "安全与访问控制",
+    "adminToken": "管理员令牌",
+    "adminTokenSet": "已配置旧版管理员令牌",
+    "adminTokenNotSet": "未配置旧版管理员令牌",
+    "rbacRoles": "RBAC 角色",
+    "rbacEnabled": "基于角色的访问控制已启用",
+    "rbacDisabled": "RBAC 未配置（单管理员模式）",
+    "superAdmin": "超级管理员",
+    "keyManager": "密钥管理器",
+    "auditor": "审计员",
+    "ldap": "LDAP / Active Directory",
+    "ldapEnabled": "LDAP 认证已启用",
+    "ldapDisabled": "LDAP 未配置",
+    "oidc": "OIDC 单点登录",
+    "oidcEnabled": "OIDC SSO 已启用",
+    "oidcDisabled": "OIDC SSO 未配置",
+    "starttls": "STARTTLS",
+    "enabled": "已启用",
+    "disabled": "未启用",
+    "defaultGroup": "默认分组",
+    "issuer": "签发者",
+    "clientId": "客户端 ID",
+    "redirectUri": "回调地址",
+    "scopes": "授权范围"
   }
 }

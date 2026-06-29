@@ -1019,5 +1019,31 @@
     "noContextFallbacks": "No context window fallbacks configured",
     "noPricing": "No custom pricing configured",
     "noRatios": "No group ratios configured"
+  },
+  "security": {
+    "title": "Security & Access Control",
+    "adminToken": "Admin Token",
+    "adminTokenSet": "Legacy admin token is configured",
+    "adminTokenNotSet": "No legacy admin token configured",
+    "rbacRoles": "RBAC Roles",
+    "rbacEnabled": "Role-based access control is active",
+    "rbacDisabled": "RBAC not configured (single admin mode)",
+    "superAdmin": "Super Admin",
+    "keyManager": "Key Manager",
+    "auditor": "Auditor",
+    "ldap": "LDAP / Active Directory",
+    "ldapEnabled": "LDAP authentication is enabled",
+    "ldapDisabled": "LDAP not configured",
+    "oidc": "OIDC Single Sign-On",
+    "oidcEnabled": "OIDC SSO is enabled",
+    "oidcDisabled": "OIDC SSO not configured",
+    "starttls": "STARTTLS",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "defaultGroup": "Default Group",
+    "issuer": "Issuer",
+    "clientId": "Client ID",
+    "redirectUri": "Redirect URI",
+    "scopes": "Scopes"
   }
 }

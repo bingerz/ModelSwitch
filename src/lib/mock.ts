@@ -19,6 +19,7 @@ import type {
   BatchCreateVirtualKeyData,
   BatchCreateVirtualKeyItem,
   SanitizerConfig,
+  AuthStatus,
 } from "./api";
 import * as mockData from "./mock-data";
 
@@ -729,6 +730,26 @@ export const mockApi: typeof api = {
       redact_secrets: config.redact_secrets,
       scan_response: config.scan_response,
       custom_patterns: config.custom_patterns,
+    };
+  },
+
+  // Auth / security status (read-only)
+  authStatus: async (): Promise<AuthStatus> => {
+    await simDelay();
+    return {
+      admin_token_set: true,
+      rbac: {
+        enabled: true,
+        super_admin_count: 1,
+        key_manager_count: 2,
+        auditor_count: 1,
+      },
+      ldap: {
+        url: "ldap://corp.example.com",
+        starttls: true,
+        default_group: "staff",
+      },
+      oidc: null,
     };
   },
 

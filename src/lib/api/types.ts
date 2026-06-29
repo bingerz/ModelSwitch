@@ -620,3 +620,23 @@ export interface ModelRoutingInfo {
   model_pricing: Record<string, ModelPricing>;
   group_ratios: Record<string, number>;
 }
+
+// ─── Auth / Security Types ──────────────────────────────
+
+/** Response shape for `GET /api/auth/status`. */
+export interface AuthStatus {
+  admin_token_set: boolean;
+  rbac: {
+    enabled: boolean;
+    super_admin_count: number;
+    key_manager_count: number;
+    auditor_count: number;
+  };
+  ldap: { url: string; starttls: boolean; default_group: string } | null;
+  oidc: {
+    issuer: string;
+    client_id: string;
+    redirect_uri: string;
+    scopes: string[];
+  } | null;
+}

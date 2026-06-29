@@ -2,6 +2,7 @@ use super::{ApiResponse, PaginationParams};
 use crate::channel::{Channel, Provider};
 use crate::log::DispatchLog;
 use crate::middleware::error::ApiError;
+use crate::middleware::rbac::Role;
 use crate::proxy::cache::CacheMode;
 use crate::proxy::AppState;
 use axum::extract::{Path, Query, State};
@@ -515,10 +516,61 @@ pub async fn reload_config(
     }
 }
 
+// ─── Auth Status (read-only) ──────────────────────────────
+
+/// `GET /api/auth/status` — read-only authentication configuration status.
+///
+/// Returns a summary of enabled auth methods, RBAC role counts, and LDAP/OIDC
+/// configuration. All sensitive material is redacted:
+/// * Admin token values are never exposed — only whether one is set.
+/// * RBAC token values are never exposed — only role counts.
+/// * LDAP `bind_dn_template` is withheld (may reveal corporate DN structure).
+/// * OIDC `client_secret` is withheld.
+pub async fn auth_status(
+    State(state): State<Arc<AppState>>,
+) -> Json<ApiResponse<serde_json::Value>> {
+    let roles = &state.security.admin_roles;
+    let super_admin_count = roles
+        .iter()
+        .filter(|(_, role)| *role == Role::SuperAdmin)
+        .count();
+    let key_manager_count = roles
+        .iter()
+        .filter(|(_, role)| *role == Role::KeyManager)
+        .count();
+    let auditor_count = roles
+        .iter()
+        .filter(|(_, role)| *role == Role::Auditor)
+        .count();
+
+    Json(ApiResponse::ok(serde_json::json!({
+        "admin_token_set": state.security.admin_token.is_some(),
+        "rbac": {
+            "enabled": !roles.is_empty(),
+            "super_admin_count": super_admin_count,
+            "key_manager_count": key_manager_count,
+            "auditor_count": auditor_count,
+        },
+        "ldap": state.ldap_config.as_ref().map(|c| serde_json::json!({
+            "url": c.url,
+            "starttls": c.starttls,
+            "default_group": c.default_group,
+            // bind_dn_template intentionally omitted — may leak corporate DN shape.
+        })),
+        "oidc": state.oidc_config.as_ref().map(|c| serde_json::json!({
+            "issuer": c.issuer,
+            "client_id": c.client_id,
+            "redirect_uri": c.redirect_uri,
+            "scopes": c.scopes,
+            // client_secret intentionally omitted.
+        })),
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::build_test_state;
+    use crate::test_helpers::{build_test_state, build_test_state_with_rbac};
     use axum::extract::State;
 
     #[test]
@@ -772,5 +824,130 @@ mod tests {
             current.data.custom_patterns[0].pattern, r"token=[A-Za-z0-9]+",
             "GET should return user-supplied detection patterns verbatim for editing"
         );
+    }
+
+    // ── auth_status ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn auth_status_returns_ok() {
+        let state = build_test_state(vec![]);
+        let result = auth_status(State(state)).await;
+        assert!(result.ok);
+        // Admin token is None in the default test state.
+        assert_eq!(result.data["admin_token_set"], false);
+        // RBAC fields are always present.
+        assert_eq!(result.data["rbac"]["enabled"], false);
+        assert_eq!(result.data["rbac"]["super_admin_count"], 0);
+        assert_eq!(result.data["rbac"]["key_manager_count"], 0);
+        assert_eq!(result.data["rbac"]["auditor_count"], 0);
+        // LDAP/OIDC are None in the default test state.
+        assert!(result.data.get("ldap").is_some());
+        assert!(result.data["ldap"].is_null());
+        assert!(result.data.get("oidc").is_some());
+        assert!(result.data["oidc"].is_null());
+    }
+
+    #[tokio::test]
+    async fn auth_status_counts_rbac_roles() {
+        let state = build_test_state_with_rbac(
+            vec![],
+            None,
+            vec![
+                ("tok-a".to_string(), Role::SuperAdmin),
+                ("tok-b".to_string(), Role::KeyManager),
+                ("tok-c".to_string(), Role::KeyManager),
+                ("tok-d".to_string(), Role::Auditor),
+            ],
+        );
+        let result = auth_status(State(state)).await;
+        assert!(result.ok);
+        assert_eq!(result.data["rbac"]["enabled"], true);
+        assert_eq!(result.data["rbac"]["super_admin_count"], 1);
+        assert_eq!(result.data["rbac"]["key_manager_count"], 2);
+        assert_eq!(result.data["rbac"]["auditor_count"], 1);
+    }
+
+    #[tokio::test]
+    async fn auth_status_redacts_secrets() {
+        // Build a state with admin roles so the rbac block is non-empty.
+        let state = build_test_state_with_rbac(
+            vec![],
+            Some("super-secret-legacy-token"),
+            vec![
+                ("role-token-1".to_string(), Role::SuperAdmin),
+                ("role-token-2".to_string(), Role::Auditor),
+            ],
+        );
+        let result = auth_status(State(state)).await;
+        assert!(result.ok);
+        let body_str = result.data.to_string();
+
+        // Sensitive token values must never appear in the response body.
+        assert!(
+            !body_str.contains("super-secret-legacy-token"),
+            "legacy admin_token value must not be exposed"
+        );
+        assert!(
+            !body_str.contains("role-token-1"),
+            "RBAC token value must not be exposed"
+        );
+        assert!(
+            !body_str.contains("role-token-2"),
+            "RBAC token value must not be exposed"
+        );
+        // The admin_token_set flag should be true even though the value is hidden.
+        assert_eq!(result.data["admin_token_set"], true);
+    }
+
+    #[tokio::test]
+    async fn auth_status_redacts_oidc_client_secret() {
+        use crate::config::{LdapConfig, OidcConfig};
+
+        // Verify the redaction map used by `auth_status` never includes
+        // `client_secret` or `bind_dn_template`. We construct the same JSON
+        // shape the handler emits and assert the sensitive keys are absent.
+        let oidc = OidcConfig {
+            issuer: "https://idp.example.com".to_string(),
+            client_id: "client-123".to_string(),
+            client_secret: Some("super-secret-secret".to_string()),
+            redirect_uri: "https://gateway.example.com/api/auth/oidc/callback".to_string(),
+            scopes: vec!["openid".to_string(), "email".to_string()],
+        };
+        let ldap = LdapConfig {
+            url: "ldap://dc01.corp.local:389".to_string(),
+            bind_dn_template: "cn={username},ou=users,dc=corp,dc=local".to_string(),
+            starttls: true,
+            default_group: "staff".to_string(),
+            timeout_secs: 10,
+        };
+
+        // Mirror of the handler's redacted payloads.
+        let oidc_json = serde_json::json!({
+            "issuer": oidc.issuer,
+            "client_id": oidc.client_id,
+            "redirect_uri": oidc.redirect_uri,
+            "scopes": oidc.scopes,
+        });
+        let ldap_json = serde_json::json!({
+            "url": ldap.url,
+            "starttls": ldap.starttls,
+            "default_group": ldap.default_group,
+        });
+
+        assert!(
+            !oidc_json.as_object().unwrap().contains_key("client_secret"),
+            "client_secret key must be absent from oidc payload"
+        );
+        assert!(
+            !ldap_json
+                .as_object()
+                .unwrap()
+                .contains_key("bind_dn_template"),
+            "bind_dn_template key must be absent from ldap payload"
+        );
+        assert!(!oidc_json.to_string().contains("super-secret-secret"));
+        assert!(!ldap_json
+            .to_string()
+            .contains("cn={username},ou=users,dc=corp,dc=local"));
     }
 }

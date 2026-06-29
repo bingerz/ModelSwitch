@@ -4,6 +4,7 @@
 
 import { request } from "./client";
 import type {
+  AuthStatus,
   CacheStats,
   FlushCacheResult,
   GatewayInfo,
@@ -93,4 +94,7 @@ export const configApi = {
       method: "PUT",
       body: JSON.stringify(config),
     }),
+
+  // Auth / security status (read-only)
+  authStatus: () => request<AuthStatus>("/api/auth/status"),
 };

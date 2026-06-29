@@ -9,6 +9,7 @@ import {
   type ProviderBudgetEntry,
 } from "../lib/api";
 import { GeneralSettings } from "./settings/GeneralSettings";
+import { SecuritySection } from "./settings/SecuritySection";
 import { GatewayInfoSection } from "./settings/GatewayInfoSection";
 import { CacheManagementSection } from "./settings/CacheManagementSection";
 import { ProviderBudgetsSection } from "./settings/ProviderBudgetsSection";
@@ -62,6 +63,7 @@ export function SettingsPanel() {
       />
 
       <GeneralSettings onRefresh={refresh} />
+      <SecuritySection />
       <GatewayInfoSection gatewayInfo={data?.info ?? null} onRefresh={refresh} />
       <CacheManagementSection
         cacheStats={data?.cache ?? null}

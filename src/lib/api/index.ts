@@ -82,6 +82,7 @@ export interface Api {
   modelRouting: typeof configApi.modelRouting;
   sanitizerConfig: typeof configApi.sanitizerConfig;
   updateSanitizer: typeof configApi.updateSanitizer;
+  authStatus: typeof configApi.authStatus;
 
   // MCP (flat)
   mcpHealth: typeof mcpHealth;
