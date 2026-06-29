@@ -93,35 +93,6 @@
   font-weight: 600;
 }
 
-.sidebar-footer {
-  margin-top: auto;
-  display: flex;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
-
-.theme-toggle {
-  flex: 1;
-  padding: var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-elevated);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: var(--text-lg);
-  transition: all var(--duration-fast) var(--ease);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.theme-toggle:hover {
-  background: var(--color-surface-hover);
-  color: var(--color-text);
-  border-color: var(--color-border-hover);
-}
-
 .main {
   flex: 1;
   overflow-y: auto;

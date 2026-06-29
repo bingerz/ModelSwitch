@@ -67,7 +67,6 @@ const ModelRoutingPanel = lazy(() =>
 );
 
 type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "modelRouting" | "logs" | "cost" | "quota" | "settings" | "audit" | "redemption" | "metrics" | "guardrails" | "notifications" | "registry" | "reports" | "playground";
-type Theme = "light" | "dark";
 
 // React Query client — sensible defaults for a management console.
 // Created at module scope so it is stable across renders, regardless of mock mode.
@@ -130,18 +129,6 @@ function getTabGroups(t: (key: string) => string): { title: string; tabs: { id: 
   ];
 }
 
-function getInitialTheme(): Theme {
-  const stored = localStorage.getItem("theme");
-  if (stored === "light" || stored === "dark") return stored;
-  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-}
-
-function getInitialLang(): "en" | "zh" {
-  const stored = localStorage.getItem("lang");
-  if (stored === "en" || stored === "zh") return stored;
-  return navigator.language.startsWith("zh") ? "zh" : "en";
-}
-
 /**
  * F6 — Per-panel error fallback. Rendered by the inner <ErrorBoundary> when a
  * single panel throws during render, so a crash in one panel does not take
@@ -182,11 +169,9 @@ function PanelBoundary({ name, children }: { name: string; children: ReactNode }
 }
 
 function AppInner() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const toast = useToast();
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
-  const [theme, setTheme] = useState<Theme>(getInitialTheme);
-  const [lang, setLang] = useState<"en" | "zh">(getInitialLang);
   const [menuOpen, setMenuOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const logoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -197,26 +182,12 @@ function AppInner() {
 
   const TAB_GROUPS = getTabGroups(t);
 
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("theme", theme);
-  }, [theme]);
-
   // Cleanup logout confirmation timer on unmount
   useEffect(() => {
     return () => {
       if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
     };
   }, []);
-
-  const toggleTheme = () => setTheme((th) => (th === "dark" ? "light" : "dark"));
-
-  const toggleLang = () => {
-    const next = lang === "en" ? "zh" : "en";
-    setLang(next);
-    i18n.changeLanguage(next);
-    localStorage.setItem("lang", next);
-  };
 
   // Web mode keyboard shortcuts: Cmd/Ctrl+1..8 to switch tabs
   useEffect(() => {
@@ -366,18 +337,6 @@ function AppInner() {
               {confirmLogout ? t("common.confirmQuestion") : t("common.logout")}
             </button>
           )}
-          <div className="sidebar-footer">
-            <button
-              className="theme-toggle"
-              onClick={toggleLang}
-              title={t("common.switchLang")}
-            >
-              <span className="theme-toggle-icon">{lang === "en" ? "EN" : "中"}</span>
-            </button>
-            <button className="theme-toggle" onClick={toggleTheme} title={t("settings.toggleTheme", { mode: theme === "dark" ? t("settings.light") : t("settings.dark") })}>
-              <span className="theme-toggle-icon">{theme === "dark" ? "☀" : "☾"}</span>
-            </button>
-          </div>
         </nav>
         <main className="main">
           {activeTab === "dashboard" && (
