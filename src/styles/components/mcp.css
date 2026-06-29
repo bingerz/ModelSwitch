@@ -141,3 +141,101 @@
   text-overflow: ellipsis;
 }
 
+/* ─── All Tools (aggregated) Panel ─── */
+
+.mcp-all-tools-panel {
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-3);
+  overflow: hidden;
+}
+
+.mcp-all-tools-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: transparent;
+  border: none;
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mcp-all-tools-header:hover {
+  background: var(--color-surface-hover);
+}
+
+.mcp-all-tools-chevron {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.mcp-all-tools-title {
+  flex-shrink: 0;
+}
+
+.mcp-all-tools-summary {
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+.mcp-all-tools-body {
+  padding: 0 var(--space-3) var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.mcp-all-tools-search {
+  position: relative;
+  margin: var(--space-2) 0;
+}
+
+.mcp-all-tools-search-icon {
+  position: absolute;
+  left: var(--space-2);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
+
+.mcp-all-tools-search-input {
+  width: 100%;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-size: var(--text-sm);
+}
+
+.mcp-all-tools-search-input:focus {
+  outline: none;
+  border-color: var(--color-accent, var(--color-primary));
+}
+
+.mcp-all-tools-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.mcp-all-tools-group-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.mcp-all-tools-group-count {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+

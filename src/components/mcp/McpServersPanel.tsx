@@ -9,6 +9,7 @@ import { statusIsRunning } from "./types";
 import { McpServerCard } from "./McpServerCard";
 import { McpServerForm } from "./McpServerForm";
 import { McpServerEditForm } from "./McpServerEditForm";
+import { McpAllToolsPanel } from "./McpAllToolsPanel";
 
 interface McpHealthEntry {
   name: string;
@@ -183,6 +184,10 @@ export function McpServersPanel() {
             {t("mcp.healthSummary", { healthy: healthyCount, total: healthValues.length })}
           </span>
         </div>
+      )}
+
+      {servers.length > 0 && (
+        <McpAllToolsPanel servers={servers} />
       )}
 
       {showAddForm && (
