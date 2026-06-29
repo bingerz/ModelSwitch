@@ -243,7 +243,7 @@ fn build_test_state_with_opts(
         security: SecurityState {
             admin_token: None,
             admin_roles: vec![],
-            sanitizer_config: SanitizerConfig::default(),
+            sanitizer_config: Arc::new(parking_lot::RwLock::new(SanitizerConfig::default())),
             allowed_origins: None,
             trust_forwarded_headers: false,
             allow_open_proxy: false,

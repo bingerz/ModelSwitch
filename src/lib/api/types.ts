@@ -399,6 +399,26 @@ export interface GuardrailsConfig {
   block_message: string;
 }
 
+// ─── Sanitizer (Privacy Guardrail) Types ────────────────
+
+/** A single user-defined redaction pattern for the sanitizer. */
+export interface SanitizerCustomPattern {
+  /** Human-readable label used in logs. */
+  name: string;
+  /** Regular expression source. Invalid regexes are silently skipped at compile time. */
+  pattern: string;
+  /** Replacement text written in place of each match. */
+  replacement: string;
+}
+
+/** Sanitizer (privacy guardrail) configuration. */
+export interface SanitizerConfig {
+  enabled: boolean;
+  redact_secrets: boolean;
+  scan_response: boolean;
+  custom_patterns: SanitizerCustomPattern[];
+}
+
 export interface RedemptionCode {
   code: string;
   credits_cents: number;

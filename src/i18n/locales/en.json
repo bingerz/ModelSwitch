@@ -741,6 +741,22 @@
     "saved": "Guardrails configuration saved",
     "saveFailed": "Failed to save guardrails configuration"
   },
+  "sanitizer": {
+    "title": "Privacy / Secret Redaction",
+    "enable": "Enable sanitizer",
+    "redactSecrets": "Redact known secret patterns (API keys, tokens)",
+    "scanResponse": "Also scan response streams",
+    "customPatterns": "Custom Redaction Patterns",
+    "customPatternsHint": "Define custom regex patterns to redact sensitive data",
+    "patternName": "Name",
+    "patternRegex": "Regex Pattern",
+    "patternReplacement": "Replacement",
+    "addPattern": "Add Pattern",
+    "removePattern": "Remove",
+    "saved": "Sanitizer configuration saved",
+    "saveFailed": "Failed to save sanitizer configuration",
+    "noPatterns": "No custom patterns configured"
+  },
   "redemption": {
     "title": "Redemption Codes",
     "create": "+ Add Code",

@@ -5,6 +5,7 @@ import { Shield } from "lucide-react";
 import { SectionHeader } from "./ui/SectionHeader";
 import { api, type GuardrailsConfig } from "../lib/api";
 import { useToast } from "./Toast";
+import { SanitizerSection } from "./settings/SanitizerSection";
 
 export function GuardrailsPanel() {
   const { t } = useTranslation();
@@ -136,6 +137,16 @@ export function GuardrailsPanel() {
           {saving ? t("common.saving") : t("common.save")}
         </button>
       </div>
+
+      <hr
+        style={{
+          border: "none",
+          borderTop: "1px solid var(--color-border)",
+          margin: "var(--space-4) 0",
+        }}
+      />
+
+      <SanitizerSection />
     </section>
   );
 }

@@ -199,7 +199,7 @@ fn build_state(
         security: SecurityState {
             admin_token,
             admin_roles,
-            sanitizer_config: SanitizerConfig::default(),
+            sanitizer_config: Arc::new(parking_lot::RwLock::new(SanitizerConfig::default())),
             allowed_origins: None,
             trust_forwarded_headers: true,
             allow_open_proxy: false,

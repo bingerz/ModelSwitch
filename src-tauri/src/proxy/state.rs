@@ -93,7 +93,9 @@ pub struct SecurityState {
     /// Additional admin tokens with associated roles for RBAC.
     /// Each tuple is (token, Role). The legacy `admin_token` is always SuperAdmin.
     pub admin_roles: Vec<(String, crate::middleware::rbac::Role)>,
-    pub sanitizer_config: crate::config::SanitizerConfig,
+    /// Runtime-updatable sanitizer configuration wrapped in `Arc<RwLock<...>>`
+    /// so the admin API can mutate it without restarting the gateway.
+    pub sanitizer_config: Arc<StdRwLock<crate::config::SanitizerConfig>>,
     pub allowed_origins: Option<Vec<String>>,
     pub trust_forwarded_headers: bool,
     /// Whether open-proxy mode (no virtual key auth) is explicitly allowed

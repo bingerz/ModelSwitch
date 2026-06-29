@@ -18,6 +18,7 @@ import type {
   ListVirtualKeysParams,
   BatchCreateVirtualKeyData,
   BatchCreateVirtualKeyItem,
+  SanitizerConfig,
 } from "./api";
 import * as mockData from "./mock-data";
 
@@ -708,6 +709,26 @@ export const mockApi: typeof api = {
         "premium": 1.0,
         "economy": 0.5,
       },
+    };
+  },
+
+  // Sanitizer (privacy guardrail) config
+  sanitizerConfig: async (): Promise<SanitizerConfig> => {
+    await simDelay();
+    return {
+      enabled: true,
+      redact_secrets: true,
+      scan_response: false,
+      custom_patterns: [],
+    };
+  },
+  updateSanitizer: async (config: SanitizerConfig): Promise<SanitizerConfig> => {
+    await simDelay();
+    return {
+      enabled: config.enabled,
+      redact_secrets: config.redact_secrets,
+      scan_response: config.scan_response,
+      custom_patterns: config.custom_patterns,
     };
   },
 

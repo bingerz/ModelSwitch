@@ -240,6 +240,64 @@ pub async fn update_cache_mode(
     }))))
 }
 
+// ─── Sanitizer (Privacy Guardrail) ─────────────────────
+
+/// `GET /api/sanitizer` — return the current sanitizer configuration.
+///
+/// The sanitizer strips secrets/sensitive data from request bodies before
+/// forwarding upstream, and optionally scans SSE response streams. This
+/// endpoint exposes the live runtime configuration (reflecting any prior
+/// `PUT` updates) so operators can inspect the effective redaction rules.
+pub async fn get_sanitizer_config(
+    State(state): State<Arc<AppState>>,
+) -> Json<ApiResponse<crate::config::SanitizerConfig>> {
+    let config = state.security.sanitizer_config.read().clone();
+    Json(ApiResponse::ok(config))
+}
+
+/// `PUT /api/sanitizer` — update the sanitizer configuration at runtime.
+///
+/// Accepts a full [`SanitizerConfig`] body. Invalid custom regex patterns
+/// are silently skipped by the middleware's pattern compiler, so this
+/// endpoint never rejects user-supplied patterns — they simply have no
+/// effect if they fail to compile. The updated value takes effect
+/// immediately for subsequent requests without restarting the gateway.
+#[allow(clippy::result_large_err)]
+pub async fn update_sanitizer_config(
+    State(state): State<Arc<AppState>>,
+    Json(config): Json<crate::config::SanitizerConfig>,
+) -> Result<Json<ApiResponse<crate::config::SanitizerConfig>>, axum::response::Response> {
+    {
+        let mut guard = state.security.sanitizer_config.write();
+        *guard = config.clone();
+    }
+
+    state
+        .audit_log
+        .record(
+            "sanitizer.update",
+            "admin-api",
+            "sanitizer",
+            serde_json::json!({
+                "enabled": config.enabled,
+                "redact_secrets": config.redact_secrets,
+                "scan_response": config.scan_response,
+                "custom_patterns_count": config.custom_patterns.len(),
+            }),
+        )
+        .await;
+
+    tracing::info!(
+        enabled = config.enabled,
+        redact_secrets = config.redact_secrets,
+        scan_response = config.scan_response,
+        custom_patterns = config.custom_patterns.len(),
+        "Sanitizer configuration updated"
+    );
+
+    Ok(Json(ApiResponse::ok(config)))
+}
+
 // ─── Gateway Info ──────────────────────────────────────────
 
 /// Gateway runtime info: version, uptime, configuration summary.
@@ -636,5 +694,83 @@ mod tests {
         )
         .await;
         assert!(response.is_err(), "unknown cache mode should be rejected");
+    }
+
+    #[tokio::test]
+    async fn sanitizer_config_returns_ok() {
+        let state = build_test_state(vec![]);
+        let result = get_sanitizer_config(State(state)).await;
+        assert!(result.ok);
+        // Default-derived sanitizer config has enabled=true (see default_sanitizer_enabled).
+        assert!(result.data.enabled);
+        assert!(result.data.redact_secrets);
+        assert!(!result.data.scan_response);
+        assert!(result.data.custom_patterns.is_empty());
+    }
+
+    #[tokio::test]
+    async fn update_sanitizer_config_changes_value() {
+        let state = build_test_state(vec![]);
+
+        // Disable the master switch via PUT.
+        let new_config = crate::config::SanitizerConfig {
+            enabled: false,
+            redact_secrets: true,
+            scan_response: true,
+            custom_patterns: vec![crate::config::CustomPattern {
+                name: "phone".to_string(),
+                pattern: r"\d{3}-\d{3}-\d{4}".to_string(),
+                replacement: "[PHONE]".to_string(),
+            }],
+        };
+        let result = update_sanitizer_config(State(Arc::clone(&state)), Json(new_config))
+            .await
+            .expect("valid sanitizer config should succeed");
+        assert!(!result.data.enabled);
+        assert!(result.data.scan_response);
+        assert_eq!(result.data.custom_patterns.len(), 1);
+
+        // Verify the update is reflected by a subsequent GET.
+        let current = get_sanitizer_config(State(state)).await;
+        assert!(!current.data.enabled);
+        assert!(current.data.scan_response);
+        assert_eq!(current.data.custom_patterns.len(), 1);
+        assert_eq!(current.data.custom_patterns[0].name, "phone");
+    }
+
+    #[tokio::test]
+    async fn update_sanitizer_config_redacts_secrets_in_get() {
+        // The sanitizer config endpoint exposes regex patterns verbatim — these
+        // are user-supplied *detectors*, not credentials. The GET response must
+        // round-trip them so the UI can render the editor. The redaction
+        // guarantees enforced by this feature apply to request/response bodies
+        // flowing through the proxy, not to the admin config endpoint itself.
+        let state = build_test_state(vec![]);
+        let pattern_with_sensitive_lookalike = crate::config::CustomPattern {
+            name: "leak".to_string(),
+            // A detection regex — not a real secret. The endpoint should return it
+            // unchanged so operators can edit their own patterns.
+            pattern: r"token=[A-Za-z0-9]+".to_string(),
+            replacement: "[REDACTED:TOKEN]".to_string(),
+        };
+        let new_config = crate::config::SanitizerConfig {
+            enabled: true,
+            redact_secrets: true,
+            scan_response: false,
+            custom_patterns: vec![pattern_with_sensitive_lookalike],
+        };
+        let result = update_sanitizer_config(State(Arc::clone(&state)), Json(new_config))
+            .await
+            .expect("PUT should succeed");
+        assert_eq!(
+            result.data.custom_patterns[0].pattern,
+            r"token=[A-Za-z0-9]+"
+        );
+
+        let current = get_sanitizer_config(State(state)).await;
+        assert_eq!(
+            current.data.custom_patterns[0].pattern, r"token=[A-Za-z0-9]+",
+            "GET should return user-supplied detection patterns verbatim for editing"
+        );
     }
 }

@@ -244,6 +244,15 @@ fn admin_routes(prefix: &str) -> Router<Arc<AppState>> {
             &format!("{prefix}/reports/usage/csv"),
             get(admin::get_usage_report_csv),
         )
+        // Sanitizer (privacy guardrail) config
+        .route(
+            &format!("{prefix}/sanitizer"),
+            get(admin::get_sanitizer_config),
+        )
+        .route(
+            &format!("{prefix}/sanitizer"),
+            put(admin::update_sanitizer_config),
+        )
         .route(&format!("{prefix}/auth/me"), get(admin::auth::auth_me))
 }
 

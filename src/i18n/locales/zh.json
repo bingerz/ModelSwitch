@@ -741,6 +741,22 @@
     "saved": "护栏配置已保存",
     "saveFailed": "保存护栏配置失败"
   },
+  "sanitizer": {
+    "title": "隐私/敏感信息脱敏",
+    "enable": "启用脱敏",
+    "redactSecrets": "脱敏已知密钥模式（API 密钥、令牌）",
+    "scanResponse": "同时扫描响应流",
+    "customPatterns": "自定义脱敏规则",
+    "customPatternsHint": "定义自定义正则表达式来脱敏敏感数据",
+    "patternName": "名称",
+    "patternRegex": "正则表达式",
+    "patternReplacement": "替换文本",
+    "addPattern": "添加规则",
+    "removePattern": "删除",
+    "saved": "脱敏配置已保存",
+    "saveFailed": "保存脱敏配置失败",
+    "noPatterns": "未配置自定义规则"
+  },
   "redemption": {
     "title": "兑换码",
     "create": "+ 添加兑换码",

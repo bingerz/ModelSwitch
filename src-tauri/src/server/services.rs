@@ -547,7 +547,7 @@ pub fn start_gateway_services(config_path: Option<std::path::PathBuf>) -> Gatewa
         security: SecurityState {
             admin_token,
             admin_roles,
-            sanitizer_config: config.gateway.sanitizer.clone(),
+            sanitizer_config: Arc::new(parking_lot::RwLock::new(config.gateway.sanitizer.clone())),
             allowed_origins: config.gateway.allowed_origins.clone(),
             trust_forwarded_headers: false,
             allow_open_proxy: config.gateway.allow_open_proxy,

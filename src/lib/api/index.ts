@@ -80,6 +80,8 @@ export interface Api {
   modelRegistry: typeof configApi.modelRegistry;
   updateRoutingStrategy: typeof configApi.updateRoutingStrategy;
   modelRouting: typeof configApi.modelRouting;
+  sanitizerConfig: typeof configApi.sanitizerConfig;
+  updateSanitizer: typeof configApi.updateSanitizer;
 
   // MCP (flat)
   mcpHealth: typeof mcpHealth;

@@ -205,14 +205,14 @@ pub async fn sanitizer_middleware(
     req: Request<Body>,
     next: Next,
 ) -> Response {
-    let config = &state.security.sanitizer_config;
+    let config = state.security.sanitizer_config.read().clone();
 
     // Fast path: pass-through when disabled or when redaction is off.
     if !config.enabled || !config.redact_secrets {
         return next.run(req).await;
     }
 
-    let patterns = compile_patterns(config);
+    let patterns = compile_patterns(&config);
 
     // Split request into parts and body so we can buffer+scan the body.
     let (parts, body) = req.into_parts();

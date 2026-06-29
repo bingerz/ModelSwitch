@@ -12,6 +12,7 @@ import type {
   NotificationConfig,
   ProviderBudgetEntry,
   ReloadConfigResult,
+  SanitizerConfig,
 } from "./types";
 
 export const configApi = {
@@ -82,6 +83,14 @@ export const configApi = {
     }),
 
   // Model routing configuration (read-only)
-  modelRouting: () =>
-    request<ModelRoutingInfo>("/api/gateway/model-routing"),
+  modelRouting: () => request<ModelRoutingInfo>("/api/gateway/model-routing"),
+
+  // Sanitizer (privacy guardrail) config
+  sanitizerConfig: () => request<SanitizerConfig>("/api/sanitizer"),
+
+  updateSanitizer: (config: SanitizerConfig) =>
+    request<SanitizerConfig>("/api/sanitizer", {
+      method: "PUT",
+      body: JSON.stringify(config),
+    }),
 };
