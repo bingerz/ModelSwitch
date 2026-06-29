@@ -55,6 +55,7 @@ mod tests {
             proxy_url: None,
             headers: HashMap::new(),
             api_keys: vec![],
+            quota: None,
         };
         let created = create_channel(State(state.clone()), Json(req))
             .await
@@ -95,6 +96,7 @@ mod tests {
             proxy_url: None,
             headers: HashMap::new(),
             api_keys: vec![],
+            quota: None,
         };
         let created = create_channel(State(state.clone()), Json(req))
             .await
@@ -140,6 +142,7 @@ mod tests {
                 proxy_url: None,
                 headers: HashMap::new(),
                 api_keys: vec![],
+                quota: None,
             };
             let created = create_channel(State(state.clone()), Json(req))
                 .await
@@ -424,6 +427,7 @@ mod tests {
             models_endpoint: None,
             models_refresh_interval_secs: None,
             tags: vec![],
+            quota: None,
         }
     }
 

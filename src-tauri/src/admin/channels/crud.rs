@@ -224,6 +224,8 @@ pub struct CreateChannelRequest {
     pub headers: HashMap<String, String>,
     #[serde(default)]
     pub api_keys: Vec<String>,
+    #[serde(default)]
+    pub quota: Option<crate::config::QuotaConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -265,6 +267,8 @@ pub struct UpdateChannelRequest {
     pub models_refresh_interval_secs: Option<u64>,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub quota: Option<crate::config::QuotaConfig>,
 }
 
 fn default_priority() -> u8 {
@@ -350,6 +354,7 @@ pub async fn create_channel(
         models_endpoint: req.models_endpoint,
         models_refresh_interval_secs: req.models_refresh_interval_secs.unwrap_or(300),
         tags: req.tags,
+        quota: req.quota,
     };
 
     let created = state.channel_mgr.create(channel).await;
@@ -419,6 +424,7 @@ pub async fn update_channel(
     existing.models_endpoint = req.models_endpoint;
     existing.models_refresh_interval_secs = req.models_refresh_interval_secs.unwrap_or(300);
     existing.tags = req.tags;
+    existing.quota = req.quota;
     existing.updated_at = chrono::Utc::now();
 
     // Update credential if a new value is provided

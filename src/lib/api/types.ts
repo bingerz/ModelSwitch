@@ -32,6 +32,7 @@ export interface Channel {
   max_retries: number | null;
   models_endpoint: string | null;
   models_refresh_interval_secs: number;
+  quota?: QuotaConfig | null;
 }
 
 export interface DispatchLog {
@@ -170,6 +171,33 @@ export interface UpdateChannelData {
   max_retries?: number | null;
   models_endpoint?: string | null;
   models_refresh_interval_secs?: number;
+  quota?: QuotaConfig | null;
+}
+
+// ─── Quota Polling Types ────────────────────────────────
+
+/**
+ * Per-channel quota polling configuration.
+ *
+ * Note: Runtime changes to quota config are persisted to config.toml, but the
+ * background quota poller task built at server startup will not pick them up
+ * until the server is restarted.
+ */
+export interface QuotaConfig {
+  /** Polling strategy: "disabled" | "http_api" | "openai_compat" | "jsonpath" */
+  strategy: string | null;
+  /** Custom billing endpoint (overrides default per-provider). */
+  balance_url: string | null;
+  /** JSONPath to extract balance from response (e.g. "$.data.totalBalance"). */
+  balance_path: string | null;
+  /** JSONPath to extract limit from response (e.g. "$.data.hard_limit_usd"). */
+  limit_path: string | null;
+  /** JSONPath to extract usage from response (e.g. "$.data.total_usage"). */
+  usage_path: string | null;
+  /** Authorization header prefix (default: "Bearer"). */
+  auth_prefix: string | null;
+  /** Polling interval override in seconds. */
+  refresh_secs: number | null;
 }
 
 // ─── Payload Rules Types ─────────────────────────────────

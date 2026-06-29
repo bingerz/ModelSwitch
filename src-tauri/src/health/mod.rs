@@ -211,6 +211,7 @@ mod tests {
             models_endpoint: None,
             models_refresh_interval_secs: 300,
             tags: vec![],
+            quota: None,
         }
     }
 

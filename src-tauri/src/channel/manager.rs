@@ -248,7 +248,7 @@ impl ChannelManager {
                         tpm_limit: c.tpm_limit,
                         account_group: c.account_group.clone(),
                         payload_rules: None,
-                        quota: None,
+                        quota: c.quota.clone(),
                         max_concurrent: c.max_concurrent,
                         api_keys: c.api_keys.clone(),
                         excluded_models: c.excluded_models.clone(),
@@ -390,6 +390,7 @@ mod tests {
             models_endpoint: None,
             models_refresh_interval_secs: 300,
             tags: vec![],
+            quota: None,
         }
     }
 

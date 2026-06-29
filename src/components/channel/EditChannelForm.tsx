@@ -4,10 +4,18 @@ import {
   api,
   type Channel,
   type PayloadRulesConfig,
+  type QuotaConfig,
   validateChannelForm,
 } from "../../lib/api";
 import { useToast } from "../Toast";
 import { FormFields, type FormState } from "./FormFields";
+
+const QUOTA_STRATEGIES = [
+  { value: "disabled", labelKey: "channels.quotaStrategyDisabled" },
+  { value: "http_api", labelKey: "channels.quotaStrategyHttpApi" },
+  { value: "openai_compat", labelKey: "channels.quotaStrategyOpenaiCompat" },
+  { value: "jsonpath", labelKey: "channels.quotaStrategyJsonpath" },
+] as const;
 
 export function EditChannelForm({
   channel,
@@ -69,6 +77,33 @@ export function EditChannelForm({
   const [payloadModelRules, setPayloadModelRules] = useState("");
   const [payloadSaving, setPayloadSaving] = useState(false);
 
+  // Quota Polling state. The poller task itself only starts at server boot,
+  // so edits here take effect on next restart. We surface that in the UI hint.
+  const [showQuota, setShowQuota] = useState(false);
+  const [quotaStrategy, setQuotaStrategy] = useState<string>(
+    channel.quota?.strategy ?? "disabled"
+  );
+  const [quotaBalanceUrl, setQuotaBalanceUrl] = useState<string>(
+    channel.quota?.balance_url ?? ""
+  );
+  const [quotaBalancePath, setQuotaBalancePath] = useState<string>(
+    channel.quota?.balance_path ?? ""
+  );
+  const [quotaLimitPath, setQuotaLimitPath] = useState<string>(
+    channel.quota?.limit_path ?? ""
+  );
+  const [quotaUsagePath, setQuotaUsagePath] = useState<string>(
+    channel.quota?.usage_path ?? ""
+  );
+  const [quotaAuthPrefix, setQuotaAuthPrefix] = useState<string>(
+    channel.quota?.auth_prefix ?? ""
+  );
+  const [quotaRefreshSecs, setQuotaRefreshSecs] = useState<string>(
+    channel.quota?.refresh_secs != null
+      ? String(channel.quota.refresh_secs)
+      : ""
+  );
+
   // Load existing payload rules when the form opens so users can see
   // what is currently configured rather than starting from empty fields.
   useEffect(() => {
@@ -95,6 +130,26 @@ export function EditChannelForm({
       cancelled = true;
     };
   }, [channel.id]);
+
+  // Build the QuotaConfig payload from form state. When strategy is "disabled"
+  // or all fields are empty, send null so the backend clears existing config.
+  const buildQuotaPayload = (): QuotaConfig | null => {
+    if (quotaStrategy === "disabled") {
+      return null;
+    }
+    const refreshSecs = quotaRefreshSecs.trim()
+      ? parseInt(quotaRefreshSecs, 10)
+      : null;
+    return {
+      strategy: quotaStrategy,
+      balance_url: quotaBalanceUrl.trim() || null,
+      balance_path: quotaBalancePath.trim() || null,
+      limit_path: quotaLimitPath.trim() || null,
+      usage_path: quotaUsagePath.trim() || null,
+      auth_prefix: quotaAuthPrefix.trim() || null,
+      refresh_secs: Number.isFinite(refreshSecs) ? refreshSecs : null,
+    };
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -157,6 +212,7 @@ export function EditChannelForm({
           .map((s) => s.trim())
           .filter(Boolean),
         headers: parsedHeaders,
+        quota: buildQuotaPayload(),
       });
       toast.success(t("channels.updated"));
       onSave();
@@ -300,6 +356,99 @@ export function EditChannelForm({
           >
             {payloadSaving ? t("common.saving") : t("channels.savePayloadRules")}
           </button>
+        </div>
+      )}
+
+      <div className="form-advanced-toggle">
+        <button
+          type="button"
+          className="btn btn-sm btn-ghost"
+          onClick={() => setShowQuota(!showQuota)}
+        >
+          {showQuota ? "\u25BC" : "\u25B6"} {t("channels.quotaPolling")}
+        </button>
+      </div>
+
+      {showQuota && (
+        <div className="form-grid" style={{ display: "block" }}>
+          <label className="form-field">
+            <span>{t("channels.quotaStrategy")}</span>
+            <select
+              value={quotaStrategy}
+              onChange={(e) => setQuotaStrategy(e.target.value)}
+            >
+              {QUOTA_STRATEGIES.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {t(s.labelKey)}
+                </option>
+              ))}
+            </select>
+            <small className="form-hint">{t("channels.quotaStrategyHint")}</small>
+          </label>
+
+          {quotaStrategy !== "disabled" && (
+            <>
+              <label className="form-field">
+                <span>{t("channels.quotaBalanceUrl")}</span>
+                <input
+                  type="text"
+                  value={quotaBalanceUrl}
+                  onChange={(e) => setQuotaBalanceUrl(e.target.value)}
+                  placeholder="https://api.example.com/v1/billing/credit_grants"
+                />
+              </label>
+              <label className="form-field">
+                <span>{t("channels.quotaBalancePath")}</span>
+                <input
+                  type="text"
+                  value={quotaBalancePath}
+                  onChange={(e) => setQuotaBalancePath(e.target.value)}
+                  placeholder="$.data.total_balance"
+                />
+              </label>
+              <label className="form-field">
+                <span>{t("channels.quotaLimitPath")}</span>
+                <input
+                  type="text"
+                  value={quotaLimitPath}
+                  onChange={(e) => setQuotaLimitPath(e.target.value)}
+                  placeholder="$.data.hard_limit_usd"
+                />
+              </label>
+              <label className="form-field">
+                <span>{t("channels.quotaUsagePath")}</span>
+                <input
+                  type="text"
+                  value={quotaUsagePath}
+                  onChange={(e) => setQuotaUsagePath(e.target.value)}
+                  placeholder="$.data.total_usage"
+                />
+              </label>
+              <label className="form-field">
+                <span>{t("channels.quotaAuthPrefix")}</span>
+                <input
+                  type="text"
+                  value={quotaAuthPrefix}
+                  onChange={(e) => setQuotaAuthPrefix(e.target.value)}
+                  placeholder="Bearer"
+                />
+              </label>
+              <label className="form-field">
+                <span>{t("channels.quotaRefreshSecs")}</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={quotaRefreshSecs}
+                  onChange={(e) => setQuotaRefreshSecs(e.target.value)}
+                  placeholder="300"
+                />
+                <small className="form-hint">
+                  {t("channels.quotaRefreshSecsHint")}
+                </small>
+              </label>
+            </>
+          )}
+          <small className="form-hint">{t("channels.quotaRestartHint")}</small>
         </div>
       )}
 

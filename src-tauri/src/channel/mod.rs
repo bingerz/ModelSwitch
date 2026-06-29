@@ -186,6 +186,13 @@ pub struct Channel {
     /// User-defined tags for grouping and filtering channels.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Per-channel quota polling configuration.
+    ///
+    /// Note: Runtime changes to this field are persisted to config but the
+    /// quota poller task built at startup (`server::services`) will not pick
+    /// them up until the server is restarted. This is an accepted limitation.
+    #[serde(default)]
+    pub quota: Option<crate::config::QuotaConfig>,
 }
 
 impl Channel {
@@ -360,6 +367,7 @@ impl Channel {
             models_endpoint: c.models_endpoint.clone(),
             models_refresh_interval_secs: c.models_refresh_interval_secs,
             tags: c.tags.clone(),
+            quota: c.quota.clone(),
         }
     }
 }
@@ -693,6 +701,7 @@ mod tests {
             models_endpoint: None,
             models_refresh_interval_secs: 300,
             tags: vec![],
+            quota: None,
         }
     }
 
