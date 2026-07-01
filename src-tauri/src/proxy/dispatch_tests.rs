@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use axum::http::HeaderMap;
 use serde_json::{json, Value};
+use uuid::Uuid;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1486,5 +1487,344 @@ async fn dispatch_bootstrap_retry_disabled_forwards_error() {
         error_requests.len(),
         1,
         "with bootstrap disabled, only 1 request to upstream"
+    );
+}
+
+// ── Rate limit enforcement ─────────────────────────────────────────────────
+
+/// Per-channel RPM limit is enforced: the first request succeeds but increments
+/// the RPM counter. The second request (with a different body to bypass cache)
+/// finds the channel at its RPM cap and is denied — with only one channel,
+/// dispatch returns 429 (all exhausted).
+#[tokio::test]
+async fn dispatch_rate_limit_enforcement() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("Rate limited!")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let state = build_test_state(vec![channel_config(
+        "00000000-0000-0000-0000-000000000001",
+        "rate-limited-channel",
+        &mock_server.uri(),
+        1,
+    )]);
+
+    // Set RPM limit to 1 — only one request per minute is allowed.
+    let ch_uuid = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+    state.limits.rate_limiter.set_channel_rpm_limit(ch_uuid, 1);
+
+    let headers = HeaderMap::new();
+    let provider = openai_provider();
+
+    // First request — should succeed (RPM counter is 0, limit is 1)
+    let body1 = chat_request_body("gpt-4", "first request");
+    let response1 =
+        dispatch(&state, &headers, &body1, &provider, RequestFormat::OpenAIChat).await;
+    assert_eq!(response_status(&response1), 200);
+
+    // Second request with a different body (different cache key) — the channel
+    // is now rate-limited (RPM counter is 1, limit is 1). With only one channel,
+    // dispatch should return 429 (all channels exhausted).
+    let body2 = chat_request_body("gpt-4", "second request");
+    let response2 =
+        dispatch(&state, &headers, &body2, &provider, RequestFormat::OpenAIChat).await;
+    assert_eq!(
+        response_status(&response2),
+        429,
+        "second request should be rate-limited with only one channel"
+    );
+
+    // The mock server should have been hit exactly once
+    let received = mock_server.received_requests().await.unwrap();
+    assert_eq!(
+        received.len(),
+        1,
+        "upstream should receive exactly 1 request when the channel is rate-limited after the first"
+    );
+}
+
+// ── In-flight request coalescing ────────────────────────────────────────────
+
+/// Two identical concurrent requests should be coalesced: the first registers
+/// an in-flight entry and dispatches upstream; the second waits for it to
+/// complete, then serves the cached response. The upstream mock is hit exactly
+/// once despite two client requests.
+#[tokio::test]
+async fn dispatch_in_flight_coalescing() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_millis(200))
+                .set_body_string(chat_completion_response("Coalesced!")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let state = build_test_state(vec![channel_config(
+        "00000000-0000-0000-0000-000000000001",
+        "coalescing-channel",
+        &mock_server.uri(),
+        1,
+    )]);
+
+    let headers = HeaderMap::new();
+    let body = chat_request_body("gpt-4", "coalescing test");
+    let provider = openai_provider();
+
+    // Fire two identical requests concurrently. The second should coalesce
+    // onto the first's in-flight entry, then serve from cache after the
+    // first completes.
+    let (response1, response2) = tokio::join!(
+        dispatch(&state, &headers, &body, &provider, RequestFormat::OpenAIChat),
+        dispatch(&state, &headers, &body, &provider, RequestFormat::OpenAIChat),
+    );
+
+    assert_eq!(response_status(&response1), 200);
+    assert_eq!(response_status(&response2), 200);
+
+    // The mock server should have been hit exactly once — the second request
+    // was coalesced and served from cache.
+    let received = mock_server.received_requests().await.unwrap();
+    assert_eq!(
+        received.len(),
+        1,
+        "concurrent identical requests should be coalesced — upstream hit once, got {}",
+        received.len()
+    );
+}
+
+// ── Disabled channel is skipped ─────────────────────────────────────────────
+
+/// When one channel is disabled and another is enabled, dispatch should route
+/// exclusively to the enabled channel. The disabled channel's upstream should
+/// receive zero requests.
+#[tokio::test]
+async fn dispatch_disabled_channel_is_skipped() {
+    let mock_disabled = MockServer::start().await;
+    let mock_enabled = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(chat_completion_response("Disabled channel")),
+        )
+        .mount(&mock_disabled)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(chat_completion_response("Enabled channel")),
+        )
+        .mount(&mock_enabled)
+        .await;
+
+    let state = build_test_state(vec![
+        channel_config_disabled(
+            "00000000-0000-0000-0000-000000000001",
+            "disabled-channel",
+            &mock_disabled.uri(),
+            1,
+        ),
+        channel_config(
+            "00000000-0000-0000-0000-000000000002",
+            "enabled-channel",
+            &mock_enabled.uri(),
+            2,
+        ),
+    ]);
+
+    let headers = HeaderMap::new();
+    let body = chat_request_body("gpt-4", "Test disabled channel skip");
+    let provider = openai_provider();
+
+    let response =
+        dispatch(&state, &headers, &body, &provider, RequestFormat::OpenAIChat).await;
+
+    assert_eq!(response_status(&response), 200);
+    let json = response_json(response).await;
+    assert_eq!(
+        json["choices"][0]["message"]["content"],
+        "Enabled channel",
+        "should route to the enabled channel, not the disabled one"
+    );
+
+    // The disabled channel's server should not have received any requests
+    let disabled_requests = mock_disabled.received_requests().await.unwrap();
+    assert!(
+        disabled_requests.is_empty(),
+        "disabled channel should receive zero requests"
+    );
+
+    // The enabled channel's server should have received exactly one request
+    let enabled_requests = mock_enabled.received_requests().await.unwrap();
+    assert_eq!(
+        enabled_requests.len(),
+        1,
+        "enabled channel should receive exactly one request"
+    );
+}
+
+// ── Priority ordering ───────────────────────────────────────────────────────
+
+/// Channels are grouped by priority tier (lower number = higher priority).
+/// WeightedRandom only selects within a single tier, so a channel at priority 1
+/// is always chosen over a channel at priority 2 when both are healthy.
+#[tokio::test]
+async fn dispatch_priority_ordering() {
+    let mock_high = MockServer::start().await;
+    let mock_low = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("High priority!")),
+        )
+        .mount(&mock_high)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("Low priority!")),
+        )
+        .mount(&mock_low)
+        .await;
+
+    // Channel A: priority 1 (higher), Channel B: priority 2 (lower).
+    // WeightedRandom groups by priority tier — since A is the only candidate
+    // in tier 1, it is always selected first.
+    let state = build_test_state(vec![
+        channel_config(
+            "00000000-0000-0000-0000-000000000001",
+            "high-priority",
+            &mock_high.uri(),
+            1,
+        ),
+        channel_config(
+            "00000000-0000-0000-0000-000000000002",
+            "low-priority",
+            &mock_low.uri(),
+            2,
+        ),
+    ]);
+
+    let headers = HeaderMap::new();
+    let body = chat_request_body("gpt-4", "Test priority ordering");
+    let provider = openai_provider();
+
+    let response =
+        dispatch(&state, &headers, &body, &provider, RequestFormat::OpenAIChat).await;
+
+    assert_eq!(response_status(&response), 200);
+    let json = response_json(response).await;
+    assert_eq!(
+        json["choices"][0]["message"]["content"],
+        "High priority!",
+        "should route to the higher-priority channel"
+    );
+
+    // The high-priority server should have been hit
+    let high_requests = mock_high.received_requests().await.unwrap();
+    assert_eq!(
+        high_requests.len(),
+        1,
+        "high-priority channel should receive exactly one request"
+    );
+
+    // The low-priority server should NOT have been hit
+    let low_requests = mock_low.received_requests().await.unwrap();
+    assert!(
+        low_requests.is_empty(),
+        "low-priority channel should receive zero requests when high-priority succeeds"
+    );
+}
+
+// ── Excluded models filter ──────────────────────────────────────────────────
+
+/// A channel whose `excluded_models` list contains the requested model is
+/// filtered out during channel selection. Dispatch falls through to the next
+/// available channel that does not exclude the model.
+#[tokio::test]
+async fn dispatch_excluded_models_skips_channel() {
+    let mock_excluded = MockServer::start().await;
+    let mock_allowed = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(chat_completion_response("Excluded channel")),
+        )
+        .mount(&mock_excluded)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(chat_completion_response("Allowed channel")),
+        )
+        .mount(&mock_allowed)
+        .await;
+
+    // Channel A excludes "gpt-4" but has priority 1 (would be preferred if not excluded).
+    // Channel B has no exclusions and priority 2.
+    let mut channel_a = channel_config(
+        "00000000-0000-0000-0000-000000000001",
+        "excluded-models-channel",
+        &mock_excluded.uri(),
+        1,
+    );
+    channel_a.excluded_models = vec!["gpt-4".to_string()];
+
+    let channel_b = channel_config(
+        "00000000-0000-0000-0000-000000000002",
+        "allowed-channel",
+        &mock_allowed.uri(),
+        2,
+    );
+
+    let state = build_test_state(vec![channel_a, channel_b]);
+
+    let headers = HeaderMap::new();
+    let body = chat_request_body("gpt-4", "Test excluded models");
+    let provider = openai_provider();
+
+    let response =
+        dispatch(&state, &headers, &body, &provider, RequestFormat::OpenAIChat).await;
+
+    assert_eq!(response_status(&response), 200);
+    let json = response_json(response).await;
+    assert_eq!(
+        json["choices"][0]["message"]["content"],
+        "Allowed channel",
+        "should route to the channel without model exclusion"
+    );
+
+    // The excluded channel should not have received any requests
+    let excluded_requests = mock_excluded.received_requests().await.unwrap();
+    assert!(
+        excluded_requests.is_empty(),
+        "channel excluding gpt-4 should receive zero requests for that model"
+    );
+
+    // The allowed channel should have received exactly one request
+    let allowed_requests = mock_allowed.received_requests().await.unwrap();
+    assert_eq!(
+        allowed_requests.len(),
+        1,
+        "channel without exclusion should receive exactly one request"
     );
 }

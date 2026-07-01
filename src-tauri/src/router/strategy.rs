@@ -579,4 +579,57 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn weighted_random_returns_a_channel() {
+        let ch1 = make_channel("ch1", 1, 100, 0);
+        let ch2 = make_channel("ch2", 1, 100, 0);
+        let candidates = vec![ch1, ch2];
+        let strategy = WeightedRandomStrategy;
+        assert!(strategy.select(&candidates).is_some());
+    }
+
+    #[test]
+    fn weighted_random_returns_none_for_empty() {
+        let strategy = WeightedRandomStrategy;
+        let candidates: Vec<Channel> = vec![];
+        assert!(strategy.select(&candidates).is_none());
+    }
+
+    #[test]
+    fn weighted_random_with_zero_weight_falls_back_to_uniform() {
+        // ponytail: all-zero total weight triggers uniform fallback in weighted_random
+        let ch1 = make_channel("zero_a", 1, 0, 0);
+        let ch2 = make_channel("zero_b", 1, 0, 0);
+        let candidates = vec![ch1, ch2];
+        let strategy = WeightedRandomStrategy;
+        // Should still return Some (uniform random among candidates)
+        let mut picked_a = 0;
+        for _ in 0..100 {
+            let selected = strategy.select(&candidates).unwrap();
+            if selected.name == "zero_a" {
+                picked_a += 1;
+            }
+        }
+        // Uniform over 2 candidates — expect roughly 50/50
+        assert!(picked_a > 20 && picked_a < 80, "picked_a={picked_a}");
+    }
+
+    #[test]
+    fn latency_based_returns_none_for_empty() {
+        let tracker = Arc::new(LatencyTracker::new());
+        let strategy = LatencyBasedStrategy::new(tracker);
+        let candidates: Vec<Channel> = vec![];
+        assert!(strategy.select(&candidates).is_none());
+    }
+
+    #[test]
+    fn usage_based_returns_some_for_candidates() {
+        let limiter = Arc::new(RateLimiter::new(None));
+        let ch1 = make_channel("ch1", 1, 100, 0);
+        let ch2 = make_channel("ch2", 1, 100, 0);
+        let candidates = vec![ch1, ch2];
+        let strategy = UsageBasedStrategy::new(limiter);
+        assert!(strategy.select(&candidates).is_some());
+    }
 }
