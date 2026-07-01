@@ -2,7 +2,7 @@
 #
 # ModelSwitch - 统一开发与构建工具
 #
-# 用法: ./scripts/modelswitch.sh <command> [options]
+# 用法: ./scripts/dev.sh <command> [options]
 #
 # 命令:
 #   setup       初始化开发环境
@@ -47,7 +47,7 @@ show_help() {
     cat << EOF
 ModelSwitch - LLM 智能网关统一开发工具
 
-用法: ./scripts/modelswitch.sh <command> [options]
+用法: ./scripts/dev.sh <command> [options]
 
 命令:
   setup              初始化开发环境 (安装依赖、检查工具链)
@@ -58,10 +58,12 @@ ModelSwitch - LLM 智能网关统一开发工具
   run [args...]      运行已编译的应用
   cli [args...]      运行 CLI 网关 (无 Tauri, 纯 API 代理)
   test [target]      运行测试
-                       - (无参数): cargo test + pnpm 类型检查
-                       - rust:    cargo test
-                       - fe:      前端类型检查
-                       - all:     全部
+                       - (无参数): 全部 (Rust单元 + API集成 + 前端 + tsc)
+                       - rust:     cargo test --lib --all-features
+                       - api:      cargo test --test api_integration
+                       - fe:       pnpm test
+                       - coverage: pnpm test:coverage
+  e2e [--headed]     Playwright E2E (需先启动网关 + pnpm dev)
   lint               代码检查 (cargo clippy + tsc)
   clean              清理构建产物
   ci                 运行完整 CI 流程
@@ -71,18 +73,18 @@ ModelSwitch - LLM 智能网关统一开发工具
   help               显示此帮助信息
 
 示例:
-  ./scripts/modelswitch.sh setup              # 首次使用：初始化环境
-  ./scripts/modelswitch.sh build              # 调试模式编译
-  ./scripts/modelswitch.sh build release      # 发布模式编译
-  ./scripts/modelswitch.sh dev                # 启动开发服务器
-  ./scripts/modelswitch.sh cli                # 启动 CLI 网关 (无 UI)
-  ./scripts/modelswitch.sh cli --port 9090    # 指定端口启动
-  ./scripts/modelswitch.sh test               # 运行全部测试
-  ./scripts/modelswitch.sh test rust          # 仅运行 Rust 测试
-  ./scripts/modelswitch.sh lint               # 代码检查
-  ./scripts/modelswitch.sh clean              # 清理构建产物
-  ./scripts/modelswitch.sh dist               # 打包 macOS .dmg
-  ./scripts/modelswitch.sh env                # 检查环境
+  ./scripts/dev.sh setup              # 首次使用：初始化环境
+  ./scripts/dev.sh build              # 调试模式编译
+  ./scripts/dev.sh build release      # 发布模式编译
+  ./scripts/dev.sh dev                # 启动开发服务器
+  ./scripts/dev.sh cli                # 启动 CLI 网关 (无 UI)
+  ./scripts/dev.sh cli --port 9090    # 指定端口启动
+  ./scripts/dev.sh test               # 运行全部测试
+  ./scripts/dev.sh test rust          # 仅运行 Rust 测试
+  ./scripts/dev.sh lint               # 代码检查
+  ./scripts/dev.sh clean              # 清理构建产物
+  ./scripts/dev.sh dist               # 打包 macOS .dmg
+  ./scripts/dev.sh env                # 检查环境
 
 项目结构:
   src-tauri/          - Rust 后端 (Tauri + Axum)
@@ -157,7 +159,7 @@ check_env() {
     if [ -d "$FRONTEND_DIR/node_modules" ]; then
         success "前端依赖已安装"
     else
-        info "前端依赖未安装，运行: ./scripts/modelswitch.sh setup"
+        info "前端依赖未安装，运行: ./scripts/dev.sh setup"
     fi
 
     if [ -d "$BACKEND_DIR/target" ]; then
@@ -199,7 +201,7 @@ setup_env() {
 
     echo ""
     success "开发环境初始化完成"
-    info "运行 './scripts/modelswitch.sh dev' 启动开发服务器"
+    info "运行 './scripts/dev.sh dev' 启动开发服务器"
 }
 
 # ─── 编译 ──────────────────────────────────────────────
@@ -252,7 +254,7 @@ show_build_artifacts() {
     fi
 
     echo ""
-    info "运行: ./scripts/modelswitch.sh run"
+    info "运行: ./scripts/dev.sh run"
 }
 
 # ─── 开发模式 ──────────────────────────────────────────
@@ -284,7 +286,7 @@ run_app() {
     local bin_path="$BACKEND_DIR/target/$mode/model-switch"
 
     if [ ! -f "$bin_path" ]; then
-        error "未找到编译产物，请先运行: ./scripts/modelswitch.sh build"
+        error "未找到编译产物，请先运行: ./scripts/dev.sh build"
     fi
 
     info "运行 ModelSwitch ($mode)..."
@@ -298,37 +300,73 @@ run_tests() {
 
     case "$target" in
         rust)
-            info "运行 Rust 测试..."
-            cd "$BACKEND_DIR" && cargo test --lib --bins
-            success "Rust 测试通过"
+            info "运行 Rust 单元测试..."
+            cd "$BACKEND_DIR" && cargo test --lib --all-features
+            success "Rust 单元测试通过"
+            ;;
+        api)
+            info "运行 API 集成测试..."
+            cd "$BACKEND_DIR" && cargo test --test api_integration --all-features
+            success "API 集成测试通过"
             ;;
         fe)
-            info "运行前端类型检查..."
-            cd "$FRONTEND_DIR" && pnpm build
-            success "前端类型检查通过"
+            info "运行前端测试..."
+            cd "$FRONTEND_DIR" && pnpm test
+            success "前端测试通过"
+            ;;
+        coverage)
+            info "运行前端覆盖率..."
+            cd "$FRONTEND_DIR" && pnpm test:coverage
+            success "覆盖率报告生成完成"
             ;;
         all|"")
             local failed=0
 
-            step "[1/2] Rust 测试..."
-            cd "$BACKEND_DIR" && cargo test --lib --bins || failed=$((failed + 1))
+            step "[1/4] Rust 单元测试..."
+            cd "$BACKEND_DIR" && cargo test --lib --all-features || failed=$((failed + 1))
 
-            step "[2/2] 前端类型检查..."
-            cd "$FRONTEND_DIR" && pnpm build || failed=$((failed + 1))
+            step "[2/4] API 集成测试..."
+            cd "$BACKEND_DIR" && cargo test --test api_integration --all-features || failed=$((failed + 1))
+
+            step "[3/4] 前端测试..."
+            cd "$FRONTEND_DIR" && pnpm test || failed=$((failed + 1))
+
+            step "[4/4] 前端类型检查..."
+            cd "$FRONTEND_DIR" && npx tsc --noEmit || failed=$((failed + 1))
 
             if [ "$failed" -gt 0 ]; then
-                error "$failed/2 测试失败"
+                error "$failed/4 测试失败"
             else
-                success "全部测试通过 (2/2)"
+                success "全部测试通过 (4/4)"
             fi
             ;;
         *)
             # 传递给 cargo test
             info "运行 Rust 测试: $target..."
-            cd "$BACKEND_DIR" && cargo test --lib --bins "$target"
+            cd "$BACKEND_DIR" && cargo test --lib --all-features "$target"
             success "测试完成"
             ;;
     esac
+}
+
+# ─── E2E 测试 ──────────────────────────────────────────
+
+run_e2e() {
+    info "运行 Playwright E2E 测试..."
+    info "前置条件: 网关和前端开发服务器需已启动"
+    info "  终端 1: ./scripts/dev.sh cli"
+    info "  终端 2: pnpm dev"
+    echo ""
+
+    cd "$FRONTEND_DIR"
+
+    if [ "${1:-}" = "--headed" ]; then
+        pnpm e2e:headed
+    else
+        pnpm e2e
+    fi
+
+    success "E2E 测试完成"
 }
 
 # ─── 代码检查 ──────────────────────────────────────────
@@ -491,6 +529,9 @@ main() {
         test)
             run_tests "$@"
             ;;
+        e2e)
+            run_e2e "$@"
+            ;;
         lint)
             run_lint
             ;;
@@ -513,7 +554,7 @@ main() {
             show_help
             ;;
         *)
-            error "未知命令: $command\n运行 './scripts/modelswitch.sh help' 查看帮助"
+            error "未知命令: $command\n运行 './scripts/dev.sh help' 查看帮助"
             ;;
     esac
 }
