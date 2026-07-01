@@ -20,13 +20,12 @@ export default defineConfig({
         "src/**/mock-data.ts",
         "src/**/mock.ts",
       ],
-      // Ratchet: raise as coverage improves. Baseline set just above current levels
-      // to catch regressions without blocking incremental improvement.
+      // Ratchet: raise as coverage improves. Current baseline ~22% lines.
       thresholds: {
-        lines: 10,
-        functions: 10,
-        statements: 10,
-        branches: 12,
+        lines: 20,
+        functions: 17,
+        statements: 20,
+        branches: 15,
       },
     },
   },
