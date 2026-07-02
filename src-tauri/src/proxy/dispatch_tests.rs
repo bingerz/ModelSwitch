@@ -17,6 +17,7 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use crate::channel::manager::ChannelManager;
+use crate::channel::Channel;
 use crate::config::{AppConfig, ChannelConfig, GatewayConfig, SanitizerConfig};
 use crate::credential::{create_credential_store, SharedCredentialStore};
 use crate::log::DispatchLogger;
@@ -2086,5 +2087,172 @@ async fn dispatch_virtual_key_billing_failure_refunds() {
     assert_eq!(
         fetched.spend.total_cents, 0,
         "total spend should be 0 after reservation refund on failure"
+    );
+}
+
+// ── Circuit breaker recovery ───────────────────────────────────────────────
+
+/// A circuit-broken channel is skipped, and after manual recovery it serves
+/// traffic again. Uses two separate mock servers so we can assert which
+/// channel handled each request.
+#[tokio::test]
+async fn dispatch_circuit_breaker_recovery() {
+    let server_a = MockServer::start().await;
+    let server_b = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("from A")),
+        )
+        .mount(&server_a)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("from B")),
+        )
+        .mount(&server_b)
+        .await;
+
+    let id_a = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+
+    let state = build_test_state(vec![
+        channel_config(
+            "00000000-0000-0000-0000-000000000001",
+            "channel-a",
+            &server_a.uri(),
+            1,
+        ),
+        channel_config(
+            "00000000-0000-0000-0000-000000000002",
+            "channel-b",
+            &server_b.uri(),
+            2,
+        ),
+    ]);
+
+    let headers = HeaderMap::new();
+    let provider = openai_provider();
+
+    // Step 1 — both healthy: A (priority 1) should win.
+    let body1 = chat_request_body("gpt-4", "first");
+    let r1 = dispatch(&state, &headers, &body1, &provider, RequestFormat::OpenAIChat).await;
+    assert_eq!(response_status(&r1), 200);
+    assert_eq!(
+        server_a.received_requests().await.unwrap().len(),
+        1,
+        "step 1: channel A should receive the request"
+    );
+    assert_eq!(
+        server_b.received_requests().await.unwrap().len(),
+        0,
+        "step 1: channel B should receive zero requests"
+    );
+
+    // Step 2 — break channel A: traffic should fall through to B.
+    state.channel_mgr.mark_circuit_open(id_a).await;
+    let body2 = chat_request_body("gpt-4", "second");
+    let r2 = dispatch(&state, &headers, &body2, &provider, RequestFormat::OpenAIChat).await;
+    assert_eq!(response_status(&r2), 200);
+    assert_eq!(
+        server_a.received_requests().await.unwrap().len(),
+        1,
+        "step 2: channel A should still have exactly 1 request (circuit open)"
+    );
+    assert_eq!(
+        server_b.received_requests().await.unwrap().len(),
+        1,
+        "step 2: channel B should now have 1 request"
+    );
+
+    // Step 3 — recover channel A: traffic should route back to A.
+    state.channel_mgr.force_recover(id_a).await;
+    let body3 = chat_request_body("gpt-4", "third");
+    let r3 = dispatch(&state, &headers, &body3, &provider, RequestFormat::OpenAIChat).await;
+    assert_eq!(response_status(&r3), 200);
+    assert_eq!(
+        server_a.received_requests().await.unwrap().len(),
+        2,
+        "step 3: channel A should now have 2 requests after recovery"
+    );
+    assert_eq!(
+        server_b.received_requests().await.unwrap().len(),
+        1,
+        "step 3: channel B should still have 1 request"
+    );
+}
+
+// ── Hot reload: new channel receives traffic ───────────────────────────────
+
+/// A channel added at runtime via `channel_mgr.replace_all()` actually
+/// receives traffic through the dispatch pipeline. Simulates what
+/// `apply_config_reload` does internally.
+#[tokio::test]
+async fn dispatch_hot_reload_new_channel_receives_traffic() {
+    let server_a = MockServer::start().await;
+    let server_b = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("from A")),
+        )
+        .mount(&server_a)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("from B")),
+        )
+        .mount(&server_b)
+        .await;
+
+    // Start with only channel B (priority 2).
+    let cfg_b = channel_config(
+        "00000000-0000-0000-0000-000000000002",
+        "channel-b",
+        &server_b.uri(),
+        2,
+    );
+    let state = build_test_state(vec![cfg_b.clone()]);
+
+    let headers = HeaderMap::new();
+    let provider = openai_provider();
+
+    // Step 1 — only B exists, so B must serve.
+    let body1 = chat_request_body("gpt-4", "first");
+    let r1 = dispatch(&state, &headers, &body1, &provider, RequestFormat::OpenAIChat).await;
+    assert_eq!(response_status(&r1), 200);
+    assert_eq!(
+        server_b.received_requests().await.unwrap().len(),
+        1,
+        "step 1: channel B should receive the request"
+    );
+
+    // Step 2 — hot-reload: replace channel set with [A (priority 1), B (priority 2)].
+    let cfg_a = channel_config(
+        "00000000-0000-0000-0000-000000000001",
+        "channel-a",
+        &server_a.uri(),
+        1,
+    );
+    let channel_a = Channel::from_config(&cfg_a);
+    let channel_b = Channel::from_config(&cfg_b);
+    state
+        .channel_mgr
+        .replace_all(vec![channel_a, channel_b])
+        .await;
+
+    // Step 3 — A has higher priority, so the new channel should now win.
+    let body2 = chat_request_body("gpt-4", "second");
+    let r2 = dispatch(&state, &headers, &body2, &provider, RequestFormat::OpenAIChat).await;
+    assert_eq!(response_status(&r2), 200);
+    assert_eq!(
+        server_a.received_requests().await.unwrap().len(),
+        1,
+        "step 3: newly-added channel A should receive the request"
     );
 }
