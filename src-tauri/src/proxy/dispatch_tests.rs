@@ -155,13 +155,15 @@ fn test_config(channels: Vec<ChannelConfig>) -> AppConfig {
 /// mock server URLs. All sub-structs use real implementations with
 /// permissive defaults so dispatch behaves naturally.
 fn build_test_state(channel_configs: Vec<ChannelConfig>) -> Arc<AppState> {
-    build_test_state_with_opts(channel_configs, 0)
+    build_test_state_with_opts(channel_configs, 0, HashMap::new())
 }
 
-/// Same as `build_test_state` but allows configuring `stream_bootstrap_retries`.
+/// Same as `build_test_state` but allows configuring `stream_bootstrap_retries`
+/// and `model_fallbacks`.
 fn build_test_state_with_opts(
     channel_configs: Vec<ChannelConfig>,
     stream_bootstrap_retries: u32,
+    model_fallbacks: HashMap<String, Vec<String>>,
 ) -> Arc<AppState> {
     let config = test_config(channel_configs);
     let credential_store: SharedCredentialStore = create_credential_store(None);
@@ -199,7 +201,7 @@ fn build_test_state_with_opts(
             stream_keepalive_secs: None,
             stream_ttft_timeout_secs: Some(30),
             max_retries: config.gateway.max_retries,
-            model_fallbacks: HashMap::new(),
+            model_fallbacks,
             context_window_fallbacks: HashMap::new(),
             model_aliases: HashMap::new(),
             routing_strategy: crate::router::RoutingStrategyType::WeightedRandom,
@@ -1391,6 +1393,7 @@ async fn dispatch_bootstrap_retry_on_stream_error() {
             ),
         ],
         2, // stream_bootstrap_retries = 2
+        HashMap::new(),
     );
 
     let headers = HeaderMap::new();
@@ -1459,6 +1462,7 @@ async fn dispatch_bootstrap_retry_disabled_forwards_error() {
             1,
         )],
         0, // stream_bootstrap_retries = 0 (disabled)
+        HashMap::new(),
     );
 
     let headers = HeaderMap::new();
@@ -1826,5 +1830,261 @@ async fn dispatch_excluded_models_skips_channel() {
         allowed_requests.len(),
         1,
         "channel without exclusion should receive exactly one request"
+    );
+}
+
+// ── Model fallback chain (business flow) ───────────────────────────────────
+
+/// When the primary model fails, dispatch falls back to the configured
+/// alternative model. Uses two channels so the circuit breaker on the
+/// failing channel does not block the fallback channel.
+#[tokio::test]
+async fn dispatch_model_fallback_chain() {
+    let mock_fail = MockServer::start().await;
+    let mock_success = MockServer::start().await;
+
+    // Failing upstream — always returns 500.
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({
+            "error": {"message": "Model unavailable", "type": "server_error"}
+        })))
+        .mount(&mock_fail)
+        .await;
+
+    // Success upstream — always returns 200.
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(chat_completion_response("Fallback success!")),
+        )
+        .mount(&mock_success)
+        .await;
+
+    let mut fallbacks = HashMap::new();
+    fallbacks.insert(
+        "gpt-4".to_string(),
+        vec!["gpt-3.5-turbo".to_string()],
+    );
+
+    // Channel A (priority 1): excludes gpt-4 so it only handles fallback models.
+    let mut channel_a = channel_config(
+        "00000000-0000-0000-0000-000000000001",
+        "fallback-channel",
+        &mock_success.uri(),
+        1,
+    );
+    channel_a.excluded_models = vec!["gpt-4".to_string()];
+
+    // Channel B (priority 2): accepts gpt-4 but will fail.
+    let channel_b = channel_config(
+        "00000000-0000-0000-0000-000000000002",
+        "primary-channel",
+        &mock_fail.uri(),
+        2,
+    );
+
+    let state = build_test_state_with_opts(
+        vec![channel_a, channel_b],
+        0,
+        fallbacks,
+    );
+
+    let headers = HeaderMap::new();
+    let body = chat_request_body("gpt-4", "Test model fallback");
+    let provider = openai_provider();
+
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
+
+    assert_eq!(
+        response_status(&response),
+        200,
+        "dispatch should succeed by falling back from gpt-4 to gpt-3.5-turbo"
+    );
+    let json = response_json(response).await;
+    assert_eq!(
+        json["choices"][0]["message"]["content"],
+        "Fallback success!",
+        "response content should come from the fallback model attempt"
+    );
+
+    // Verify the fail upstream received exactly 1 request (for gpt-4).
+    let fail_requests = mock_fail.received_requests().await.unwrap();
+    assert_eq!(
+        fail_requests.len(),
+        1,
+        "fail channel should receive exactly 1 request for gpt-4"
+    );
+
+    // Verify the success upstream received exactly 1 request (for gpt-3.5-turbo).
+    let success_requests = mock_success.received_requests().await.unwrap();
+    assert_eq!(
+        success_requests.len(),
+        1,
+        "success channel should receive exactly 1 request for gpt-3.5-turbo fallback"
+    );
+}
+
+// ── Virtual key billing: success charges ───────────────────────────────────
+
+/// A successful request through a virtual key charges the key's budget.
+/// After dispatch returns 200, the key's daily/monthly spend should be
+/// non-zero.
+#[tokio::test]
+async fn dispatch_virtual_key_billing_success_charges() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("Billed!")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let state = build_test_state(vec![channel_config(
+        "00000000-0000-0000-0000-000000000001",
+        "billing-channel",
+        &mock_server.uri(),
+        1,
+    )]);
+
+    // Create a virtual key with budget limits so reserve_spend is triggered.
+    let (vk, _plaintext) = state
+        .billing
+        .virtual_key_store
+        .create(
+            "test-billing-key".to_string(),
+            Some(1000),  // daily_budget_cents
+            Some(10000), // monthly_budget_cents
+            None,        // allowed_models (all)
+            vec![],      // denied_models
+            vec![],      // allowed_ips
+            None,        // rpm_limit
+            None,        // tpm_limit
+            None,        // expires_at
+            None,        // group
+        )
+        .await;
+
+    // Inject the virtual key ID via the header that the middleware normally sets.
+    let mut headers = HeaderMap::new();
+    headers.insert("x-virtual-key-id", vk.id.to_string().parse().unwrap());
+
+    let body = chat_request_body("gpt-4", "Test billing");
+    let provider = openai_provider();
+
+    let response =
+        dispatch(&state, &headers, &body, &provider, RequestFormat::OpenAIChat).await;
+
+    assert_eq!(
+        response_status(&response),
+        200,
+        "dispatch should succeed"
+    );
+
+    // After the successful dispatch, the key's spend should be non-zero.
+    let fetched = state
+        .billing
+        .virtual_key_store
+        .get(vk.id)
+        .await
+        .expect("virtual key should exist");
+    assert!(
+        fetched.spend.today.cents > 0,
+        "daily spend should be non-zero after a successful billed request, got {}",
+        fetched.spend.today.cents
+    );
+    assert!(
+        fetched.spend.this_month.cents > 0,
+        "monthly spend should be non-zero after a successful billed request, got {}",
+        fetched.spend.this_month.cents
+    );
+}
+
+// ── Virtual key bill: failure refunds ──────────────────────────────────────
+
+/// When all channels are exhausted, the reserved budget is refunded. After
+/// dispatch returns 429, the key's spend should be zero (reserved then
+/// reconciled to 0).
+#[tokio::test]
+async fn dispatch_virtual_key_billing_failure_refunds() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({
+            "error": {"message": "Internal server error", "type": "server_error"}
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let state = build_test_state(vec![channel_config(
+        "00000000-0000-0000-0000-000000000001",
+        "fail-channel",
+        &mock_server.uri(),
+        1,
+    )]);
+
+    // Create a virtual key with a daily budget so reserve_spend is triggered.
+    let (vk, _plaintext) = state
+        .billing
+        .virtual_key_store
+        .create(
+            "test-refund-key".to_string(),
+            Some(1000),  // daily_budget_cents
+            Some(10000), // monthly_budget_cents
+            None,        // allowed_models (all)
+            vec![],      // denied_models
+            vec![],      // allowed_ips
+            None,        // rpm_limit
+            None,        // tpm_limit
+            None,        // expires_at
+            None,        // group
+        )
+        .await;
+
+    let mut headers = HeaderMap::new();
+    headers.insert("x-virtual-key-id", vk.id.to_string().parse().unwrap());
+
+    let body = chat_request_body("gpt-4", "Test refund");
+    let provider = openai_provider();
+
+    let response =
+        dispatch(&state, &headers, &body, &provider, RequestFormat::OpenAIChat).await;
+
+    // All channels exhausted → 429
+    assert_eq!(
+        response_status(&response),
+        429,
+        "dispatch should return 429 when all channels fail"
+    );
+
+    // The reservation should have been refunded — spend back to zero.
+    let fetched = state
+        .billing
+        .virtual_key_store
+        .get(vk.id)
+        .await
+        .expect("virtual key should exist");
+    assert_eq!(
+        fetched.spend.today.cents, 0,
+        "daily spend should be 0 after reservation refund on failure"
+    );
+    assert_eq!(
+        fetched.spend.this_month.cents, 0,
+        "monthly spend should be 0 after reservation refund on failure"
+    );
+    assert_eq!(
+        fetched.spend.total_cents, 0,
+        "total spend should be 0 after reservation refund on failure"
     );
 }
