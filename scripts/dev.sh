@@ -10,6 +10,7 @@
 #   dev         启动开发模式 (热重载)
 #   run         运行已编译的应用
 #   test        运行测试
+#   bench       网关分发管道基准测试 (release mode)
 #   lint        代码检查 (clippy + frontend)
 #   clean       清理构建产物
 #   ci          运行 CI 流程
@@ -64,6 +65,7 @@ ModelSwitch - LLM 智能网关统一开发工具
                        - fe:       pnpm test
                        - coverage: pnpm test:coverage
   e2e [--headed]     Playwright E2E (需先启动网关 + pnpm dev)
+  bench              网关分发管道基准测试 (release mode)
   lint               代码检查 (cargo clippy + tsc)
   clean              清理构建产物
   ci                 运行完整 CI 流程
@@ -81,6 +83,7 @@ ModelSwitch - LLM 智能网关统一开发工具
   ./scripts/dev.sh cli --port 9090    # 指定端口启动
   ./scripts/dev.sh test               # 运行全部测试
   ./scripts/dev.sh test rust          # 仅运行 Rust 测试
+  ./scripts/dev.sh bench              # 网关分发基准测试
   ./scripts/dev.sh lint               # 代码检查
   ./scripts/dev.sh clean              # 清理构建产物
   ./scripts/dev.sh dist               # 打包 macOS .dmg
@@ -531,6 +534,10 @@ main() {
             ;;
         e2e)
             run_e2e "$@"
+            ;;
+        bench)
+            info "Running dispatch pipeline benchmark (release mode)..."
+            cd "$BACKEND_DIR" && cargo test --release --test bench -- --ignored --nocapture
             ;;
         lint)
             run_lint

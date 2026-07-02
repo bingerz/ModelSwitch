@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::http::HeaderMap;
 use serde_json::Value;
 
 use crate::channel::manager::ChannelManager;
@@ -233,4 +234,16 @@ pub async fn response_json(response: axum::response::Response) -> Value {
         .await
         .expect("failed to read response body");
     serde_json::from_slice(&bytes).expect("response body is not valid JSON")
+}
+
+/// Dispatch a non-streaming OpenAI chat completion request through the full
+/// proxy pipeline. This wrapper exposes the `pub(crate)` dispatch function to
+/// integration tests and benchmarks.
+pub async fn dispatch_openai_chat(
+    state: &Arc<AppState>,
+    headers: &HeaderMap,
+    body: &Value,
+) -> axum::response::Response {
+    use crate::proxy::provider::OpenAIAdaptor;
+    crate::proxy::dispatch(state, headers, body, &OpenAIAdaptor, crate::proxy::RequestFormat::OpenAIChat).await
 }
