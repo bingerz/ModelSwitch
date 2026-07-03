@@ -604,7 +604,11 @@ fn prepare_upstream_body<'a>(
 ) -> (String, Cow<'a, Value>) {
     let upstream_model = channel.map_model(current_model);
     let has_payload_rules = payload_rules.has_rules(channel.id);
-    let model_needs_change = upstream_model != current_model;
+    let body_model = body
+        .get("model")
+        .and_then(|m| m.as_str())
+        .unwrap_or(current_model);
+    let model_needs_change = upstream_model != body_model;
 
     let needs_mutation = model_needs_change || has_payload_rules;
 
