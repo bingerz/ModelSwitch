@@ -1040,6 +1040,15 @@
     "noRatios": "No group ratios configured",
     "readOnlyHint": "Read-only view. Edit config.toml and reload, or use the admin API to change aliases, fallbacks, pricing, and groups."
   },
+  "onboarding": {
+    "title": "Welcome to ModelSwitch",
+    "subtitle": "Get started in three steps:",
+    "steps": {
+      "channels": "Add your first channel",
+      "virtualKeys": "Create a virtual key",
+      "playground": "Try the Playground"
+    }
+  },
   "security": {
     "title": "Security & Access Control",
     "adminToken": "Admin Token",

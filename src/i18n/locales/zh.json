@@ -969,6 +969,15 @@
     "noRatios": "未配置组比率",
     "readOnlyHint": "只读视图。请编辑 config.toml 并重载，或使用管理 API 修改别名、降级、定价和分组。"
   },
+  "onboarding": {
+    "title": "欢迎使用 ModelSwitch",
+    "subtitle": "按以下三步快速上手：",
+    "steps": {
+      "channels": "添加第一个渠道",
+      "virtualKeys": "创建虚拟密钥",
+      "playground": "试试 Playground"
+    }
+  },
   "security": {
     "title": "安全与访问控制",
     "adminToken": "管理员令牌",

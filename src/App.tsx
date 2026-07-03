@@ -8,6 +8,7 @@ import { Portal } from "./components/Portal";
 import { StatusBar } from "./components/StatusBar";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { MockBadge } from "./components/MockBadge";
+import { OnboardingBanner } from "./components/OnboardingBanner";
 import { QuotaProvider } from "./hooks/useQuota";
 
 // F5 — Lazy-loadable panel chunks.
@@ -341,6 +342,9 @@ function AppInner() {
           )}
         </nav>
         <main className="main" id="main-content" tabIndex={-1}>
+          {activeTab === "dashboard" && (
+            <OnboardingBanner onNavigate={(tab) => setActiveTab(tab as TabId)} />
+          )}
           {activeTab === "dashboard" && (
             <PanelBoundary name="Dashboard">
               <StatusDashboard />
