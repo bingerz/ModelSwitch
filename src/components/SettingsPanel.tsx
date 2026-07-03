@@ -81,6 +81,23 @@ export function SettingsPanel() {
       />
       <BackupRestore />
 
+      {/* TOML-only configuration reference */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">
+          {t("settings.tomlOnlyTitle")}
+        </h3>
+        <p className="settings-hint">{t("settings.tomlOnlyHint")}</p>
+        <ul className="settings-hint" style={{ marginTop: "0.5rem", paddingLeft: "1.5rem", lineHeight: 1.8 }}>
+          <li>model_fallbacks, context_window_fallbacks</li>
+          <li>model_aliases, model_groups</li>
+          <li>model_pricing, group_ratios</li>
+          <li>routing_strategy globals, rate_limit_algorithm, redis.*</li>
+          <li>http_pool_size, max_retries, retry_*_ms</li>
+          <li>request_timeout_secs, stream_keepalive_secs</li>
+          <li>auth.ldap.*, auth.oidc.*</li>
+        </ul>
+      </div>
+
       {/* Quick Links to Feature Panels */}
       <div className="settings-section">
         <h3 className="settings-section-title">

@@ -717,7 +717,9 @@
     "strategyUsage": "基于用量",
     "strategyLowestCost": "最低成本",
     "routingStrategyUpdated": "路由策略已更新",
-    "routingStrategyUpdateFailed": "更新路由策略失败"
+    "routingStrategyUpdateFailed": "更新路由策略失败",
+    "tomlOnlyTitle": "TOML 专属配置",
+    "tomlOnlyHint": "以下设置无法通过 Web 控制台修改。请直接编辑 config.toml 并重启网关以应用更改。"
   },
   "toast": {
     "gatewayStarted": "网关已启动",
