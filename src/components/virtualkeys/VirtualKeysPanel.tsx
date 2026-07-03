@@ -52,7 +52,7 @@ export function VirtualKeysPanel() {
     queryKey: ["virtualKeys", page, limit, activeSearch],
     queryFn: () =>
       api.virtualKeys.list({ page, limit, search: activeSearch || undefined }),
-    refetchInterval: 5_000,
+    refetchInterval: 15_000,
     placeholderData: keepPreviousData,
   });
 

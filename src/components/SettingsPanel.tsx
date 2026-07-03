@@ -43,7 +43,7 @@ export function SettingsPanel() {
       }
       return { cache, info, budgets: budgetData, ratios };
     },
-    refetchInterval: 10_000,
+    refetchInterval: 30_000,
     // Silently fail — StatusBar shows gateway status
     retry: false,
   });

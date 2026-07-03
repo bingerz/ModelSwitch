@@ -45,7 +45,7 @@ export function McpServersPanel() {
       for (const h of healthList) byName[h.name] = h;
       return { servers: list, healthMap: byName };
     },
-    refetchInterval: 5_000,
+    refetchInterval: 15_000,
     retry: false,
   });
 

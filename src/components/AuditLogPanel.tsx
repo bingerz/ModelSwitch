@@ -14,7 +14,7 @@ export function AuditLogPanel() {
   const { data: entries = [], isLoading: loading, refetch } = useQuery({
     queryKey: ["audit-log"],
     queryFn: () => api.auditLog(500),
-    refetchInterval: 15_000,
+    refetchInterval: 30_000,
     retry: false,
   });
 

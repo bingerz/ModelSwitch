@@ -13,7 +13,7 @@ export function CostDashboard() {
   const { data: stats, error, refetch } = useQuery({
     queryKey: ["cost-stats"],
     queryFn: () => api.costStats(),
-    refetchInterval: 5_000,
+    refetchInterval: 60_000,
     retry: false,
   });
 
