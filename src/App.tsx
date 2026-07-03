@@ -281,7 +281,9 @@ function AppInner() {
   }
 
   return (
-    <div className="layout">
+    <>
+      <a href="#main-content" className="skip-link">{t("common.skipToContent")}</a>
+      <div className="layout">
       <button
         className="hamburger-toggle"
         onClick={() => setMenuOpen((o) => !o)}
@@ -338,7 +340,7 @@ function AppInner() {
             </button>
           )}
         </nav>
-        <main className="main">
+        <main className="main" id="main-content" tabIndex={-1}>
           {activeTab === "dashboard" && (
             <PanelBoundary name="Dashboard">
               <StatusDashboard />
@@ -429,6 +431,7 @@ function AppInner() {
       <StatusBar />
       <MockBadge />
     </div>
+    </>
   );
 }
 

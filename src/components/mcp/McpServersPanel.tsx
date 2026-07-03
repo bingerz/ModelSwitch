@@ -187,7 +187,12 @@ export function McpServersPanel() {
       )}
 
       {servers.length > 0 && (
-        <McpAllToolsPanel servers={servers} />
+        <>
+          <div className="settings-hint" style={{ marginBottom: "0.75rem", padding: "0.5rem 0.75rem", background: "var(--color-bg-secondary, #f5f5f5)", borderRadius: "6px", fontSize: "var(--text-sm, 0.875rem)" }}>
+            {t("mcp.streamWarning")}
+          </div>
+          <McpAllToolsPanel servers={servers} />
+        </>
       )}
 
       {showAddForm && (

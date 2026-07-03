@@ -79,7 +79,8 @@
     "switchLang": "Switch language",
     "toggleMenu": "Toggle menu",
     "trendSparkline": "Trend sparkline",
-    "reqShort": "req"
+    "reqShort": "req",
+    "skipToContent": "Skip to content"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -222,7 +223,6 @@
     "webViewLoginFailed": "WebView login failed: {{error}}",
     "selectPreset": "Select a provider preset",
     "presetHint": "Select a provider preset to auto-fill, or enter manually below.",
-    "accountGroup": "Account Group",
     "maxConcurrent": "Max Concurrent",
     "maxConcurrentDesc": "Max concurrent requests (0 = unlimited)",
     "maxRetries": "Max Retries",
@@ -471,7 +471,8 @@
     "healthUnhealthy": "Unhealthy",
     "healthUnknown": "Unknown",
     "healthFailures": "{{count}} failures",
-    "healthSummary": "{{healthy}}/{{total}} healthy"
+    "healthSummary": "{{healthy}}/{{total}} healthy",
+    "streamWarning": "Note: When MCP auto-inject is enabled (default), streaming requests are internally processed as non-streaming to handle tool calls. Disable mcp_auto_inject in config.toml for pure streaming passthrough."
   },
   "quota": {
     "title": "Token Quota",
@@ -588,7 +589,9 @@
     "estCost24h": "Est. Cost (24h)",
     "tokensLabel": "{{count}} tokens",
     "errRate": "{{rate}}% err",
-    "activityTimeline": "Request activity timeline"
+    "activityTimeline": "Request activity timeline",
+    "emptyTitle": "No channels configured",
+    "emptyHint": "Go to Configuration → Channels to add your first LLM provider."
   },
   "logs": {
     "title": "Dispatch Logs",
@@ -1029,7 +1032,8 @@
     "noFallbacks": "No fallback chains configured",
     "noContextFallbacks": "No context window fallbacks configured",
     "noPricing": "No custom pricing configured",
-    "noRatios": "No group ratios configured"
+    "noRatios": "No group ratios configured",
+    "readOnlyHint": "Read-only view. Edit config.toml and reload, or use the admin API to change aliases, fallbacks, pricing, and groups."
   },
   "security": {
     "title": "Security & Access Control",

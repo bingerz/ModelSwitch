@@ -79,7 +79,8 @@
     "switchLang": "切换语言",
     "toggleMenu": "切换菜单",
     "trendSparkline": "趋势迷你图",
-    "reqShort": "请求"
+    "reqShort": "请求",
+    "skipToContent": "跳到主要内容"
   },
   "nav": {
     "dashboard": "仪表盘",
@@ -161,7 +162,7 @@
     "rpmPlaceholder": "默认（60）",
     "tpmLimit": "TPM 限制",
     "tpmPlaceholder": "无限制",
-    "accountGroup": "账户分组",
+    "accountGroup": "账户组",
     "accountGroupHint": "分组通道用于路由优先级和故障转移",
     "excludedModels": "排除模型",
     "excludedModelsHint": "逗号分隔的模型列表，从该通道排除",
@@ -222,7 +223,6 @@
     "webViewLoginFailed": "WebView 登录失败：{{error}}",
     "selectPreset": "选择供应商预设",
     "presetHint": "选择供应商预设以自动填充，或在下方手动输入。",
-    "accountGroup": "账户组",
     "maxConcurrent": "最大并发",
     "maxConcurrentDesc": "最大并发请求数（0 = 无限制）",
     "maxRetries": "最大重试次数",
@@ -471,7 +471,8 @@
     "healthUnhealthy": "异常",
     "healthUnknown": "未知",
     "healthFailures": "{{count}} 次失败",
-    "healthSummary": "{{healthy}}/{{total}} 个健康"
+    "healthSummary": "{{healthy}}/{{total}} 个健康",
+    "streamWarning": "注意：当 MCP 自动注入开启时（默认），流式请求会在内部以非流式方式处理以执行工具调用。如需纯流式通道，请在 config.toml 中禁用 mcp_auto_inject。"
   },
   "quota": {
     "title": "Token 配额",
@@ -588,7 +589,9 @@
     "estCost24h": "预估费用（24h）",
     "tokensLabel": "{{count}} Token",
     "errRate": "{{rate}}% 错误",
-    "activityTimeline": "请求活动时间线"
+    "activityTimeline": "请求活动时间线",
+    "emptyTitle": "尚未配置渠道",
+    "emptyHint": "前往 配置 → 渠道 添加你的第一个 LLM 提供商。"
   },
   "logs": {
     "title": "调度日志",
@@ -958,7 +961,8 @@
     "noFallbacks": "未配置回退链",
     "noContextFallbacks": "未配置上下文窗口回退",
     "noPricing": "未配置自定义定价",
-    "noRatios": "未配置组比率"
+    "noRatios": "未配置组比率",
+    "readOnlyHint": "只读视图。请编辑 config.toml 并重载，或使用管理 API 修改别名、降级、定价和分组。"
   },
   "security": {
     "title": "安全与访问控制",

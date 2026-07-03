@@ -44,7 +44,11 @@ export function ModelRoutingPanel() {
         refreshing={loading}
       />
 
-      {/* Model Aliases */}
+      <div className="settings-hint" style={{ marginBottom: "1rem", padding: "0.5rem 0.75rem", background: "var(--color-bg-secondary, #f5f5f5)", borderRadius: "6px" }}>
+        {t("modelRouting.readOnlyHint")}
+      </div>
+
+            {/* Model Aliases */}
       <div className="settings-section">
         <h3 className="settings-section-title">{t("modelRouting.aliases")}</h3>
         {aliases.length === 0 ? (

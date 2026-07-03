@@ -187,7 +187,22 @@ export function StatusDashboard() {
     );
   }
 
-  const healthyCount = channels.filter((c) => c.status === "healthy").length;
+    if (channels.length === 0) {
+    return (
+      <section>
+        <div className="panel-header">
+          <h2 className="panel-title">{t("dashboard.title")}</h2>
+        </div>
+        <div className="empty-state">
+          <div className="empty-state-icon">🚀</div>
+          <div className="empty-state-title">{t("dashboard.emptyTitle")}</div>
+          <div className="empty-state-description">{t("dashboard.emptyHint")}</div>
+        </div>
+      </section>
+    );
+  }
+
+const healthyCount = channels.filter((c) => c.status === "healthy").length;
   const circuitOpenCount = channels.filter((c) => c.status === "circuit_open").length;
   const disabledCount = channels.filter((c) => c.status === "disabled").length;
   const totalCost = usage?.total_cost ?? 0;
