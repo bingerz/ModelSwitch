@@ -626,7 +626,9 @@
     "tooltipStatus": "status",
     "tooltipRetries": "retries",
     "tooltipTokens": "tokens",
-    "tooltipCost": "cost"
+    "tooltipCost": "cost",
+    "filterByChannel": "Filter by channel",
+    "allChannels": "All channels"
   },
   "cost": {
     "title": "Cost Dashboard",

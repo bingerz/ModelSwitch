@@ -626,7 +626,9 @@
     "tooltipStatus": "状态",
     "tooltipRetries": "重试",
     "tooltipTokens": "Token",
-    "tooltipCost": "费用"
+    "tooltipCost": "费用",
+    "filterByChannel": "按渠道过滤",
+    "allChannels": "所有渠道"
   },
   "cost": {
     "title": "费用仪表盘",

@@ -21,6 +21,7 @@ export function LogViewer() {
   const { t } = useTranslation();
   const [filter, setFilter] = useState<FilterValue>("all");
   const [search, setSearch] = useState("");
+  const [channelFilter, setChannelFilter] = useState("");
 
   const { data: logs = [], isLoading: loading, refetch } = useQuery({
     queryKey: ["logs", 0, 100],
@@ -34,6 +35,12 @@ export function LogViewer() {
     await refetch();
   };
 
+  // Build unique channel list for quick filter
+  const channels = useMemo(
+    () => [...new Set(logs.map((l) => l.channel_name))].sort(),
+    [logs],
+  );
+
   // Pre-compute counts for badge display (unfiltered)
   const totalCount = logs.length;
   const successCount = logs.filter((l) => l.success).length;
@@ -45,8 +52,10 @@ export function LogViewer() {
       filter === "all"
         ? logs
         : logs.filter((l) => l.success === (filter === "success"));
-    return filtered.filter((l) => matchesSearch(l, search));
-  }, [logs, filter, search]);
+    return filtered
+      .filter((l) => matchesSearch(l, search))
+      .filter((l) => !channelFilter || l.channel_name === channelFilter);
+  }, [logs, filter, search, channelFilter]);
 
   // Summary stats for visible logs
   const summary = useMemo(() => {
@@ -104,6 +113,19 @@ export function LogViewer() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+        {channels.length > 0 && (
+          <select
+            className="log-channel-select"
+            value={channelFilter}
+            onChange={(e) => setChannelFilter(e.target.value)}
+            aria-label={t("logs.filterByChannel")}
+          >
+            <option value="">{t("logs.allChannels")}</option>
+            {channels.map((ch) => (
+              <option key={ch} value={ch}>{ch}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {logs.length > 0 && (
