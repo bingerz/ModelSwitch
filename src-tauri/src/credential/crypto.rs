@@ -49,8 +49,8 @@ fn derive_key_v1(secret: &str) -> [u8; 32] {
 /// v2 key derivation — HKDF-SHA256. The admin token is already high-entropy,
 /// so HKDF's single-pass extract+expand is the correct KDF (not PBKDF2).
 fn derive_key_v2(secret: &str) -> [u8; 32] {
-    use sha2::Sha256;
     use hkdf::Hkdf;
+    use sha2::Sha256;
 
     let salt = b"modelswitch-credential-encryption-v2";
     let info = b"aes-256-gcm-key";

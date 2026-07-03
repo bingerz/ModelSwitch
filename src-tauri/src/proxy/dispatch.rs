@@ -7,13 +7,13 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::channel::Channel;
+use crate::guardrails::GuardrailAction;
 use crate::proxy::cache::RequestCache;
 use crate::proxy::stream::{
     all_channels_exhausted_response, json_response, sse_stream_response_with_cached,
 };
 use crate::router;
 use crate::router::RoutingContext;
-use crate::guardrails::GuardrailAction;
 use crate::virtual_key::ReserveResult;
 
 use super::attempt::{try_channel_attempt, AttemptOutcome, DispatchContext};
@@ -351,7 +351,6 @@ pub(crate) async fn dispatch(
         .get(&original_model)
         .cloned()
         .unwrap_or(original_model);
-
 
     // Guardrails content moderation — fail fast on blocked content.
     if let GuardrailAction::Block(reason) = state.guardrails.check_request(body) {

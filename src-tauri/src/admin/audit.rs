@@ -183,7 +183,19 @@ impl AuditLog {
 
         // Compute this entry's hash and advance the chain tip.
         let computed = compute_entry_hash(&entry);
-        *self.last_hash.lock().await = Some(computed);
+        *self.last_hash.lock().await = Some(computed.clone());
+
+        // Anchor the chain tip to the system log (stderr/journald). This is
+        // an independent channel from the NDJSON file: an attacker with only
+        // file write access cannot rewrite the chain without leaving a
+        // discrepancy in the system log.
+        let entry_count = self.entries.read().await.len();
+        tracing::info!(
+            chain_tip = %computed,
+            action = %action,
+            entries = entry_count,
+            "audit entry recorded — chain tip anchored to system log"
+        );
 
         if let Some(ref path) = self.log_file {
             let line = match serde_json::to_string(&entry) {
@@ -314,17 +326,16 @@ impl AuditLog {
         match self.log_file.as_ref() {
             Some(path) => self.query_from_file(path, limit, offset).await,
             // ponytail: no persistence — best effort, return what memory has.
-            None => {
-                self.entries
-                    .read()
-                    .await
-                    .iter()
-                    .rev()
-                    .skip(offset)
-                    .take(limit)
-                    .cloned()
-                    .collect()
-            }
+            None => self
+                .entries
+                .read()
+                .await
+                .iter()
+                .rev()
+                .skip(offset)
+                .take(limit)
+                .cloned()
+                .collect(),
         }
     }
 

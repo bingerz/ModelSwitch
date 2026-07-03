@@ -1433,6 +1433,27 @@ pub(super) async fn handle_json_success(
 
     // Zero-copy str borrow from Bytes for usage extraction
     let response_str = std::str::from_utf8(&response_bytes).unwrap_or("");
+
+    // Guardrails response scan — block policy-violating LLM output. Only
+    // non-streaming JSON is scanned; SSE chunks are partial and cannot be
+    // matched reliably.
+    if let Ok(body_value) = serde_json::from_str::<Value>(response_str) {
+        if let crate::guardrails::GuardrailAction::Block(reason) =
+            state.guardrails.check_response(&body_value)
+        {
+            tracing::info!(
+                reason = %reason,
+                "response blocked by guardrails content policy"
+            );
+            return super::error_response(
+                StatusCode::FORBIDDEN,
+                "Response blocked by content policy",
+                "content_blocked",
+                "guardrails_response_blocked",
+            );
+        }
+    }
+
     let token_usage = extract_usage(response_str);
     let input_tokens = token_usage.input_tokens;
     let output_tokens = token_usage.output_tokens;

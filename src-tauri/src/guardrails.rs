@@ -119,6 +119,30 @@ impl GuardrailsChecker {
         self.check(&combined)
     }
 
+    /// Check a non-streaming chat completion response body.
+    ///
+    /// Extracts text from `choices[].message.content` (concatenating all
+    /// choices) and runs [`GuardrailsChecker::check`] on the combined text.
+    /// Bodies without a `choices` array are treated as empty content and
+    /// allowed. Streaming SSE responses are not scanned here — each chunk
+    /// is incomplete and cannot be matched reliably.
+    pub fn check_response(&self, body: &serde_json::Value) -> GuardrailAction {
+        let mut combined = String::new();
+        if let Some(choices) = body.get("choices").and_then(|c| c.as_array()) {
+            for choice in choices {
+                if let Some(content) = choice
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_str())
+                {
+                    combined.push_str(content);
+                    combined.push('\n');
+                }
+            }
+        }
+        self.check(&combined)
+    }
+
     /// Return the current configuration.
     pub fn get_config(&self) -> GuardrailsConfig {
         self.config
@@ -241,5 +265,63 @@ mod tests {
             }
             GuardrailAction::Allow => panic!("expected block, got allow"),
         }
+    }
+
+    #[test]
+    fn check_response_extracts_choices_content() {
+        let config = GuardrailsConfig {
+            enabled: true,
+            blocked_patterns: vec!["forbidden".to_string()],
+            ..Default::default()
+        };
+        let checker = GuardrailsChecker::new(config);
+
+        let body = json!({
+            "choices": [
+                {"message": {"role": "assistant", "content": "here is the forbidden answer"}},
+            ]
+        });
+
+        let result = checker.check_response(&body);
+        match result {
+            GuardrailAction::Block(reason) => {
+                assert!(
+                    reason.contains("forbidden"),
+                    "expected reason to mention forbidden, got: {reason}"
+                );
+            }
+            GuardrailAction::Allow => panic!("expected block, got allow"),
+        }
+    }
+
+    #[test]
+    fn check_response_allows_clean_content() {
+        let config = GuardrailsConfig {
+            enabled: true,
+            blocked_patterns: vec!["forbidden".to_string()],
+            ..Default::default()
+        };
+        let checker = GuardrailsChecker::new(config);
+
+        let body = json!({
+            "choices": [
+                {"message": {"role": "assistant", "content": "a perfectly safe reply"}},
+            ]
+        });
+
+        assert_eq!(checker.check_response(&body), GuardrailAction::Allow);
+    }
+
+    #[test]
+    fn check_response_allows_when_choices_missing() {
+        let config = GuardrailsConfig {
+            enabled: true,
+            blocked_patterns: vec!["forbidden".to_string()],
+            ..Default::default()
+        };
+        let checker = GuardrailsChecker::new(config);
+
+        // Bodies without a choices array are treated as empty content.
+        assert_eq!(checker.check_response(&json!({})), GuardrailAction::Allow);
     }
 }

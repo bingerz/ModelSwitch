@@ -44,7 +44,9 @@ pub async fn security_headers_middleware(req: axum::extract::Request, next: Next
     );
     headers.insert(
         "Permissions-Policy",
-        axum::http::HeaderValue::from_static("camera=(), microphone=(), geolocation=(), payment=()"),
+        axum::http::HeaderValue::from_static(
+            "camera=(), microphone=(), geolocation=(), payment=()",
+        ),
     );
     response
 }
@@ -76,17 +78,35 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         let headers = response.headers();
-        assert_eq!(headers.get("X-Content-Type-Options").unwrap().to_str().unwrap(), "nosniff");
-        assert_eq!(headers.get("X-Frame-Options").unwrap().to_str().unwrap(), "DENY");
+        assert_eq!(
+            headers
+                .get("X-Content-Type-Options")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "nosniff"
+        );
+        assert_eq!(
+            headers.get("X-Frame-Options").unwrap().to_str().unwrap(),
+            "DENY"
+        );
         assert_eq!(
             headers.get("Referrer-Policy").unwrap().to_str().unwrap(),
             "strict-origin-when-cross-origin"
         );
         assert_eq!(
-            headers.get("Strict-Transport-Security").unwrap().to_str().unwrap(),
+            headers
+                .get("Strict-Transport-Security")
+                .unwrap()
+                .to_str()
+                .unwrap(),
             "max-age=31536000; includeSubDomains"
         );
-        let csp = headers.get("Content-Security-Policy").unwrap().to_str().unwrap();
+        let csp = headers
+            .get("Content-Security-Policy")
+            .unwrap()
+            .to_str()
+            .unwrap();
         assert!(csp.contains("default-src 'self'"));
         assert!(csp.contains("object-src 'none'"));
         assert_eq!(

@@ -245,5 +245,12 @@ pub async fn dispatch_openai_chat(
     body: &Value,
 ) -> axum::response::Response {
     use crate::proxy::provider::OpenAIAdaptor;
-    crate::proxy::dispatch(state, headers, body, &OpenAIAdaptor, crate::proxy::RequestFormat::OpenAIChat).await
+    crate::proxy::dispatch(
+        state,
+        headers,
+        body,
+        &OpenAIAdaptor,
+        crate::proxy::RequestFormat::OpenAIChat,
+    )
+    .await
 }

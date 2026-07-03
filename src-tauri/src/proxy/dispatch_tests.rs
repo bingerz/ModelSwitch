@@ -1529,16 +1529,28 @@ async fn dispatch_rate_limit_enforcement() {
 
     // First request — should succeed (RPM counter is 0, limit is 1)
     let body1 = chat_request_body("gpt-4", "first request");
-    let response1 =
-        dispatch(&state, &headers, &body1, &provider, RequestFormat::OpenAIChat).await;
+    let response1 = dispatch(
+        &state,
+        &headers,
+        &body1,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
     assert_eq!(response_status(&response1), 200);
 
     // Second request with a different body (different cache key) — the channel
     // is now rate-limited (RPM counter is 1, limit is 1). With only one channel,
     // dispatch should return 429 (all channels exhausted).
     let body2 = chat_request_body("gpt-4", "second request");
-    let response2 =
-        dispatch(&state, &headers, &body2, &provider, RequestFormat::OpenAIChat).await;
+    let response2 = dispatch(
+        &state,
+        &headers,
+        &body2,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
     assert_eq!(
         response_status(&response2),
         429,
@@ -1589,8 +1601,20 @@ async fn dispatch_in_flight_coalescing() {
     // onto the first's in-flight entry, then serve from cache after the
     // first completes.
     let (response1, response2) = tokio::join!(
-        dispatch(&state, &headers, &body, &provider, RequestFormat::OpenAIChat),
-        dispatch(&state, &headers, &body, &provider, RequestFormat::OpenAIChat),
+        dispatch(
+            &state,
+            &headers,
+            &body,
+            &provider,
+            RequestFormat::OpenAIChat
+        ),
+        dispatch(
+            &state,
+            &headers,
+            &body,
+            &provider,
+            RequestFormat::OpenAIChat
+        ),
     );
 
     assert_eq!(response_status(&response1), 200);
@@ -1629,8 +1653,7 @@ async fn dispatch_disabled_channel_is_skipped() {
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_string(chat_completion_response("Enabled channel")),
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("Enabled channel")),
         )
         .mount(&mock_enabled)
         .await;
@@ -1654,14 +1677,19 @@ async fn dispatch_disabled_channel_is_skipped() {
     let body = chat_request_body("gpt-4", "Test disabled channel skip");
     let provider = openai_provider();
 
-    let response =
-        dispatch(&state, &headers, &body, &provider, RequestFormat::OpenAIChat).await;
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
 
     assert_eq!(response_status(&response), 200);
     let json = response_json(response).await;
     assert_eq!(
-        json["choices"][0]["message"]["content"],
-        "Enabled channel",
+        json["choices"][0]["message"]["content"], "Enabled channel",
         "should route to the enabled channel, not the disabled one"
     );
 
@@ -1729,14 +1757,19 @@ async fn dispatch_priority_ordering() {
     let body = chat_request_body("gpt-4", "Test priority ordering");
     let provider = openai_provider();
 
-    let response =
-        dispatch(&state, &headers, &body, &provider, RequestFormat::OpenAIChat).await;
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
 
     assert_eq!(response_status(&response), 200);
     let json = response_json(response).await;
     assert_eq!(
-        json["choices"][0]["message"]["content"],
-        "High priority!",
+        json["choices"][0]["message"]["content"], "High priority!",
         "should route to the higher-priority channel"
     );
 
@@ -1778,8 +1811,7 @@ async fn dispatch_excluded_models_skips_channel() {
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_string(chat_completion_response("Allowed channel")),
+            ResponseTemplate::new(200).set_body_string(chat_completion_response("Allowed channel")),
         )
         .mount(&mock_allowed)
         .await;
@@ -1807,14 +1839,19 @@ async fn dispatch_excluded_models_skips_channel() {
     let body = chat_request_body("gpt-4", "Test excluded models");
     let provider = openai_provider();
 
-    let response =
-        dispatch(&state, &headers, &body, &provider, RequestFormat::OpenAIChat).await;
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
 
     assert_eq!(response_status(&response), 200);
     let json = response_json(response).await;
     assert_eq!(
-        json["choices"][0]["message"]["content"],
-        "Allowed channel",
+        json["choices"][0]["message"]["content"], "Allowed channel",
         "should route to the channel without model exclusion"
     );
 
@@ -1864,10 +1901,7 @@ async fn dispatch_model_fallback_chain() {
         .await;
 
     let mut fallbacks = HashMap::new();
-    fallbacks.insert(
-        "gpt-4".to_string(),
-        vec!["gpt-3.5-turbo".to_string()],
-    );
+    fallbacks.insert("gpt-4".to_string(), vec!["gpt-3.5-turbo".to_string()]);
 
     // Channel A (priority 1): excludes gpt-4 so it only handles fallback models.
     let mut channel_a = channel_config(
@@ -1886,11 +1920,7 @@ async fn dispatch_model_fallback_chain() {
         2,
     );
 
-    let state = build_test_state_with_opts(
-        vec![channel_a, channel_b],
-        0,
-        fallbacks,
-    );
+    let state = build_test_state_with_opts(vec![channel_a, channel_b], 0, fallbacks);
 
     let headers = HeaderMap::new();
     let body = chat_request_body("gpt-4", "Test model fallback");
@@ -1912,8 +1942,7 @@ async fn dispatch_model_fallback_chain() {
     );
     let json = response_json(response).await;
     assert_eq!(
-        json["choices"][0]["message"]["content"],
-        "Fallback success!",
+        json["choices"][0]["message"]["content"], "Fallback success!",
         "response content should come from the fallback model attempt"
     );
 
@@ -1983,14 +2012,16 @@ async fn dispatch_virtual_key_billing_success_charges() {
     let body = chat_request_body("gpt-4", "Test billing");
     let provider = openai_provider();
 
-    let response =
-        dispatch(&state, &headers, &body, &provider, RequestFormat::OpenAIChat).await;
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
 
-    assert_eq!(
-        response_status(&response),
-        200,
-        "dispatch should succeed"
-    );
+    assert_eq!(response_status(&response), 200, "dispatch should succeed");
 
     // After the successful dispatch, the key's spend should be non-zero.
     let fetched = state
@@ -2059,8 +2090,14 @@ async fn dispatch_virtual_key_billing_failure_refunds() {
     let body = chat_request_body("gpt-4", "Test refund");
     let provider = openai_provider();
 
-    let response =
-        dispatch(&state, &headers, &body, &provider, RequestFormat::OpenAIChat).await;
+    let response = dispatch(
+        &state,
+        &headers,
+        &body,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
 
     // All channels exhausted → 429
     assert_eq!(
@@ -2138,7 +2175,14 @@ async fn dispatch_circuit_breaker_recovery() {
 
     // Step 1 — both healthy: A (priority 1) should win.
     let body1 = chat_request_body("gpt-4", "first");
-    let r1 = dispatch(&state, &headers, &body1, &provider, RequestFormat::OpenAIChat).await;
+    let r1 = dispatch(
+        &state,
+        &headers,
+        &body1,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
     assert_eq!(response_status(&r1), 200);
     assert_eq!(
         server_a.received_requests().await.unwrap().len(),
@@ -2154,7 +2198,14 @@ async fn dispatch_circuit_breaker_recovery() {
     // Step 2 — break channel A: traffic should fall through to B.
     state.channel_mgr.mark_circuit_open(id_a).await;
     let body2 = chat_request_body("gpt-4", "second");
-    let r2 = dispatch(&state, &headers, &body2, &provider, RequestFormat::OpenAIChat).await;
+    let r2 = dispatch(
+        &state,
+        &headers,
+        &body2,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
     assert_eq!(response_status(&r2), 200);
     assert_eq!(
         server_a.received_requests().await.unwrap().len(),
@@ -2170,7 +2221,14 @@ async fn dispatch_circuit_breaker_recovery() {
     // Step 3 — recover channel A: traffic should route back to A.
     state.channel_mgr.force_recover(id_a).await;
     let body3 = chat_request_body("gpt-4", "third");
-    let r3 = dispatch(&state, &headers, &body3, &provider, RequestFormat::OpenAIChat).await;
+    let r3 = dispatch(
+        &state,
+        &headers,
+        &body3,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
     assert_eq!(response_status(&r3), 200);
     assert_eq!(
         server_a.received_requests().await.unwrap().len(),
@@ -2224,7 +2282,14 @@ async fn dispatch_hot_reload_new_channel_receives_traffic() {
 
     // Step 1 — only B exists, so B must serve.
     let body1 = chat_request_body("gpt-4", "first");
-    let r1 = dispatch(&state, &headers, &body1, &provider, RequestFormat::OpenAIChat).await;
+    let r1 = dispatch(
+        &state,
+        &headers,
+        &body1,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
     assert_eq!(response_status(&r1), 200);
     assert_eq!(
         server_b.received_requests().await.unwrap().len(),
@@ -2248,7 +2313,14 @@ async fn dispatch_hot_reload_new_channel_receives_traffic() {
 
     // Step 3 — A has higher priority, so the new channel should now win.
     let body2 = chat_request_body("gpt-4", "second");
-    let r2 = dispatch(&state, &headers, &body2, &provider, RequestFormat::OpenAIChat).await;
+    let r2 = dispatch(
+        &state,
+        &headers,
+        &body2,
+        &provider,
+        RequestFormat::OpenAIChat,
+    )
+    .await;
     assert_eq!(response_status(&r2), 200);
     assert_eq!(
         server_a.received_requests().await.unwrap().len(),

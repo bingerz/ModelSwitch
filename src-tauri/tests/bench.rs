@@ -65,9 +65,7 @@ async fn bench_dispatch_throughput() {
     let mock_server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_string(chat_completion_response()),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_string(chat_completion_response()))
         .mount(&mock_server)
         .await;
 
@@ -114,8 +112,7 @@ async fn bench_dispatch_throughput() {
     }
 
     let seq_total = seq_start.elapsed();
-    let seq_avg: Duration =
-        seq_latencies.iter().sum::<Duration>() / seq_latencies.len() as u32;
+    let seq_avg: Duration = seq_latencies.iter().sum::<Duration>() / seq_latencies.len() as u32;
     let seq_qps = SEQ_REQS as f64 / seq_total.as_secs_f64();
 
     // ── Concurrent ─────────────────────────────────────────────────────────
@@ -172,9 +169,7 @@ async fn bench_dispatch_throughput() {
     println!("  Avg latency: {:.2?}", seq_avg);
     println!("  QPS: {:.1}", seq_qps);
     println!();
-    println!(
-        "Concurrent ({CONCURRENT_REQS} requests, {CONCURRENCY} workers):"
-    );
+    println!("Concurrent ({CONCURRENT_REQS} requests, {CONCURRENCY} workers):");
     println!("  Total: {:.2?}", conc_total);
     println!("  Avg latency: {:.2?}", conc_avg);
     println!("  p50: {:.2?}", conc_p50);
