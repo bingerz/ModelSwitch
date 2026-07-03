@@ -10,11 +10,11 @@ interface GatewayInfoSectionProps {
 }
 
 const STRATEGY_OPTIONS = [
-  { value: "weighted_random", labelKey: "settings.strategyWeightedRandom" },
-  { value: "latency", labelKey: "settings.strategyLatency" },
-  { value: "least_busy", labelKey: "settings.strategyLeastBusy" },
-  { value: "usage", labelKey: "settings.strategyUsage" },
-  { value: "lowest_cost", labelKey: "settings.strategyLowestCost" },
+  { value: "weighted_random", labelKey: "settings.strategyWeightedRandom", descKey: "settings.strategyWeightedRandomDesc" },
+  { value: "latency", labelKey: "settings.strategyLatency", descKey: "settings.strategyLatencyDesc" },
+  { value: "least_busy", labelKey: "settings.strategyLeastBusy", descKey: "settings.strategyLeastBusyDesc" },
+  { value: "usage", labelKey: "settings.strategyUsage", descKey: "settings.strategyUsageDesc" },
+  { value: "lowest_cost", labelKey: "settings.strategyLowestCost", descKey: "settings.strategyLowestCostDesc" },
 ] as const;
 
 /** Live gateway snapshot — version, uptime, channel health, routing. */
@@ -99,6 +99,9 @@ export function GatewayInfoSection({
                 </option>
               ))}
             </select>
+          </span>
+          <span className="settings-hint" style={{ marginTop: "var(--space-1)" }}>
+            {t(STRATEGY_OPTIONS.find((o) => o.value === gatewayInfo.routing_strategy)?.descKey ?? "")}
           </span>
         </div>
         <div className="settings-stat">

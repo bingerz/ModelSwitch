@@ -726,7 +726,12 @@
     "tomlOnlyHint": "以下设置无法通过 Web 控制台修改。请直接编辑 config.toml 并重启网关以应用更改。",
     "keyboardShortcuts": "键盘快捷键",
     "keyboardShortcutsHint": "挌 ⌘/Ctrl + 1-9 快速切换面板。",
-    "singleInstanceNote": "当前为单实例模式。如需多实例部署（共享限流、高可用），请在 config.toml 中配置 Redis 连接。"
+    "singleInstanceNote": "当前为单实例模式。如需多实例部署（共享限流、高可用），请在 config.toml 中配置 Redis 连接。",
+    "strategyWeightedRandomDesc": "根据渠道权重值分配请求。",
+    "strategyLatencyDesc": "路由到历史响应时间最低的渠道。",
+    "strategyLeastBusyDesc": "路由到活跃请求数最少的渠道。",
+    "strategyUsageDesc": "路由到相对于限额使用率最低的渠道。",
+    "strategyLowestCostDesc": "为请求模型路由到最便宜的可用渠道。"
   },
   "toast": {
     "gatewayStarted": "网关已启动",

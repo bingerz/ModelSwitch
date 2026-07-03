@@ -726,7 +726,12 @@
     "tomlOnlyHint": "These settings are not editable via the web console. Edit config.toml directly and restart the gateway to apply changes.",
     "keyboardShortcuts": "Keyboard Shortcuts",
     "keyboardShortcutsHint": "Press ⌘/Ctrl + 1-9 to quickly switch between panels.",
-    "singleInstanceNote": "Running in single-instance mode. For multi-instance deployments (shared rate limits, HA), configure a Redis connection in config.toml."
+    "singleInstanceNote": "Running in single-instance mode. For multi-instance deployments (shared rate limits, HA), configure a Redis connection in config.toml.",
+    "strategyWeightedRandomDesc": "Distributes requests based on channel weight values.",
+    "strategyLatencyDesc": "Routes to the channel with the lowest historical response time.",
+    "strategyLeastBusyDesc": "Routes to the channel with the fewest active requests.",
+    "strategyUsageDesc": "Routes to the channel with the lowest utilization relative to its limits.",
+    "strategyLowestCostDesc": "Routes to the cheapest available channel for the requested model."
   },
   "toast": {
     "gatewayStarted": "Gateway started",
