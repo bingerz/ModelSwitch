@@ -280,6 +280,91 @@ impl AuditLog {
         }
         true
     }
+
+    /// Query audit entries with `offset`/`limit` pagination (newest first),
+    /// transparently reading from the NDJSON file when the requested range
+    /// exceeds the in-memory ring buffer.
+    ///
+    /// This is the compliance-aware query path: even after the ring buffer
+    /// evicts old entries, they remain queryable as long as the NDJSON file
+    /// (and rotated backups) retains them.
+    ///
+    /// - Fast path: when `offset + limit` fits in the in-memory ring buffer,
+    ///   serves from memory (no disk I/O).
+    /// - Slow path: when the range extends beyond memory, reads the full
+    ///   history from the NDJSON file plus rotated backups `.1`..`.5`.
+    /// - When no `log_file` is configured, falls back to memory-only
+    ///   (queries past the buffer return an empty vec).
+    pub async fn query_entries(&self, limit: usize, offset: usize) -> Vec<AuditEntry> {
+        let in_memory = self.entries.read().await;
+        let memory_len = in_memory.len();
+        let needs_file = offset.saturating_add(limit) > memory_len;
+        if !needs_file {
+            // Fast path: serve from memory.
+            return in_memory
+                .iter()
+                .rev()
+                .skip(offset)
+                .take(limit)
+                .cloned()
+                .collect();
+        }
+        drop(in_memory);
+
+        match self.log_file.as_ref() {
+            Some(path) => self.query_from_file(path, limit, offset).await,
+            // ponytail: no persistence — best effort, return what memory has.
+            None => {
+                self.entries
+                    .read()
+                    .await
+                    .iter()
+                    .rev()
+                    .skip(offset)
+                    .take(limit)
+                    .cloned()
+                    .collect()
+            }
+        }
+    }
+
+    /// Read entries from NDJSON file (and rotated backups) with offset/limit
+    /// applied in newest-first order.
+    ///
+    /// ponytail: O(N) full-file scan per query, fine for occasional admin
+    /// queries. Add an LRU/mmap index if throughput becomes a concern.
+    async fn query_from_file(&self, path: &Path, limit: usize, offset: usize) -> Vec<AuditEntry> {
+        // Collect files in chronological order: oldest backup first, active
+        // file last. Each rotated backup is `path.{N}` where higher N = older.
+        let mut files: Vec<PathBuf> = Vec::new();
+        for i in (1..=AUDIT_LOG_MAX_BACKUPS).rev() {
+            let backup = path.with_extension(format!("{i}"));
+            if backup.exists() {
+                files.push(backup);
+            }
+        }
+        files.push(path.to_path_buf());
+
+        // ponytail: load-then-filter. With 5 backups × 10 MB each, this is
+        // ~50 MB peak; acceptable for admin queries.
+        let mut all: Vec<AuditEntry> = Vec::new();
+        for file in &files {
+            let Ok(content) = tokio::fs::read_to_string(file).await else {
+                continue;
+            };
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if let Ok(entry) = serde_json::from_str::<AuditEntry>(trimmed) {
+                    all.push(entry);
+                }
+            }
+        }
+
+        all.iter().rev().skip(offset).take(limit).cloned().collect()
+    }
 }
 
 // ─── Private helpers for file persistence ──────────────
@@ -376,20 +461,34 @@ fn default_limit() -> Option<usize> {
     Some(100)
 }
 
+fn default_offset() -> Option<usize> {
+    Some(0)
+}
+
 /// Query parameters for `GET /api/audit-log`.
 #[derive(Debug, Deserialize)]
 pub struct AuditLogParams {
     /// Maximum number of entries to return (default 100).
     #[serde(default = "default_limit")]
     pub limit: Option<usize>,
+    /// Number of entries to skip (newest-first) before returning results.
+    /// Enables pagination into history older than the in-memory ring buffer.
+    #[serde(default = "default_offset")]
+    pub offset: Option<usize>,
 }
 
-/// `GET /api/audit-log` — return recent audit entries, newest first.
+/// `GET /api/audit-log` — return audit entries, newest first.
+///
+/// When `offset + limit` fits in the in-memory ring buffer, serves from
+/// memory. Otherwise reads the full NDJSON history (including rotated
+/// backups) so paginated queries reach entries beyond the ring buffer.
 pub async fn get_audit_log(
     axum::extract::State(state): axum::extract::State<Arc<crate::proxy::AppState>>,
     axum::extract::Query(params): axum::extract::Query<AuditLogParams>,
 ) -> axum::Json<super::ApiResponse<Vec<AuditEntry>>> {
-    let entries = state.audit_log.list(params.limit).await;
+    let limit = params.limit.unwrap_or(100);
+    let offset = params.offset.unwrap_or(0);
+    let entries = state.audit_log.query_entries(limit, offset).await;
     axum::Json(super::ApiResponse::ok(entries))
 }
 
@@ -563,6 +662,149 @@ mod tests {
         let entries = log.list(None).await;
         assert!(entries[0].timestamp >= before);
         assert!(entries[0].timestamp <= after);
+    }
+
+    #[tokio::test]
+    async fn query_entries_serves_from_memory_when_range_fits() {
+        let log = AuditLog::new(100);
+        for i in 0..5 {
+            log.record("action", "actor", &format!("t{i}"), json!({}))
+                .await;
+        }
+
+        let page = log.query_entries(3, 0).await;
+        assert_eq!(page.len(), 3);
+        assert_eq!(page[0].target, "t4", "newest first");
+        assert_eq!(page[1].target, "t3");
+        assert_eq!(page[2].target, "t2");
+
+        let mid = log.query_entries(2, 1).await;
+        assert_eq!(mid.len(), 2);
+        assert_eq!(mid[0].target, "t3");
+        assert_eq!(mid[1].target, "t2");
+    }
+
+    #[tokio::test]
+    async fn query_entries_without_persistence_returns_empty_past_memory() {
+        let log = AuditLog::new(100);
+        for i in 0..5 {
+            log.record("action", "actor", &format!("t{i}"), json!({}))
+                .await;
+        }
+        // offset beyond memory with no file → empty (best-effort).
+        let page = log.query_entries(3, 10).await;
+        assert!(page.is_empty(), "no file → returns empty past memory");
+    }
+
+    #[tokio::test]
+    async fn query_entries_reads_beyond_memory_from_file() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-audit-query-{}.ndjson",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        // Write 10 entries directly to the NDJSON file (oldest first).
+        let mut content = String::new();
+        for i in 0..10 {
+            let entry = serde_json::json!({
+                "timestamp": "2025-01-01T00:00:00Z",
+                "action": "action",
+                "actor": "actor",
+                "target": format!("t{i}"),
+                "details": {}
+            });
+            content.push_str(&entry.to_string());
+            content.push('\n');
+        }
+        tokio::fs::write(&path, &content).await.unwrap();
+
+        // AuditLog with capacity=3 → memory only holds newest 3 (t9, t8, t7).
+        let log = AuditLog::with_persistence(3, path.clone());
+        log.load_from_file().await;
+        assert_eq!(log.total().await, 3, "memory holds only 3 newest");
+
+        // Fast path: 3 newest from memory.
+        let mem = log.query_entries(3, 0).await;
+        assert_eq!(mem.len(), 3);
+        assert_eq!(mem[0].target, "t9");
+
+        // Slow path: request 10 entries — exceeds memory, must read file.
+        let all = log.query_entries(10, 0).await;
+        assert_eq!(all.len(), 10, "file query should return all 10");
+        assert_eq!(all[0].target, "t9", "newest first");
+        assert_eq!(all[9].target, "t0", "oldest last");
+
+        // Pagination into history older than memory.
+        let old_page = log.query_entries(2, 8).await;
+        assert_eq!(old_page.len(), 2);
+        assert_eq!(old_page[0].target, "t1");
+        assert_eq!(old_page[1].target, "t0");
+
+        // Offset beyond total returns empty.
+        let beyond = log.query_entries(5, 20).await;
+        assert!(beyond.is_empty(), "offset beyond total → empty");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn query_entries_reads_rotated_backups() {
+        let path = std::env::temp_dir().join(format!(
+            "modelswitch-audit-rot-{}.ndjson",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let backup1 = path.with_extension("1");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&backup1);
+
+        // Oldest entries in rotated backup .1
+        let mut old_content = String::new();
+        for i in 0..3 {
+            old_content.push_str(
+                &serde_json::json!({
+                    "timestamp": "2025-01-01T00:00:00Z",
+                    "action": "action",
+                    "actor": "actor",
+                    "target": format!("old-{i}"),
+                    "details": {}
+                })
+                .to_string(),
+            );
+            old_content.push('\n');
+        }
+        tokio::fs::write(&backup1, &old_content).await.unwrap();
+
+        // Newer entries in active file
+        let mut new_content = String::new();
+        for i in 0..3 {
+            new_content.push_str(
+                &serde_json::json!({
+                    "timestamp": "2025-01-02T00:00:00Z",
+                    "action": "action",
+                    "actor": "actor",
+                    "target": format!("new-{i}"),
+                    "details": {}
+                })
+                .to_string(),
+            );
+            new_content.push('\n');
+        }
+        tokio::fs::write(&path, &new_content).await.unwrap();
+
+        let log = AuditLog::with_persistence(2, path.clone());
+        log.load_from_file().await;
+
+        // Query all 6 entries — exceeds memory, must read file + backup.
+        let all = log.query_entries(10, 0).await;
+        assert_eq!(all.len(), 6, "should include rotated backup entries");
+        // Newest first: new-2, new-1, new-0, old-2, old-1, old-0
+        assert_eq!(all[0].target, "new-2");
+        assert_eq!(all[3].target, "old-2");
+        assert_eq!(all[5].target, "old-0");
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&backup1);
     }
 
     #[tokio::test]
