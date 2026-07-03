@@ -13,6 +13,7 @@ use crate::proxy::stream::{
 };
 use crate::router;
 use crate::router::RoutingContext;
+use crate::guardrails::GuardrailAction;
 use crate::virtual_key::ReserveResult;
 
 use super::attempt::{try_channel_attempt, AttemptOutcome, DispatchContext};
@@ -350,6 +351,16 @@ pub(crate) async fn dispatch(
         .get(&original_model)
         .cloned()
         .unwrap_or(original_model);
+
+    // Guardrails content moderation — fail fast on blocked content.
+    if let GuardrailAction::Block(reason) = state.guardrails.check_request(body) {
+        return error_response(
+            reqwest::StatusCode::FORBIDDEN,
+            &reason,
+            "content_blocked",
+            "guardrails_blocked",
+        );
+    }
 
     // Check if the requested model is a group name. If so, the fallback chain
     // will be expanded to the group's member models so the dispatch loop tries

@@ -500,10 +500,25 @@ pub async fn reload_config(
                 "Config reload: {updated} updated, {created} created, {removed} removed"
             );
             Ok(Json(ApiResponse::ok(serde_json::json!({
-                "reloaded": true,
+                "reloaded": ["channels"],
+                "not_reloaded": [
+                    "model_fallbacks",
+                    "model_aliases",
+                    "model_groups",
+                    "model_pricing",
+                    "group_ratios",
+                    "context_window_fallbacks",
+                    "routing_strategy_globals",
+                    "auth_config",
+                    "rate_limit_algorithm",
+                    "redis_config",
+                    "http_pool_size",
+                    "retry_parameters"
+                ],
                 "updated": updated,
                 "created": created,
-                "removed": removed
+                "removed": removed,
+                "note": "Only channels are reloaded from TOML. For other config changes, restart the gateway. Use the admin API for hot-reloadable settings like routing_strategy, cache_mode, guardrails, and sanitizer."
             }))))
         }
         Err(e) => {

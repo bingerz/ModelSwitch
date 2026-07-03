@@ -160,31 +160,57 @@ export function Playground() {
           messages,
           temperature,
           max_tokens: maxTokens,
-          // Stream support is intentionally a v2 concern — always request a
-          // single non-streaming completion so we can capture usage metadata.
-          stream: false,
+          stream,
         }),
       });
-      const latency_ms = Math.round(performance.now() - startTime);
 
       if (!res.ok) {
         const errBody = await res.text().catch(() => "");
         throw new Error(`HTTP ${res.status}${errBody ? `: ${errBody}` : ""}`);
       }
 
-      const data = (await res.json()) as ChatCompletionResponse;
-      const content =
-        data.choices?.[0]?.message?.content ?? JSON.stringify(data, null, 2);
-      setResponse(content);
-      setMetadata({
-        latency_ms,
-        model: data.model ?? model,
-        prompt_tokens: data.usage?.prompt_tokens,
-        completion_tokens: data.usage?.completion_tokens,
-        total_tokens: data.usage?.total_tokens,
-      });
-      // Reference stream flag to satisfy TS — actual streaming deferred to v2.
-      void stream;
+      if (stream) {
+        // SSE streaming — accumulate delta content progressively.
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error("No response body for streaming");
+        const decoder = new TextDecoder();
+        let accumulated = "";
+        let buffer = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data: ")) continue;
+            const payload = trimmed.slice(6);
+            if (payload === "[DONE]") continue;
+            try {
+              const chunk = JSON.parse(payload);
+              const delta = chunk.choices?.[0]?.delta?.content;
+              if (delta) {
+                accumulated += delta;
+                setResponse(accumulated);
+              }
+            } catch { /* skip malformed SSE chunk */ }
+          }
+        }
+        setMetadata({ latency_ms: Math.round(performance.now() - startTime), model });
+      } else {
+        const data = (await res.json()) as ChatCompletionResponse;
+        const content =
+          data.choices?.[0]?.message?.content ?? JSON.stringify(data, null, 2);
+        setResponse(content);
+        setMetadata({
+          latency_ms: Math.round(performance.now() - startTime),
+          model: data.model ?? model,
+          prompt_tokens: data.usage?.prompt_tokens,
+          completion_tokens: data.usage?.completion_tokens,
+          total_tokens: data.usage?.total_tokens,
+        });
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setError(message);

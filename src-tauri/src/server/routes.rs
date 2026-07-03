@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::routing::{delete, get, post, put};
+use axum::routing::{any, delete, get, post, put};
 use axum::Router;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
@@ -432,12 +432,29 @@ pub fn build_router(state: Arc<AppState>, web_console_dir: Option<&str>) -> Rout
         use tower_http::services::{ServeDir, ServeFile};
         let index_path = format!("{}/index.html", dir);
         let serve_dir = ServeDir::new(dir).fallback(ServeFile::new(index_path));
-        router.fallback_service(serve_dir)
+        // Catch unmatched API paths before SPA fallback so they return JSON 404
+        // instead of index.html with HTTP 200.
+        router
+            .route("/api/{*rest}", any(api_json_not_found))
+            .route("/v1/api/{*rest}", any(api_json_not_found))
+            .fallback_service(serve_dir)
     } else {
         router
     };
 
     router
+}
+
+/// Return JSON 404 for unmatched API paths.
+/// Prevents the SPA static file fallback from serving index.html for
+/// mistyped API endpoints (which would return HTML 200 instead of JSON 404).
+async fn api_json_not_found() -> impl axum::response::IntoResponse {
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        axum::Json(serde_json::json!({
+            "error": { "message": "Not found", "code": "not_found" }
+        })),
+    )
 }
 
 /// Build a configurable CORS layer.
