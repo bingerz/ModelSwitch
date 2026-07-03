@@ -16,7 +16,7 @@ use std::sync::RwLock;
 pub struct FileCredentialStore {
     path: std::path::PathBuf,
     cache: RwLock<HashMap<String, String>>,
-    encryption_key: Option<[u8; 32]>,
+    encryption_key: Option<crypto::EncryptionKey>,
 }
 
 impl Default for FileCredentialStore {
@@ -35,10 +35,10 @@ impl FileCredentialStore {
     /// `admin_token`. Existing plaintext credentials on disk are loaded
     /// as-is and re-encrypted on the next persist.
     pub fn with_encryption(admin_token: &str) -> Self {
-        Self::build(Some(crypto::derive_key(admin_token)))
+        Self::build(Some(crypto::EncryptionKey::derive(admin_token)))
     }
 
-    fn build(encryption_key: Option<[u8; 32]>) -> Self {
+    fn build(encryption_key: Option<crypto::EncryptionKey>) -> Self {
         let path = app_config_dir().join("credentials.toml");
 
         let store = Self {
@@ -264,7 +264,7 @@ mod tests {
         // Verify the on-disk file contains encrypted values
         let content = std::fs::read_to_string(credentials_path()).unwrap();
         assert!(
-            content.contains("enc:v1:"),
+            content.contains("enc:v2:"),
             "on-disk file should contain encrypted values"
         );
         assert!(
@@ -302,7 +302,7 @@ mod tests {
         store.set("new_svc", "new_user", "new-secret").unwrap();
         let content = std::fs::read_to_string(credentials_path()).unwrap();
         assert!(
-            content.contains("enc:v1:"),
+            content.contains("enc:v2:"),
             "migrated file should have encrypted values"
         );
         assert!(
