@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { FlaskConical, RotateCcw } from "lucide-react";
+import { FlaskConical, Keyboard, RotateCcw } from "lucide-react";
 import { api } from "../../lib/api";
 import { isMockMode, setMockMode } from "../../lib/mock-flag";
 import { useToast } from "../Toast";
@@ -83,6 +83,14 @@ export function GeneralSettings({ onRefresh }: GeneralSettingsProps) {
             {reloading ? t("settings.reloading") : t("settings.reloadConfig")}
           </button>
         </div>
+      </div>
+      {/* Keyboard Shortcuts */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">
+          <Keyboard size={14} className="icon-inline" />
+          {t("settings.keyboardShortcuts")}
+        </h3>
+        <p className="settings-hint">{t("settings.keyboardShortcutsHint")}</p>
       </div>
     </>
   );

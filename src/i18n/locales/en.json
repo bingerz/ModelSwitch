@@ -720,7 +720,9 @@
     "routingStrategyUpdated": "Routing strategy updated",
     "routingStrategyUpdateFailed": "Failed to update routing strategy",
     "tomlOnlyTitle": "TOML-only Configuration",
-    "tomlOnlyHint": "These settings are not editable via the web console. Edit config.toml directly and restart the gateway to apply changes."
+    "tomlOnlyHint": "These settings are not editable via the web console. Edit config.toml directly and restart the gateway to apply changes.",
+    "keyboardShortcuts": "Keyboard Shortcuts",
+    "keyboardShortcutsHint": "Press ⌘/Ctrl + 1-9 to quickly switch between panels."
   },
   "toast": {
     "gatewayStarted": "Gateway started",
