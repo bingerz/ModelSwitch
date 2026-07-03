@@ -299,7 +299,9 @@
     "circuitResetSuccess": "熔断器重置成功",
     "circuitResetFailed": "重置熔断器失败",
     "cooldownActive": "冷却中",
-    "cooldownRemaining": "剩余 {{secs}}s"
+    "cooldownRemaining": "剩余 {{secs}}s",
+    "moveUp": "移至更高优先级",
+    "moveDown": "移至更低优先级"
   },
   "virtualKeys": {
     "title": "虚拟密钥",

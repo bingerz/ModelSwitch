@@ -299,7 +299,9 @@
     "circuitResetSuccess": "Circuit breaker reset successfully",
     "circuitResetFailed": "Failed to reset circuit breaker",
     "cooldownActive": "Cooldown",
-    "cooldownRemaining": "{{secs}}s remaining"
+    "cooldownRemaining": "{{secs}}s remaining",
+    "moveUp": "Move to higher priority tier",
+    "moveDown": "Move to lower priority tier"
   },
   "virtualKeys": {
     "title": "Virtual Keys",

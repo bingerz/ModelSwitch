@@ -156,6 +156,20 @@ export function ChannelPanel() {
     setDragId(null);
   };
 
+  // Keyboard-accessible priority move (alternative to drag-drop)
+  const handleMovePriority = async (channelId: string, delta: number) => {
+    const ch = channels.find((c) => c.id === channelId);
+    if (!ch) return;
+    const newPriority = ch.priority + delta;
+    if (newPriority < 1 || newPriority > 3) return;
+    try {
+      await api.updateChannel(channelId, channelToUpdateData(ch, { priority: newPriority }));
+      refresh();
+    } catch {
+      refresh();
+    }
+  };
+
   if (loading) return <div className="panel-loading">{t("channels.loadingChannels")}</div>;
 
   // Apply search and status filters
@@ -298,8 +312,28 @@ export function ChannelPanel() {
                       );
                     }
                     return (
-                      <ChannelCard
-                        key={ch.id}
+                      <div key={ch.id} className="tier-channel-wrapper">
+                        <div className="tier-move-buttons">
+                          <button
+                            className="btn btn-sm tier-move-btn"
+                            disabled={ch.priority <= 1}
+                            onClick={() => handleMovePriority(ch.id, -1)}
+                            title={t("channels.moveUp")}
+                            aria-label={t("channels.moveUp")}
+                          >
+                            ↑
+                          </button>
+                          <button
+                            className="btn btn-sm tier-move-btn"
+                            disabled={ch.priority >= 3}
+                            onClick={() => handleMovePriority(ch.id, 1)}
+                            title={t("channels.moveDown")}
+                            aria-label={t("channels.moveDown")}
+                          >
+                            ↓
+                          </button>
+                        </div>
+                        <ChannelCard
                         channel={ch}
                         quota={quotaMap.get(ch.id)}
                         selected={selectedIds.has(ch.id)}
@@ -321,6 +355,7 @@ export function ChannelPanel() {
                         onDragStart={() => handleDragStart(ch.id)}
                         onDragEnd={() => setDragId(null)}
                       />
+                      </div>
                     );
                   })}
                 </div>
