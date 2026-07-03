@@ -18,3 +18,9 @@ export const CATEGORY_ORDER: PresetCategory[] = [
   "cloud_provider",
   "third_party",
 ];
+
+export const STATUS_LABEL_KEY: Record<ChannelStatus, string> = {
+  healthy: "common.statusHealthy",
+  circuit_open: "common.statusCircuitOpen",
+  disabled: "common.statusDisabled",
+};

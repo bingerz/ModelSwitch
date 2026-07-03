@@ -80,7 +80,10 @@
     "toggleMenu": "Toggle menu",
     "trendSparkline": "Trend sparkline",
     "reqShort": "req",
-    "skipToContent": "Skip to content"
+    "skipToContent": "Skip to content",
+    "statusHealthy": "Healthy",
+    "statusCircuitOpen": "Tripped",
+    "statusDisabled": "Disabled"
   },
   "nav": {
     "dashboard": "Dashboard",

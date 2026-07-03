@@ -80,7 +80,10 @@
     "toggleMenu": "切换菜单",
     "trendSparkline": "趋势迷你图",
     "reqShort": "请求",
-    "skipToContent": "跳到主要内容"
+    "skipToContent": "跳到主要内容",
+    "statusHealthy": "正常",
+    "statusCircuitOpen": "熔断",
+    "statusDisabled": "已停用"
   },
   "nav": {
     "dashboard": "仪表盘",

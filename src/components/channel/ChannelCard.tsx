@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { RotateCcw } from "lucide-react";
 import { api, type Channel } from "../../lib/api";
 import type { QuotaInfo } from "../../lib/api";
-import { STATUS_DOT, type ChannelStatus } from "./types";
+import { STATUS_DOT, STATUS_LABEL_KEY, type ChannelStatus } from "./types";
 import {
   API_FORMAT_COLORS,
   API_FORMAT_LABELS,
@@ -101,7 +101,11 @@ export function ChannelCard({
           <span
             className={`status-dot ${ch.status === "healthy" ? "healthy" : ""}`}
             style={{ background: STATUS_DOT[statusKey] }}
+            aria-hidden="true"
           />
+          <span className="status-label-text" aria-label={t(STATUS_LABEL_KEY[statusKey])}>
+            {t(STATUS_LABEL_KEY[statusKey])}
+          </span>
           <strong>{ch.name}</strong>
         </div>
         <span
