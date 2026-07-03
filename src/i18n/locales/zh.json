@@ -722,7 +722,8 @@
     "tomlOnlyTitle": "TOML 专属配置",
     "tomlOnlyHint": "以下设置无法通过 Web 控制台修改。请直接编辑 config.toml 并重启网关以应用更改。",
     "keyboardShortcuts": "键盘快捷键",
-    "keyboardShortcutsHint": "挌 ⌘/Ctrl + 1-9 快速切换面板。"
+    "keyboardShortcutsHint": "挌 ⌘/Ctrl + 1-9 快速切换面板。",
+    "singleInstanceNote": "当前为单实例模式。如需多实例部署（共享限流、高可用），请在 config.toml 中配置 Redis 连接。"
   },
   "toast": {
     "gatewayStarted": "网关已启动",

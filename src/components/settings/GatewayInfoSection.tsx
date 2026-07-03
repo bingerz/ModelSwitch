@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Server } from "lucide-react";
+import { Info, Server } from "lucide-react";
 import { api, type GatewayInfo } from "../../lib/api";
 import { useToast } from "../Toast";
 
@@ -107,6 +107,10 @@ export function GatewayInfoSection({
             {gatewayInfo.max_retries}
           </span>
         </div>
+      </div>
+      <div className="backup-info" style={{ marginTop: "var(--space-3)" }}>
+        <Info size={12} className="icon-inline" />
+        {t("settings.singleInstanceNote")}
       </div>
     </div>
   );
