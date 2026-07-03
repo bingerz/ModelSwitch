@@ -93,6 +93,7 @@ export function BackupRestore() {
   const [importPreview, setImportPreview] = useState<ConfigExport | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [confirmImport, setConfirmImport] = useState(false);
 
   const handleExport = async () => {
     setExporting(true);
@@ -134,6 +135,7 @@ export function BackupRestore() {
   const handleFileSelect = useCallback((file: File) => {
     setImportError(null);
     setImportPreview(null);
+    setConfirmImport(false);
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
@@ -153,6 +155,10 @@ export function BackupRestore() {
 
   const handleImport = async () => {
     if (!importPreview) return;
+    if (!confirmImport) {
+      setConfirmImport(true);
+      return;
+    }
     setImporting(true);
     let created = 0;
     let skipped = 0;
@@ -308,12 +314,22 @@ export function BackupRestore() {
               <div className="backup-info">{t("backup.noCredentialsNote")}</div>
             )}
             <button
-              className="btn btn-sm btn-primary"
+              className={`btn btn-sm ${confirmImport ? "btn-danger" : "btn-primary"}`}
               onClick={handleImport}
               disabled={importing}
             >
-              {importing ? t("common.loading") : t("backup.applyImport")}
+              {importing
+                ? t("common.loading")
+                : confirmImport
+                  ? t("backup.confirmImport")
+                  : t("backup.applyImport")}
             </button>
+            {confirmImport && !importing && (
+              <div className="backup-warning" style={{ marginTop: "var(--space-2)" }}>
+                <AlertTriangle size={12} />
+                {t("backup.confirmImportHint")}
+              </div>
+            )}
           </div>
         )}
       </div>

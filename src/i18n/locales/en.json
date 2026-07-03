@@ -1015,7 +1015,9 @@
     "noCredentialsNote": "This file does not contain API keys. You'll need to add credentials manually after import.",
     "applyImport": "Apply Import",
     "importSuccess": "Imported {{created}} channels, skipped {{skipped}} existing",
-    "importFailed": "Import failed"
+    "importFailed": "Import failed",
+    "confirmImport": "Confirm: Click again to import",
+    "confirmImportHint": "This will create new channels from the backup file. Existing channels with the same name will be skipped. Click the button again to proceed."
   },
   "modelRouting": {
     "title": "Model Routing Configuration",

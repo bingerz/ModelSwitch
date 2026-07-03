@@ -944,7 +944,9 @@
     "noCredentialsNote": "此文件不包含 API 密钥。导入后需手动添加凭据。",
     "applyImport": "应用导入",
     "importSuccess": "导入了 {{created}} 个通道，跳过了 {{skipped}} 个已存在",
-    "importFailed": "导入失败"
+    "importFailed": "导入失败",
+    "confirmImport": "确认：再次点击以导入",
+    "confirmImportHint": "此操作将从备份文件创建新渠道。同名现有渠道将被跳过。再次点击按钮以继续。"
   },
   "modelRouting": {
     "title": "模型路由配置",
