@@ -172,7 +172,7 @@ IDE (Cursor/Cline/Claude Code)
 | NFR-02 | 隐私安全 | 零云端依赖 | 所有凭证本地加密存储，无外部数据上报 |
 | NFR-03 | 凭证安全 | 系统级存储 | API Key / Cookie 存入 Keychain / Credential Manager |
 | NFR-04 | 优雅降级 | 全渠道熔断提示 | 返回中文友好 429："ModelSwitch: 所有渠道均已限流，请稍作休息。" |
-| NFR-05 | 资源占用 | 内存 < 50MB | Tauri 轻量运行时 + Rust 低开销 |
+| NFR-05 | 资源占用 | 内存 < 200MB | Tauri 2.0 + Rust + Axum 运行时（实测 Docker ~150MB，原 <50MB 目标不切实际） |
 | NFR-06 | 跨平台 | macOS / Windows / Linux | Tauri 2.0 原生支持三平台 |
 | NFR-07 | 启动速度 | < 2 秒 | 应用启动到网关可用 < 2 秒 |
 
