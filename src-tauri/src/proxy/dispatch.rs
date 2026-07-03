@@ -352,11 +352,13 @@ pub(crate) async fn dispatch(
         .cloned()
         .unwrap_or(original_model);
 
+
     // Guardrails content moderation — fail fast on blocked content.
     if let GuardrailAction::Block(reason) = state.guardrails.check_request(body) {
+        tracing::info!(reason = %reason, "request blocked by guardrails");
         return error_response(
             reqwest::StatusCode::FORBIDDEN,
-            &reason,
+            "Request blocked by content policy",
             "content_blocked",
             "guardrails_blocked",
         );
