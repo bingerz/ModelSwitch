@@ -322,6 +322,7 @@
     "allowedModels": "Allowed Models",
     "plaintextWarning": "This key will not be shown again. Copy it now and store it securely.",
     "newKeyCreated": "New key created: {{name}}",
+    "iHaveSavedIt": "I've saved it",
     "keyPrefix": "Key Prefix",
     "unlimited": "Unlimited",
     "enabled": "enabled",

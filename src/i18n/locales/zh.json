@@ -322,6 +322,7 @@
     "allowedModels": "允许的模型",
     "plaintextWarning": "此密钥将不会再次显示。请立即复制并妥善保管。",
     "newKeyCreated": "新密钥已创建：{{name}}",
+    "iHaveSavedIt": "我已保存",
     "keyPrefix": "密钥前缀",
     "unlimited": "无限制",
     "enabled": "已启用",
