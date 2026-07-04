@@ -56,7 +56,40 @@ function renderWithProviders(ui: ReactElement) {
 
 const pendingPromise = <T,>() => new Promise<T>(() => {});
 
-const mockChannels: Channel[] = [];
+const mockChannels: Channel[] = [
+  {
+    id: "ch1",
+    name: "Test Channel",
+    provider: "openai",
+    priority: 1,
+    weight: 1,
+    cost_per_token: null,
+    input_cost_per_mtok: null,
+    output_cost_per_mtok: null,
+    enabled: true,
+    status: "healthy",
+    circuit_open_until: null,
+    base_url: "https://api.openai.com/v1",
+    model_mapping: {},
+    created_at: "2024-01-01T00:00:00Z",
+    updated_at: "2024-01-01T00:00:00Z",
+    avg_latency_ms: 100,
+    consecutive_failures: 0,
+    cooldown_minutes: null,
+    rpm_limit: null,
+    tpm_limit: null,
+    tags: [],
+    account_group: null,
+    max_concurrent: null,
+    excluded_models: [],
+    api_keys: [],
+    proxy_url: null,
+    headers: {},
+    max_retries: null,
+    models_endpoint: null,
+    models_refresh_interval_secs: 3600,
+  },
+];
 const mockStats: DispatchStats = {
   total_requests: 100,
   successes: 90,
