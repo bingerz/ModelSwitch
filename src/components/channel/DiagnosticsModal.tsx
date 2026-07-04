@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   CheckCircle2,
@@ -9,6 +9,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { api, type ChannelDiagnosticsResult } from "../../lib/api";
+import { useFocusTrap } from "../../hooks/useFocusTrap";
 
 interface DiagnosticsModalProps {
   channelId: string;
@@ -25,6 +26,9 @@ export function DiagnosticsModal({
   const [loading, setLoading] = useState(true);
   const [result, setResult] = useState<ChannelDiagnosticsResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, true, onClose);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,7 +74,14 @@ export function DiagnosticsModal({
 
   return (
     <div className="diag-modal-backdrop" onClick={onClose}>
-      <div className="diag-modal" onClick={(e) => e.stopPropagation()}>
+      <div
+        ref={dialogRef}
+        className="diag-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("diagnostics.title", { name: channelName })}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="diag-modal-header">
           <h3>{t("diagnostics.title", { name: channelName })}</h3>
           <button
