@@ -12,7 +12,9 @@ describe("useZodValidation", () => {
   it("returns ok and parsed value on valid input", () => {
     const { result } = renderHook(() => useZodValidation(schema));
 
-    let outcome: { ok: true } | { ok: false } = { ok: false };
+    // ponytail: outcome is assigned inside act() callback; any avoids premature narrowing
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let outcome: any;
     act(() => {
       outcome = result.current.validate({ name: "abc", count: 3 });
     });
@@ -27,7 +29,9 @@ describe("useZodValidation", () => {
   it("returns field errors synchronously and updates state", () => {
     const { result } = renderHook(() => useZodValidation(schema));
 
-    let outcome: { ok: true } | { ok: false } = { ok: false };
+    // ponytail: outcome is assigned inside act() callback; any avoids premature narrowing
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let outcome: any;
     act(() => {
       outcome = result.current.validate({ name: "", count: -1 });
     });
