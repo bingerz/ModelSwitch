@@ -199,6 +199,12 @@
   margin-bottom: var(--space-3);
 }
 
+.field-error {
+  color: var(--color-danger);
+  font-size: var(--text-xs);
+  margin-top: var(--space-1);
+}
+
 .form-hint {
   grid-column: span 2;
   font-size: var(--text-xs);

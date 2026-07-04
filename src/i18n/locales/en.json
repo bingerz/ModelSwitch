@@ -252,6 +252,7 @@
     "baseUrlInvalid": "Base URL must start with http:// or https://",
     "costPositive": "Cost per token must be a positive number",
     "apiKeyRequired": "API key is required",
+    "formInvalid": "Please fix the highlighted fields",
     "keepCredentialEmpty": "Leave empty to keep current credential",
     "priority1Free": "Priority 1 · Free / Subscription",
     "priority2Economy": "Priority 2 · Economy API",

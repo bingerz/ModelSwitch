@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   api,
-  validateChannelForm,
   invokeTauri,
 } from "../../lib/api";
 import { isTauri } from "../../lib/runtime";
@@ -10,6 +9,8 @@ import { useToast } from "../Toast";
 import { type ProviderPreset, type ApiFormat } from "../../lib/presets";
 import { PresetSelector, getAvailableFormats } from "./PresetSelector";
 import { FormFields, type FormState } from "./FormFields";
+import { useZodValidation } from "../../hooks/useZodValidation";
+import { channelFormSchema } from "../../lib/validation";
 
 const INITIAL_FORM: FormState = {
   name: "",
@@ -48,6 +49,10 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
   const [apiFormat, setApiFormat] = useState<ApiFormat>("anthropic");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // ponytail: ChannelForm delegates inputs to FormFields, so field-level error UI
+  // would require prop-drilling. Surface Zod errors via the existing error banner;
+  // the schema still drives the actual validation logic.
+  const { validate } = useZodValidation(channelFormSchema);
 
   // Listen for WebView login cookies (safe lazy import)
   useEffect(() => {
@@ -140,12 +145,16 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    const validationError = validateChannelForm({
+    const formData = {
       name: form.name,
-      baseUrl: form.baseUrl,
-    });
-    if (validationError) {
-      setError(t(validationError));
+      provider: form.provider,
+      base_url: form.baseUrl,
+      weight: form.weight,
+      priority: form.priority,
+    };
+    const result = validate(formData);
+    if (!result.ok) {
+      setError(Object.values(result.errors)[0] ?? t("channels.formInvalid"));
       return;
     }
     if (form.costPerToken && parseFloat(form.costPerToken) <= 0) {

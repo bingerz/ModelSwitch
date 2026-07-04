@@ -9,6 +9,8 @@ import {
   type UpdateVirtualKeyData,
 } from "../../lib/api";
 import { useToast } from "../Toast";
+import { useZodValidation } from "../../hooks/useZodValidation";
+import { virtualKeyFormSchema } from "../../lib/validation";
 import { centsToDollars, dollarsToCents } from "./types";
 
 export interface VirtualKeyFormProps {
@@ -59,19 +61,17 @@ export function VirtualKeyForm({
 
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const { errors: fieldErrors, validate } = useZodValidation(virtualKeyFormSchema);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    if (!name.trim()) {
-      setError(t("virtualKeys.nameRequired"));
-      return;
-    }
-
     const dailyCents = dollarsToCents(dailyBudget);
     const monthlyCents = dollarsToCents(monthlyBudget);
 
+    // ponytail: dollar→cents parsing returns null for both empty and invalid input;
+    // Zod's nullable would otherwise swallow invalid numbers, so surface them here.
     if (dailyBudget.trim() !== "" && dailyCents === null) {
       setError(t("virtualKeys.dailyBudgetInvalid"));
       return;
@@ -81,20 +81,21 @@ export function VirtualKeyForm({
       return;
     }
 
+    const parsedRpm = rpmLimit.trim() === "" ? null : Number(rpmLimit.trim());
+    const parsedTpm = tpmLimit.trim() === "" ? null : Number(tpmLimit.trim());
+
+    const formData = {
+      name: name.trim(),
+      daily_budget_cents: dailyCents,
+      monthly_budget_cents: monthlyCents,
+      rpm_limit: parsedRpm,
+      tpm_limit: parsedTpm,
+    };
+    const result = validate(formData);
+    if (!result.ok) return;
+
     setSubmitting(true);
     try {
-      const parsedRpm = rpmLimit.trim() === "" ? null : Number(rpmLimit.trim());
-      const parsedTpm = tpmLimit.trim() === "" ? null : Number(tpmLimit.trim());
-      if (parsedRpm !== null && (!Number.isFinite(parsedRpm) || parsedRpm < 0)) {
-        setError(t("virtualKeys.rpmLimitInvalid"));
-        setSubmitting(false);
-        return;
-      }
-      if (parsedTpm !== null && (!Number.isFinite(parsedTpm) || parsedTpm < 0)) {
-        setError(t("virtualKeys.tpmLimitInvalid"));
-        setSubmitting(false);
-        return;
-      }
       const trimmedGroup = group.trim();
       const trimmedExpiry = expiresAt.trim();
 
@@ -159,6 +160,7 @@ export function VirtualKeyForm({
             placeholder={t("virtualKeys.namePlaceholder")}
             required
           />
+          {fieldErrors.name && <span className="field-error">{fieldErrors.name}</span>}
         </label>
         <label className="form-field">
           <span>{t("virtualKeys.dailyBudget")}</span>
@@ -168,6 +170,9 @@ export function VirtualKeyForm({
             placeholder={t("virtualKeys.dailyBudgetPlaceholder")}
             inputMode="decimal"
           />
+          {fieldErrors.daily_budget_cents && (
+            <span className="field-error">{fieldErrors.daily_budget_cents}</span>
+          )}
         </label>
         <label className="form-field">
           <span>{t("virtualKeys.monthlyBudget")}</span>
@@ -177,6 +182,9 @@ export function VirtualKeyForm({
             placeholder={t("virtualKeys.monthlyBudgetPlaceholder")}
             inputMode="decimal"
           />
+          {fieldErrors.monthly_budget_cents && (
+            <span className="field-error">{fieldErrors.monthly_budget_cents}</span>
+          )}
         </label>
       </div>
       <div className="form-grid">
@@ -235,6 +243,9 @@ export function VirtualKeyForm({
                 placeholder={t("virtualKeys.rpmLimitPlaceholder")}
                 inputMode="numeric"
               />
+              {fieldErrors.rpm_limit && (
+                <span className="field-error">{fieldErrors.rpm_limit}</span>
+              )}
             </label>
             <label className="form-field">
               <span>{t("virtualKeys.tpmLimit")}</span>
@@ -244,6 +255,9 @@ export function VirtualKeyForm({
                 placeholder={t("virtualKeys.tpmLimitPlaceholder")}
                 inputMode="numeric"
               />
+              {fieldErrors.tpm_limit && (
+                <span className="field-error">{fieldErrors.tpm_limit}</span>
+              )}
             </label>
             <label className="form-field">
               <span>{t("virtualKeys.expiresAt")}</span>

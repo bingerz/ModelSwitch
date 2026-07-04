@@ -252,6 +252,7 @@
     "baseUrlInvalid": "基础 URL 必须以 http:// 或 https:// 开头",
     "costPositive": "每 Token 费用必须为正数",
     "apiKeyRequired": "需要输入 API 密钥",
+    "formInvalid": "请修正标红的字段",
     "keepCredentialEmpty": "留空以保持当前凭证",
     "priority1Free": "优先级 1 · 免费 / 订阅",
     "priority2Economy": "优先级 2 · 经济型 API",
