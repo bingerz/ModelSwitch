@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { api, type DispatchStats, type GwStatus, invokeTauri } from "../lib/api";
 import { isTauri, API_BASE } from "../lib/runtime";
 import { useQuota } from "../hooks/useQuota";
+import { useToast } from "./Toast";
 
 interface StatusResult {
   gw: GwStatus;
@@ -13,6 +14,7 @@ interface StatusResult {
 
 export function StatusBar() {
   const { t } = useTranslation();
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
   const queryClient = useQueryClient();
   const { totalBalance, channelsWithData, lowBalanceCount } = useQuota();
@@ -88,6 +90,7 @@ export function StatusBar() {
       await invokeTauri(cmd);
     } catch (e) {
       console.error("Gateway action failed:", e);
+      toast.error(t("toast.gatewayFailed", { error: e instanceof Error ? e.message : String(e) }));
     }
     // Immediate re-poll after action, then clear busy.
     setTimeout(async () => {

@@ -83,7 +83,8 @@
     "skipToContent": "Skip to content",
     "statusHealthy": "Healthy",
     "statusCircuitOpen": "Tripped",
-    "statusDisabled": "Disabled"
+    "statusDisabled": "Disabled",
+    "loadFailed": "Failed to load data"
   },
   "nav": {
     "dashboard": "Dashboard",

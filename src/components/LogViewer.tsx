@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { ClipboardList, Search } from "lucide-react";
 import { api, type DispatchLog } from "../lib/api";
 import { formatRelativeTime, latencyColor } from "../lib/format";
+import { useQueryToastError } from "../hooks/useQueryToastError";
 import "../styles/log-viewer.css";
 
 type FilterValue = "all" | "success" | "failed";
@@ -23,13 +24,14 @@ export function LogViewer() {
   const [search, setSearch] = useState("");
   const [channelFilter, setChannelFilter] = useState("");
 
-  const { data: logs = [], isLoading: loading, refetch } = useQuery({
+  const { data: logs = [], isLoading: loading, isError, refetch } = useQuery({
     queryKey: ["logs", 0, 100],
     queryFn: () => api.logs(0, 100),
     refetchInterval: 3_000,
     // Silently ignore fetch failures; UI will show stale data
     retry: false,
   });
+  useQueryToastError(isError, t("common.loadFailed"));
 
   const fetchLogs = async () => {
     await refetch();

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Check } from "lucide-react";
 import { api } from "../lib/api";
+import { useQueryToastError } from "../hooks/useQueryToastError";
 
 /**
  * Model × Channel coverage matrix.
@@ -15,11 +16,12 @@ export function ModelAvailabilityMatrix() {
   const { t } = useTranslation();
   const [showDisabled, setShowDisabled] = useState(false);
 
-  const { data: channels, isLoading } = useQuery({
+  const { data: channels, isLoading, isError } = useQuery({
     queryKey: ["channels-matrix"],
     queryFn: () => api.listChannels(),
     retry: false,
   });
+  useQueryToastError(isError, t("common.loadFailed"));
 
   const { models, activeChannels, matrix, singleChannelCount } = useMemo(() => {
     const all = channels ?? [];

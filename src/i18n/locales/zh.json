@@ -83,7 +83,8 @@
     "skipToContent": "跳到主要内容",
     "statusHealthy": "正常",
     "statusCircuitOpen": "熔断",
-    "statusDisabled": "已停用"
+    "statusDisabled": "已停用",
+    "loadFailed": "数据加载失败"
   },
   "nav": {
     "dashboard": "仪表盘",

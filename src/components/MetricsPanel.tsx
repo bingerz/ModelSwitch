@@ -3,16 +3,18 @@ import { useTranslation } from "react-i18next";
 import { Activity } from "lucide-react";
 import { SectionHeader } from "./ui/SectionHeader";
 import { api } from "../lib/api";
+import { useQueryToastError } from "../hooks/useQueryToastError";
 
 export function MetricsPanel() {
   const { t } = useTranslation();
-  const { data: metrics = "", isLoading: loading, refetch } = useQuery({
+  const { data: metrics = "", isLoading: loading, isError, refetch } = useQuery({
     queryKey: ["metrics"],
     queryFn: () => api.metrics(),
     refetchInterval: 10_000,
     // Silently fail on error — keep showing stale data
     retry: false,
   });
+  useQueryToastError(isError, t("common.loadFailed"));
 
   const refresh = async () => {
     await refetch();

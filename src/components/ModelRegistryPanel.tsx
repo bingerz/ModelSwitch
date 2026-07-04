@@ -5,6 +5,7 @@ import { Database, Search } from "lucide-react";
 import { SectionHeader } from "./ui/SectionHeader";
 import { ModelAvailabilityMatrix } from "./ModelAvailabilityMatrix";
 import { api, type ModelRegistryItem } from "../lib/api";
+import { useQueryToastError } from "../hooks/useQueryToastError";
 
 type RegistryView = "list" | "matrix";
 
@@ -34,13 +35,14 @@ export function ModelRegistryPanel() {
   const [groupByChannel, setGroupByChannel] = useState(false);
   const [view, setView] = useState<RegistryView>("list");
 
-  const { data, isLoading: loading, refetch } = useQuery({
+  const { data, isLoading: loading, isError, refetch } = useQuery({
     queryKey: ["model-registry"],
     queryFn: () => api.modelRegistry(),
     refetchInterval: 30_000,
     // Silently fail — section header shows refresh state
     retry: false,
   });
+  useQueryToastError(isError, t("common.loadFailed"));
 
   const items: ModelRegistryItem[] = data?.models ?? [];
 

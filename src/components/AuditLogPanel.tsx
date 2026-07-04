@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { ScrollText } from "lucide-react";
 import { SectionHeader } from "./ui/SectionHeader";
 import { api } from "../lib/api";
+import { useQueryToastError } from "../hooks/useQueryToastError";
 
 const PAGE_SIZE = 50;
 
@@ -11,12 +12,13 @@ export function AuditLogPanel() {
   const { t } = useTranslation();
   const [page, setPage] = useState(1);
 
-  const { data: entries = [], isLoading: loading, refetch } = useQuery({
+  const { data: entries = [], isLoading: loading, isError, refetch } = useQuery({
     queryKey: ["audit-log"],
     queryFn: () => api.auditLog(500),
     refetchInterval: 30_000,
     retry: false,
   });
+  useQueryToastError(isError, t("common.loadFailed"));
 
   const refresh = async () => {
     await refetch();
