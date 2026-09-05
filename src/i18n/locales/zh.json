@@ -84,7 +84,8 @@
     "statusHealthy": "正常",
     "statusCircuitOpen": "熔断",
     "statusDisabled": "已停用",
-    "loadFailed": "数据加载失败"
+    "loadFailed": "数据加载失败",
+    "retryAction": "重试"
   },
   "nav": {
     "dashboard": "仪表盘",

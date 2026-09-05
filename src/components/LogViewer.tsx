@@ -5,6 +5,9 @@ import { ClipboardList, Search } from "lucide-react";
 import { api, type DispatchLog } from "../lib/api";
 import { formatRelativeTime, latencyColor } from "../lib/format";
 import { useQueryToastError } from "../hooks/useQueryToastError";
+import { PanelLayout } from "./ui/PanelLayout";
+import { LoadingState } from "./ui/LoadingState";
+import { EmptyState } from "./ui/EmptyState";
 import "../styles/log-viewer.css";
 
 type FilterValue = "all" | "success" | "failed";
@@ -77,18 +80,16 @@ export function LogViewer() {
   const hasNoData = !loading && logs.length === 0;
   const hasNoResults = !loading && logs.length > 0 && visibleLogs.length === 0;
 
-  if (loading) return <div className="panel-loading">{t("logs.loading")}</div>;
+  if (loading) {
+    return (
+      <PanelLayout title={t("logs.title")} icon={ClipboardList}>
+        <LoadingState message={t("logs.loading")} icon={ClipboardList} />
+      </PanelLayout>
+    );
+  }
 
-  return (
-    <section>
-      <div className="panel-header">
-        <h2 className="panel-title">{t("logs.title")}</h2>
-        <button className="btn btn-sm" onClick={fetchLogs}>
-          {t("common.refresh")}
-        </button>
-      </div>
-
-      <div className="log-filter-bar">
+  const panelToolbar = (
+    <div className="log-filter-bar">
         <button
           className={`log-filter-btn${filter === "all" ? " active" : ""}`}
           onClick={() => setFilter("all")}
@@ -128,8 +129,16 @@ export function LogViewer() {
             ))}
           </select>
         )}
-      </div>
+    </div>
+  );
 
+  return (
+    <PanelLayout
+      title={t("logs.title")}
+      icon={ClipboardList}
+      toolbar={panelToolbar}
+      onRefresh={fetchLogs}
+    >
       {logs.length > 0 && (
         <div className="log-summary-stats">
           <span className="log-summary-stat">
@@ -154,27 +163,19 @@ export function LogViewer() {
       )}
 
       {hasNoData && (
-        <div className="empty-state">
-          <div className="log-empty-icon">
-            <ClipboardList size={32} />
-          </div>
-          <div className="empty-state-title">{t("logs.empty")}</div>
-          <div className="empty-state-description">
-            {t("logs.emptyHint")}
-          </div>
-        </div>
+        <EmptyState
+          icon={ClipboardList}
+          title={t("logs.empty")}
+          description={t("logs.emptyHint")}
+        />
       )}
 
       {hasNoResults && (
-        <div className="empty-state">
-          <div className="log-empty-icon">
-            <Search size={32} />
-          </div>
-          <div className="empty-state-title">{t("logs.noResults")}</div>
-          <div className="empty-state-description">
-            {t("logs.noResultsHint")}
-          </div>
-        </div>
+        <EmptyState
+          icon={Search}
+          title={t("logs.noResults")}
+          description={t("logs.noResultsHint")}
+        />
       )}
 
       {visibleLogs.length > 0 && (
@@ -234,6 +235,6 @@ export function LogViewer() {
           </table>
         </div>
       )}
-    </section>
+    </PanelLayout>
   );
 }
