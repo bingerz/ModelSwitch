@@ -84,7 +84,8 @@
     "statusHealthy": "Healthy",
     "statusCircuitOpen": "Tripped",
     "statusDisabled": "Disabled",
-    "loadFailed": "Failed to load data"
+    "loadFailed": "Failed to load data",
+    "retryAction": "Retry"
   },
   "nav": {
     "dashboard": "Dashboard",

@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Radio } from "lucide-react";
 import { api, type Channel, type UpdateChannelData } from "../../lib/api";
 import { useQuota } from "../../hooks/useQuota";
 import type { QuotaInfo } from "../../lib/api";
 import { useToast } from "../Toast";
+import { PanelLayout } from "../ui/PanelLayout";
+import { LoadingState } from "../ui/LoadingState";
 import { ChannelCard } from "./ChannelCard";
 import { ChannelForm } from "./ChannelForm";
 import { EditChannelForm } from "./EditChannelForm";
@@ -130,10 +133,10 @@ export function ChannelPanel() {
   };
 
   const handleMovePriority = async (id: string, direction: "up" | "down") => {
-    const idx = visibleChannels.findIndex((c) => c.id === id);
+    const idx = filteredChannels.findIndex((c) => c.id === id);
     if (idx === -1) return;
     
-    const channel = visibleChannels[idx];
+    const channel = filteredChannels[idx];
     const newPriority = direction === "up" ? channel.priority - 1 : channel.priority + 1;
     
     // Check bounds within visible channels
@@ -178,22 +181,6 @@ export function ChannelPanel() {
     setDragId(null);
   };
 
-  // Keyboard-accessible priority move (alternative to drag-drop)
-  const handleMovePriority = async (channelId: string, delta: number) => {
-    const ch = channels.find((c) => c.id === channelId);
-    if (!ch) return;
-    const newPriority = ch.priority + delta;
-    if (newPriority < 1 || newPriority > 3) return;
-    try {
-      await api.updateChannel(channelId, channelToUpdateData(ch, { priority: newPriority }));
-      refresh();
-    } catch {
-      refresh();
-    }
-  };
-
-  if (loading) return <div className="panel-loading">{t("channels.loadingChannels")}</div>;
-
   // Apply search and status filters
   const filteredChannels = channels.filter((ch) => {
     if (statusFilter !== "all") {
@@ -228,28 +215,34 @@ export function ChannelPanel() {
     quotaMap.set(q.channel_id, q);
   }
 
-  return (
-    <section>
-      <div className="panel-header">
-        <h2 className="panel-title">{t("channels.title")}</h2>
-        <button className="btn btn-sm" onClick={handleTestAll} title={t("channels.testAll")}>
-          {t("channels.testAll")}
-        </button>
-        <button className="btn btn-primary" onClick={() => setShowAddForm(!showAddForm)}>
-          {showAddForm ? t("common.cancel") : t("channels.create")}
-        </button>
-      </div>
+  if (loading) {
+    return (
+      <PanelLayout title={t("channels.title")} icon={Radio}>
+        <LoadingState message={t("channels.loadingChannels")} icon={Radio} />
+      </PanelLayout>
+    );
+  }
 
-      {showAddForm && (
-        <ChannelForm
-          onSave={() => {
-            setShowAddForm(false);
-            refresh();
-          }}
-        />
-      )}
+  const panelActions = (
+    <>
+      <button
+        className="btn btn-sm"
+        onClick={handleTestAll}
+        title={t("channels.testAll")}
+      >
+        {t("channels.testAll")}
+      </button>
+      <button
+        className="btn btn-primary"
+        onClick={() => setShowAddForm(!showAddForm)}
+      >
+        {showAddForm ? t("common.cancel") : t("channels.create")}
+      </button>
+    </>
+  );
 
-      <div className="channel-toolbar">
+  const panelToolbar = (
+    <div className="channel-toolbar">
         <div className="channel-search">
           <input
             type="text"
@@ -279,7 +272,26 @@ export function ChannelPanel() {
           <option value="half_open">{t("channels.halfOpen")}</option>
           <option value="disabled">{t("channels.disabled")}</option>
         </select>
-      </div>
+    </div>
+  );
+
+  return (
+    <PanelLayout
+      title={t("channels.title")}
+      icon={Radio}
+      actions={panelActions}
+      toolbar={panelToolbar}
+      onRefresh={refresh}
+    >
+      {showAddForm && (
+        <ChannelForm
+          onSave={() => {
+            setShowAddForm(false);
+            refresh();
+          }}
+        />
+      )}
+
       {(searchQuery || statusFilter !== "all") && (
         <p className="filter-results-count">
           {t("channels.showingCount", { shown: showingChannels, total: totalChannels })}
@@ -339,7 +351,7 @@ export function ChannelPanel() {
                           <button
                             className="btn btn-sm tier-move-btn"
                             disabled={ch.priority <= 1}
-                            onClick={() => handleMovePriority(ch.id, -1)}
+                            onClick={() => handleMovePriority(ch.id, "up")}
                             title={t("channels.moveUp")}
                             aria-label={t("channels.moveUp")}
                           >
@@ -348,7 +360,7 @@ export function ChannelPanel() {
                           <button
                             className="btn btn-sm tier-move-btn"
                             disabled={ch.priority >= 3}
-                            onClick={() => handleMovePriority(ch.id, 1)}
+                            onClick={() => handleMovePriority(ch.id, "down")}
                             title={t("channels.moveDown")}
                             aria-label={t("channels.moveDown")}
                           >
@@ -396,6 +408,6 @@ export function ChannelPanel() {
           onClose={() => setDiagnosticsId(null)}
         />
       )}
-    </section>
+    </PanelLayout>
   );
 }

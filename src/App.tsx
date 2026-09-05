@@ -67,7 +67,7 @@ const ModelRoutingPanel = lazy(() =>
   import("./components/ModelRoutingPanel").then((m) => ({ default: m.ModelRoutingPanel }))
 );
 
-type TabId = "dashboard" | "channels" | "virtualKeys" | "mcp" | "modelRouting" | "logs" | "cost" | "quota" | "settings" | "audit" | "redemption" | "metrics" | "guardrails" | "notifications" | "registry" | "reports" | "playground";
+import { getTabGroups, ALL_TAB_IDS, type TabId } from "./app/navigation";
 
 // React Query client — sensible defaults for a management console.
 // Created at module scope so it is stable across renders, regardless of mock mode.
@@ -85,54 +85,6 @@ const queryClient = new QueryClient({
 // self-service portal instead of the admin console.
 function isPortalRoute(): boolean {
   return window.location.pathname.startsWith("/portal");
-}
-
-function getTabGroups(t: (key: string) => string): { title: string; tabs: { id: TabId; label: string }[] }[] {
-  return [
-    {
-      title: t("nav.overview"),
-      tabs: [{ id: "dashboard", label: t("nav.dashboard") }],
-    },
-    {
-      title: t("nav.configuration"),
-      tabs: [
-        { id: "channels", label: t("nav.channels") },
-        { id: "virtualKeys", label: t("nav.virtualKeys") },
-        { id: "mcp", label: t("nav.mcp") },
-        { id: "modelRouting", label: t("nav.modelRouting") },
-      ],
-    },
-    {
-      title: t("nav.monitoringPrimary"),
-      tabs: [
-        { id: "cost", label: t("nav.cost") },
-        { id: "quota", label: t("nav.quota") },
-        { id: "logs", label: t("nav.logs") },
-      ],
-    },
-    {
-      title: t("nav.monitoringAdvanced"),
-      tabs: [
-        { id: "metrics", label: t("nav.metrics") },
-        { id: "audit", label: t("nav.audit") },
-        { id: "registry", label: t("nav.registry") },
-        { id: "reports", label: t("nav.reports") },
-      ],
-    },
-    {
-      title: t("nav.tools"),
-      tabs: [{ id: "playground", label: t("nav.playground") }],
-    },
-    {
-      title: t("nav.system"),
-      tabs: [
-        { id: "settings", label: t("nav.settings") },
-        { id: "guardrails", label: t("nav.guardrails") },
-        { id: "notifications", label: t("nav.notifications") },
-        { id: "redemption", label: t("nav.redemption") },
-      ],
-    },
-  ];
 }
 
 /**
@@ -200,10 +152,9 @@ function AppInner() {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key >= "1" && e.key <= "9") {
         e.preventDefault();
-        const tabs: TabId[] = ["dashboard", "channels", "virtualKeys", "mcp", "modelRouting", "logs", "cost", "quota", "settings", "audit", "redemption", "metrics", "guardrails", "notifications", "registry", "reports", "playground"];
         const idx = parseInt(e.key, 10) - 1;
-        if (tabs[idx]) {
-          setActiveTab(tabs[idx]);
+        if (ALL_TAB_IDS[idx]) {
+          setActiveTab(ALL_TAB_IDS[idx]);
           setMenuOpen(false);
         }
       }
