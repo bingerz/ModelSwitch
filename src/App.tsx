@@ -103,11 +103,16 @@ function getTabGroups(t: (key: string) => string): { title: string; tabs: { id: 
       ],
     },
     {
-      title: t("nav.monitoring"),
+      title: t("nav.monitoringPrimary"),
       tabs: [
         { id: "cost", label: t("nav.cost") },
         { id: "quota", label: t("nav.quota") },
         { id: "logs", label: t("nav.logs") },
+      ],
+    },
+    {
+      title: t("nav.monitoringAdvanced"),
+      tabs: [
         { id: "metrics", label: t("nav.metrics") },
         { id: "audit", label: t("nav.audit") },
         { id: "registry", label: t("nav.registry") },
@@ -205,6 +210,19 @@ function AppInner() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  // Listen for custom navigation events from empty states / CTAs
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const customEvent = e as CustomEvent<TabId>;
+      if (customEvent.detail) {
+        setActiveTab(customEvent.detail);
+        setMenuOpen(false);
+      }
+    };
+    window.addEventListener("navigate-to-tab", handler);
+    return () => window.removeEventListener("navigate-to-tab", handler);
   }, []);
 
   // On mount: check if gateway is running, auto-start if not

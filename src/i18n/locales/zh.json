@@ -98,6 +98,8 @@
     "overview": "概览",
     "configuration": "配置",
     "monitoring": "监控",
+    "monitoringPrimary": "监控",
+    "monitoringAdvanced": "分析",
     "system": "系统",
     "audit": "审计日志",
     "redemption": "兑换码",
@@ -117,6 +119,12 @@
     "button": "登录",
     "error": "令牌无效或网关不可达",
     "hint": "输入网关配置中的管理员令牌。如果未配置令牌，请留空。",
+    "modeTitle": "登录模式",
+    "modeExplanation": "ModelSwitch 支持两种访问模式：",
+    "adminMode": "管理员令牌（本页面）",
+    "adminModeDesc": "完整的系统管理访问权限。输入 config.toml 中的管理员令牌，如果未启用认证则留空。",
+    "portalMode": "门户登录 (/portal)",
+    "portalModeDesc": "员工自助服务门户。用户访问 /portal 并输入其虚拟密钥 (ms-vk-...) 以查看个人使用情况和预算。",
     "sessionExpired": "会话已过期，请重新登录。",
     "networkError": "无法连接到网关，请检查网络连接。"
   },
@@ -306,7 +314,9 @@
     "cooldownActive": "冷却中",
     "cooldownRemaining": "剩余 {{secs}}s",
     "moveUp": "移至更高优先级",
-    "moveDown": "移至更低优先级"
+    "moveDown": "移至更低优先级",
+    "priorityBoundary": "无法超出优先级边界",
+    "priorityUpdated": "渠道优先级已更新"
   },
   "virtualKeys": {
     "title": "虚拟密钥",
@@ -322,8 +332,10 @@
     "namePlaceholder": "例如 Production App",
     "dailyBudget": "每日预算（美元，可选）",
     "dailyBudgetPlaceholder": "例如 10.00",
+    "dailyBudgetTooltip": "每日最大支出(UTC时区午夜重置)。留空表示无限制。",
     "monthlyBudget": "每月预算（美元，可选）",
     "monthlyBudgetPlaceholder": "例如 250.00",
+    "monthlyBudgetTooltip": "每月最大支出。留空表示无限制。",
     "allowedModels": "允许的模型",
     "plaintextWarning": "此密钥将不会再次显示。请立即复制并妥善保管。",
     "newKeyCreated": "新密钥已创建：{{name}}",
@@ -599,7 +611,8 @@
     "errRate": "{{rate}}% 错误",
     "activityTimeline": "请求活动时间线",
     "emptyTitle": "尚未配置渠道",
-    "emptyHint": "前往 配置 → 渠道 添加你的第一个 LLM 提供商。"
+    "emptyHint": "前往 配置 → 渠道 添加你的第一个 LLM 提供商。",
+    "addFirstChannel": "添加第一个渠道"
   },
   "logs": {
     "title": "调度日志",
@@ -774,7 +787,12 @@
     "action": "操作",
     "actor": "操作者",
     "target": "目标",
-    "details": "详情"
+    "details": "详情",
+    "filterByAction": "按操作筛选",
+    "filterByActor": "按操作者筛选",
+    "allActions": "所有操作",
+    "allActors": "所有操作者",
+    "filtered": "从 {{total}} 条中筛选"
   },
   "guardrails": {
     "title": "内容护栏",

@@ -98,6 +98,8 @@
     "overview": "Overview",
     "configuration": "Configuration",
     "monitoring": "Monitoring",
+    "monitoringPrimary": "Monitoring",
+    "monitoringAdvanced": "Analytics",
     "system": "System",
     "audit": "Audit Log",
     "redemption": "Redemption Codes",
@@ -117,6 +119,12 @@
     "button": "Login",
     "error": "Invalid token or gateway not reachable",
     "hint": "Enter the admin token from your gateway config. Leave empty if no token is configured.",
+    "modeTitle": "Login Mode",
+    "modeExplanation": "ModelSwitch supports two access modes:",
+    "adminMode": "Admin Token (this page)",
+    "adminModeDesc": "Full system administration access. Enter the admin token from config.toml or leave empty if auth is disabled.",
+    "portalMode": "Portal Login (/portal)",
+    "portalModeDesc": "Employee self-service portal. Users navigate to /portal and enter their virtual key (ms-vk-...) to view personal usage and budgets.",
     "sessionExpired": "Your session has expired. Please log in again.",
     "networkError": "Cannot connect to the gateway. Please check your network connection."
   },
@@ -306,7 +314,9 @@
     "cooldownActive": "Cooldown",
     "cooldownRemaining": "{{secs}}s remaining",
     "moveUp": "Move to higher priority tier",
-    "moveDown": "Move to lower priority tier"
+    "moveDown": "Move to lower priority tier",
+    "priorityBoundary": "Cannot move beyond priority boundaries",
+    "priorityUpdated": "Channel priority updated"
   },
   "virtualKeys": {
     "title": "Virtual Keys",
@@ -322,8 +332,10 @@
     "namePlaceholder": "e.g. Production App",
     "dailyBudget": "Daily Budget (USD, optional)",
     "dailyBudgetPlaceholder": "e.g. 10.00",
+    "dailyBudgetTooltip": "Maximum spend per day (resets at midnight UTC). Leave empty for unlimited.",
     "monthlyBudget": "Monthly Budget (USD, optional)",
     "monthlyBudgetPlaceholder": "e.g. 250.00",
+    "monthlyBudgetTooltip": "Maximum spend per calendar month. Leave empty for unlimited.",
     "allowedModels": "Allowed Models",
     "plaintextWarning": "This key will not be shown again. Copy it now and store it securely.",
     "newKeyCreated": "New key created: {{name}}",
@@ -599,7 +611,8 @@
     "errRate": "{{rate}}% err",
     "activityTimeline": "Request activity timeline",
     "emptyTitle": "No channels configured",
-    "emptyHint": "Go to Configuration → Channels to add your first LLM provider."
+    "emptyHint": "Go to Configuration → Channels to add your first LLM provider.",
+    "addFirstChannel": "Add Your First Channel"
   },
   "logs": {
     "title": "Dispatch Logs",
@@ -774,7 +787,12 @@
     "action": "Action",
     "actor": "Actor",
     "target": "Target",
-    "details": "Details"
+    "details": "Details",
+    "filterByAction": "Filter by action",
+    "filterByActor": "Filter by actor",
+    "allActions": "All actions",
+    "allActors": "All actors",
+    "filtered": "filtered from {{total}}"
   },
   "guardrails": {
     "title": "Content Guardrails",

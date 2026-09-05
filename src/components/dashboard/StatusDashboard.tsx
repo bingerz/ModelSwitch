@@ -187,7 +187,7 @@ export function StatusDashboard() {
     );
   }
 
-    if (channels.length === 0) {
+  if (channels.length === 0) {
     return (
       <section>
         <div className="panel-header">
@@ -197,6 +197,16 @@ export function StatusDashboard() {
           <div className="empty-state-icon">🚀</div>
           <div className="empty-state-title">{t("dashboard.emptyTitle")}</div>
           <div className="empty-state-description">{t("dashboard.emptyHint")}</div>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              const event = new CustomEvent("navigate-to-tab", { detail: "channels" });
+              window.dispatchEvent(event);
+            }}
+            style={{ marginTop: "var(--space-3)" }}
+          >
+            {t("dashboard.addFirstChannel")}
+          </button>
         </div>
       </section>
     );
