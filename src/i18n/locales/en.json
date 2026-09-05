@@ -98,6 +98,8 @@
     "overview": "Overview",
     "configuration": "Configuration",
     "monitoring": "Monitoring",
+    "monitoringPrimary": "Monitoring",
+    "monitoringAdvanced": "Analytics",
     "system": "System",
     "audit": "Audit Log",
     "redemption": "Redemption Codes",
@@ -312,7 +314,9 @@
     "cooldownActive": "Cooldown",
     "cooldownRemaining": "{{secs}}s remaining",
     "moveUp": "Move to higher priority tier",
-    "moveDown": "Move to lower priority tier"
+    "moveDown": "Move to lower priority tier",
+    "priorityBoundary": "Cannot move beyond priority boundaries",
+    "priorityUpdated": "Channel priority updated"
   },
   "virtualKeys": {
     "title": "Virtual Keys",
@@ -328,8 +332,10 @@
     "namePlaceholder": "e.g. Production App",
     "dailyBudget": "Daily Budget (USD, optional)",
     "dailyBudgetPlaceholder": "e.g. 10.00",
+    "dailyBudgetTooltip": "Maximum spend per day (resets at midnight UTC). Leave empty for unlimited.",
     "monthlyBudget": "Monthly Budget (USD, optional)",
     "monthlyBudgetPlaceholder": "e.g. 250.00",
+    "monthlyBudgetTooltip": "Maximum spend per calendar month. Leave empty for unlimited.",
     "allowedModels": "Allowed Models",
     "plaintextWarning": "This key will not be shown again. Copy it now and store it securely.",
     "newKeyCreated": "New key created: {{name}}",

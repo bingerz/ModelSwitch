@@ -129,6 +129,28 @@ export function ChannelPanel() {
     }
   };
 
+  const handleMovePriority = async (id: string, direction: "up" | "down") => {
+    const idx = visibleChannels.findIndex((c) => c.id === id);
+    if (idx === -1) return;
+    
+    const channel = visibleChannels[idx];
+    const newPriority = direction === "up" ? channel.priority - 1 : channel.priority + 1;
+    
+    // Check bounds within visible channels
+    if (newPriority < 1 || newPriority > 3) {
+      toast.info(t("channels.priorityBoundary"));
+      return;
+    }
+    
+    try {
+      await api.updateChannel(id, channelToUpdateData(channel, { priority: newPriority }));
+      toast.success(t("channels.priorityUpdated"));
+      refresh();
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : t("channels.updateFailed"));
+    }
+  };
+
   const handleToggle = async (ch: Channel) => {
     try {
       await api.updateChannel(ch.id, channelToUpdateData(ch, { enabled: !ch.enabled }));

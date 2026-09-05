@@ -103,11 +103,16 @@ function getTabGroups(t: (key: string) => string): { title: string; tabs: { id: 
       ],
     },
     {
-      title: t("nav.monitoring"),
+      title: t("nav.monitoringPrimary"),
       tabs: [
         { id: "cost", label: t("nav.cost") },
         { id: "quota", label: t("nav.quota") },
         { id: "logs", label: t("nav.logs") },
+      ],
+    },
+    {
+      title: t("nav.monitoringAdvanced"),
+      tabs: [
         { id: "metrics", label: t("nav.metrics") },
         { id: "audit", label: t("nav.audit") },
         { id: "registry", label: t("nav.registry") },

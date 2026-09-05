@@ -32,6 +32,8 @@ export interface ChannelCardProps {
   onTest?: () => void;
   onDiagnostics?: () => void;
   onResetCircuit?: () => void | Promise<void>;
+  onMovePriorityUp?: () => void | Promise<void>;
+  onMovePriorityDown?: () => void | Promise<void>;
 }
 
 export function ChannelCard({
@@ -53,6 +55,8 @@ export function ChannelCard({
   onTest,
   onDiagnostics,
   onResetCircuit,
+  onMovePriorityUp,
+  onMovePriorityDown,
 }: ChannelCardProps) {
   const { t } = useTranslation();
   const statusKey = (ch.status as ChannelStatus) ?? "disabled";
@@ -177,6 +181,32 @@ export function ChannelCard({
         </div>
       )}
       <div className="channel-card-actions">
+        {(onMovePriorityUp || onMovePriorityDown) && (
+          <div style={{ display: "flex", gap: "2px", marginRight: "var(--space-1)" }}>
+            {onMovePriorityUp && (
+              <button
+                className="btn btn-sm"
+                onClick={onMovePriorityUp}
+                title={t("channels.moveUp")}
+                aria-label={t("channels.moveUp")}
+                style={{ padding: "4px 8px", minWidth: "auto" }}
+              >
+                ↑
+              </button>
+            )}
+            {onMovePriorityDown && (
+              <button
+                className="btn btn-sm"
+                onClick={onMovePriorityDown}
+                title={t("channels.moveDown")}
+                aria-label={t("channels.moveDown")}
+                style={{ padding: "4px 8px", minWidth: "auto" }}
+              >
+                ↓
+              </button>
+            )}
+          </div>
+        )}
         <button className="btn btn-sm" onClick={onEdit}>
           {t("common.edit")}
         </button>

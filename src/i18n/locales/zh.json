@@ -98,6 +98,8 @@
     "overview": "概览",
     "configuration": "配置",
     "monitoring": "监控",
+    "monitoringPrimary": "监控",
+    "monitoringAdvanced": "分析",
     "system": "系统",
     "audit": "审计日志",
     "redemption": "兑换码",
@@ -312,7 +314,9 @@
     "cooldownActive": "冷却中",
     "cooldownRemaining": "剩余 {{secs}}s",
     "moveUp": "移至更高优先级",
-    "moveDown": "移至更低优先级"
+    "moveDown": "移至更低优先级",
+    "priorityBoundary": "无法超出优先级边界",
+    "priorityUpdated": "渠道优先级已更新"
   },
   "virtualKeys": {
     "title": "虚拟密钥",
@@ -328,8 +332,10 @@
     "namePlaceholder": "例如 Production App",
     "dailyBudget": "每日预算（美元，可选）",
     "dailyBudgetPlaceholder": "例如 10.00",
+    "dailyBudgetTooltip": "每日最大支出(UTC时区午夜重置)。留空表示无限制。",
     "monthlyBudget": "每月预算（美元，可选）",
     "monthlyBudgetPlaceholder": "例如 250.00",
+    "monthlyBudgetTooltip": "每月最大支出。留空表示无限制。",
     "allowedModels": "允许的模型",
     "plaintextWarning": "此密钥将不会再次显示。请立即复制并妥善保管。",
     "newKeyCreated": "新密钥已创建：{{name}}",
