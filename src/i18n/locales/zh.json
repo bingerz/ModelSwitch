@@ -117,6 +117,12 @@
     "button": "登录",
     "error": "令牌无效或网关不可达",
     "hint": "输入网关配置中的管理员令牌。如果未配置令牌，请留空。",
+    "modeTitle": "登录模式",
+    "modeExplanation": "ModelSwitch 支持两种访问模式：",
+    "adminMode": "管理员令牌（本页面）",
+    "adminModeDesc": "完整的系统管理访问权限。输入 config.toml 中的管理员令牌，如果未启用认证则留空。",
+    "portalMode": "门户登录 (/portal)",
+    "portalModeDesc": "员工自助服务门户。用户访问 /portal 并输入其虚拟密钥 (ms-vk-...) 以查看个人使用情况和预算。",
     "sessionExpired": "会话已过期，请重新登录。",
     "networkError": "无法连接到网关，请检查网络连接。"
   },
@@ -599,7 +605,8 @@
     "errRate": "{{rate}}% 错误",
     "activityTimeline": "请求活动时间线",
     "emptyTitle": "尚未配置渠道",
-    "emptyHint": "前往 配置 → 渠道 添加你的第一个 LLM 提供商。"
+    "emptyHint": "前往 配置 → 渠道 添加你的第一个 LLM 提供商。",
+    "addFirstChannel": "添加第一个渠道"
   },
   "logs": {
     "title": "调度日志",

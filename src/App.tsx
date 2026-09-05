@@ -207,6 +207,19 @@ function AppInner() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
+  // Listen for custom navigation events from empty states / CTAs
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const customEvent = e as CustomEvent<TabId>;
+      if (customEvent.detail) {
+        setActiveTab(customEvent.detail);
+        setMenuOpen(false);
+      }
+    };
+    window.addEventListener("navigate-to-tab", handler);
+    return () => window.removeEventListener("navigate-to-tab", handler);
+  }, []);
+
   // On mount: check if gateway is running, auto-start if not
   useEffect(() => {
     if (!isTauri) return; // Web mode: gateway is already running

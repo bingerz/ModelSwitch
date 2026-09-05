@@ -117,6 +117,12 @@
     "button": "Login",
     "error": "Invalid token or gateway not reachable",
     "hint": "Enter the admin token from your gateway config. Leave empty if no token is configured.",
+    "modeTitle": "Login Mode",
+    "modeExplanation": "ModelSwitch supports two access modes:",
+    "adminMode": "Admin Token (this page)",
+    "adminModeDesc": "Full system administration access. Enter the admin token from config.toml or leave empty if auth is disabled.",
+    "portalMode": "Portal Login (/portal)",
+    "portalModeDesc": "Employee self-service portal. Users navigate to /portal and enter their virtual key (ms-vk-...) to view personal usage and budgets.",
     "sessionExpired": "Your session has expired. Please log in again.",
     "networkError": "Cannot connect to the gateway. Please check your network connection."
   },
@@ -599,7 +605,8 @@
     "errRate": "{{rate}}% err",
     "activityTimeline": "Request activity timeline",
     "emptyTitle": "No channels configured",
-    "emptyHint": "Go to Configuration → Channels to add your first LLM provider."
+    "emptyHint": "Go to Configuration → Channels to add your first LLM provider.",
+    "addFirstChannel": "Add Your First Channel"
   },
   "logs": {
     "title": "Dispatch Logs",
