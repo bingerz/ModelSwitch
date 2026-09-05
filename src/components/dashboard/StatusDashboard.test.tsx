@@ -151,4 +151,44 @@ describe("StatusDashboard", () => {
     expect(api.logs).toHaveBeenCalledWith(0, 50);
     expect(api.usageHistory).toHaveBeenCalledWith(24);
   });
+
+  it("shows_empty_state_with_add_channel_cta", async () => {
+    vi.mocked(api.listChannels).mockResolvedValue([]);
+    vi.mocked(api.stats).mockResolvedValue(mockStats);
+    vi.mocked(api.logs).mockResolvedValue(mockLogs);
+    vi.mocked(api.usageHistory).mockResolvedValue(mockUsage);
+
+    renderWithProviders(<StatusDashboard />);
+
+    await waitFor(() => {
+      expect(screen.getByText("dashboard.emptyTitle")).toBeTruthy();
+    });
+    expect(screen.getByText("dashboard.emptyHint")).toBeTruthy();
+    expect(screen.getByText("dashboard.addFirstChannel")).toBeTruthy();
+  });
+
+  it("dispatches_navigate_to_tab_event_on_cta_click", async () => {
+    vi.mocked(api.listChannels).mockResolvedValue([]);
+    vi.mocked(api.stats).mockResolvedValue(mockStats);
+    vi.mocked(api.logs).mockResolvedValue(mockLogs);
+    vi.mocked(api.usageHistory).mockResolvedValue(mockUsage);
+
+    const eventHandler = vi.fn();
+    window.addEventListener("navigate-to-tab", eventHandler);
+
+    renderWithProviders(<StatusDashboard />);
+
+    await waitFor(() => {
+      expect(screen.getByText("dashboard.addFirstChannel")).toBeTruthy();
+    });
+
+    const ctaButton = screen.getByText("dashboard.addFirstChannel");
+    ctaButton.click();
+
+    expect(eventHandler).toHaveBeenCalledTimes(1);
+    const event = eventHandler.mock.calls[0][0] as CustomEvent;
+    expect(event.detail).toBe("channels");
+
+    window.removeEventListener("navigate-to-tab", eventHandler);
+  });
 });
