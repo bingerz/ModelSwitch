@@ -399,8 +399,9 @@ mod tests {
     #[test]
     fn redacts_stripe_live_key() {
         let patterns = builtin_patterns();
-        let input = r#"{"key": "sk_live_REDACTED_FOR_PUSH"}"#;
-        let (output, count) = scan_and_redact(input, patterns);
+        // Runtime-built fixture: a literal sk_live_ key trips GitHub push protection.
+        let input = format!(r#"{{"key": "sk_live_{}"}}"#, "1".repeat(24));
+        let (output, count) = scan_and_redact(&input, patterns);
         assert!(output.contains("[REDACTED:STRIPE_KEY]"));
         assert!(count >= 1, "expected at least one redaction, got {count}");
     }
@@ -408,10 +409,11 @@ mod tests {
     #[test]
     fn redacts_stripe_restricted_key() {
         let patterns = builtin_patterns();
-        let input = "token rk_live_REDACTED_FOR_PUSH";
-        let (output, count) = scan_and_redact(input, patterns);
+        let key = format!("rk_live_{}", "a".repeat(32));
+        let input = format!("token {key}");
+        let (output, count) = scan_and_redact(&input, patterns);
         assert!(output.contains("[REDACTED:STRIPE_KEY]"));
-        assert!(!output.contains("rk_live_REDACTED_FOR_PUSH"));
+        assert!(!output.contains(&key));
         assert!(count >= 1);
     }
 
@@ -436,8 +438,8 @@ mod tests {
     #[test]
     fn redacts_github_pat() {
         let patterns = builtin_patterns();
-        let input = "token: ghp_1234567890abcdefghijklmnopqrstuvwxyz";
-        let (output, _) = scan_and_redact(input, patterns);
+        let input = format!("token: ghp_{}", "1234567890abcdefghijklmnopqrstuvwxyz");
+        let (output, _) = scan_and_redact(&input, patterns);
         assert!(
             output.contains("[REDACTED"),
             "expected redaction in output: {output}"
@@ -448,8 +450,8 @@ mod tests {
     #[test]
     fn redacts_slack_bot_token() {
         let patterns = builtin_patterns();
-        let input = "xoxb-REDACTED-FOR-PUSH";
-        let (output, _) = scan_and_redact(input, patterns);
+        let input = format!("xoxb-{}-{}-{}", "1".repeat(12), "2".repeat(13), "a".repeat(24));
+        let (output, _) = scan_and_redact(&input, patterns);
         assert!(output.contains("[REDACTED:SLACK_TOKEN]"));
     }
 
