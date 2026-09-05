@@ -781,7 +781,12 @@
     "action": "Action",
     "actor": "Actor",
     "target": "Target",
-    "details": "Details"
+    "details": "Details",
+    "filterByAction": "Filter by action",
+    "filterByActor": "Filter by actor",
+    "allActions": "All actions",
+    "allActors": "All actors",
+    "filtered": "filtered from {{total}}"
   },
   "guardrails": {
     "title": "Content Guardrails",

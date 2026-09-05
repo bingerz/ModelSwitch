@@ -781,7 +781,12 @@
     "action": "操作",
     "actor": "操作者",
     "target": "目标",
-    "details": "详情"
+    "details": "详情",
+    "filterByAction": "按操作筛选",
+    "filterByActor": "按操作者筛选",
+    "allActions": "所有操作",
+    "allActors": "所有操作者",
+    "filtered": "从 {{total}} 条中筛选"
   },
   "guardrails": {
     "title": "内容护栏",
