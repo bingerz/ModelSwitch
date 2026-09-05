@@ -133,10 +133,10 @@ export function ChannelPanel() {
   };
 
   const handleMovePriority = async (id: string, direction: "up" | "down") => {
-    const idx = visibleChannels.findIndex((c) => c.id === id);
+    const idx = filteredChannels.findIndex((c) => c.id === id);
     if (idx === -1) return;
     
-    const channel = visibleChannels[idx];
+    const channel = filteredChannels[idx];
     const newPriority = direction === "up" ? channel.priority - 1 : channel.priority + 1;
     
     // Check bounds within visible channels
@@ -179,20 +179,6 @@ export function ChannelPanel() {
       }
     }
     setDragId(null);
-  };
-
-  // Keyboard-accessible priority move (alternative to drag-drop)
-  const handleMovePriority = async (channelId: string, delta: number) => {
-    const ch = channels.find((c) => c.id === channelId);
-    if (!ch) return;
-    const newPriority = ch.priority + delta;
-    if (newPriority < 1 || newPriority > 3) return;
-    try {
-      await api.updateChannel(channelId, channelToUpdateData(ch, { priority: newPriority }));
-      refresh();
-    } catch {
-      refresh();
-    }
   };
 
   // Apply search and status filters
@@ -365,7 +351,7 @@ export function ChannelPanel() {
                           <button
                             className="btn btn-sm tier-move-btn"
                             disabled={ch.priority <= 1}
-                            onClick={() => handleMovePriority(ch.id, -1)}
+                            onClick={() => handleMovePriority(ch.id, "up")}
                             title={t("channels.moveUp")}
                             aria-label={t("channels.moveUp")}
                           >
@@ -374,7 +360,7 @@ export function ChannelPanel() {
                           <button
                             className="btn btn-sm tier-move-btn"
                             disabled={ch.priority >= 3}
-                            onClick={() => handleMovePriority(ch.id, 1)}
+                            onClick={() => handleMovePriority(ch.id, "down")}
                             title={t("channels.moveDown")}
                             aria-label={t("channels.moveDown")}
                           >

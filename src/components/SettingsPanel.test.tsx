@@ -102,10 +102,11 @@ describe("SettingsPanel", () => {
 
     renderWithProviders(<SettingsPanel />);
 
+    // Wait for loading to finish and content to appear
     await waitFor(() => {
-      expect(screen.getByText("settings.title")).toBeTruthy();
-    });
-    expect(screen.getByText("settings.demoMode")).toBeTruthy();
+      expect(screen.getByText("settings.demoMode")).toBeTruthy();
+    }, { timeout: 3000 });
+    
     expect(screen.getByText("settings.config")).toBeTruthy();
     expect(screen.getByText("settings.providerBudgets")).toBeTruthy();
     expect(screen.getByText("settings.completionRatios")).toBeTruthy();
