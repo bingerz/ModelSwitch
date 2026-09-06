@@ -243,6 +243,7 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
         onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
         presetModels={activePreset?.models ?? []}
         apiKeyUrl={activePreset?.apiKeyUrl}
+        websiteUrl={activePreset?.websiteUrl}
         defaultModel={activePreset?.defaultModel}
         showCredential={true}
         onWebViewLogin={isTauri ? handleWebViewLogin : undefined}

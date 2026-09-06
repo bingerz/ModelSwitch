@@ -44,6 +44,7 @@ export interface FormFieldsProps {
   // Non-form-field props kept as individuals
   presetModels: string[];
   apiKeyUrl?: string;
+  websiteUrl?: string;
   defaultModel?: string;
   showCredential: boolean;
   onWebViewLogin?: () => void;
@@ -60,6 +61,7 @@ export function FormFields({
   onChange,
   presetModels,
   apiKeyUrl,
+  websiteUrl,
   defaultModel,
   showCredential,
   onWebViewLogin,
@@ -187,6 +189,17 @@ export function FormFields({
                     title={t("channels.apiKey")}
                   >
                     {t("channels.getKey")}
+                  </a>
+                )}
+                {websiteUrl && !apiKeyUrl && (
+                  <a
+                    href={websiteUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-sm"
+                    title="Provider website"
+                  >
+                    →
                   </a>
                 )}
                 {credentialType === "web_session" && onWebViewLogin && (

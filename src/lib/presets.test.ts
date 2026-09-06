@@ -96,12 +96,26 @@ describe("PROVIDER_PRESETS data integrity", () => {
     expect(unique.size, `Duplicate names found`).toBe(names.length);
   });
 
-  it("no duplicate baseUrls (excluding Azure placeholder)", () => {
+  it("no unexpected duplicate baseUrls (product-line splits allowed)", () => {
+    // Allow duplicates for product-line variants that share endpoints but differ in auth/tier
+    const allowedDuplicates = [
+      "https://ark.cn-beijing.volces.com/api/coding", // DouBao / 火山 Coding Plan
+      "https://bedrock-runtime.us-west-2.amazonaws.com", // AWS Bedrock (AKSK) / (API Key)
+      "https://tokenhub-intl.tencentcloudmaas.com/plan/anthropic", // Tencent variants
+      "https://tokenhub.tencentmaas.com/plan/anthropic", // Tencent variants
+    ];
     const urls = PROVIDER_PRESETS.filter((p) => !p.baseUrl.includes("YOUR_RESOURCE")).map(
       (p) => p.baseUrl,
     );
-    const unique = new Set(urls);
-    expect(unique.size, `Duplicate baseUrl found`).toBe(urls.length);
+    const urlCounts = new Map<string, number>();
+    for (const url of urls) {
+      urlCounts.set(url, (urlCounts.get(url) || 0) + 1);
+    }
+    for (const [url, count] of urlCounts.entries()) {
+      if (count > 1 && !allowedDuplicates.includes(url)) {
+        expect.fail(`Unexpected duplicate baseUrl: ${url} (${count} times)`);
+      }
+    }
   });
 
   it("modelMapping values are non-empty strings", () => {
@@ -148,6 +162,46 @@ describe("PROVIDER_PRESETS data integrity", () => {
       }
     }
   });
+
+  it("websiteUrl is a valid URL when present", () => {
+    for (const p of PROVIDER_PRESETS) {
+      if (p.websiteUrl !== undefined) {
+        expect(p.websiteUrl, `${p.name} websiteUrl invalid`).toMatch(/^https?:\/\//);
+      }
+    }
+  });
+
+  it("modelsUrl is a valid URL when present", () => {
+    for (const p of PROVIDER_PRESETS) {
+      if (p.modelsUrl !== undefined) {
+        expect(p.modelsUrl, `${p.name} modelsUrl invalid`).toMatch(/^https?:\/\//);
+      }
+    }
+  });
+
+  it("endpointCandidates are valid URLs when present", () => {
+    for (const p of PROVIDER_PRESETS) {
+      if (p.endpointCandidates !== undefined) {
+        expect(p.endpointCandidates.length, `${p.name} endpointCandidates empty`).toBeGreaterThan(0);
+        for (const url of p.endpointCandidates) {
+          expect(url, `${p.name} endpointCandidate "${url}" invalid`).toMatch(/^https?:\/\//);
+        }
+      }
+    }
+  });
+
+  it("templateValues have required structure when present", () => {
+    for (const p of PROVIDER_PRESETS) {
+      if (p.templateValues !== undefined) {
+        expect(typeof p.templateValues, `${p.name} templateValues must be object`).toBe("object");
+        for (const [key, config] of Object.entries(p.templateValues)) {
+          expect(config.label, `${p.name} templateValues["${key}"].label missing`).toBeTruthy();
+          expect(config.placeholder, `${p.name} templateValues["${key}"].placeholder missing`).toBeTruthy();
+          expect(typeof config.editorValue, `${p.name} templateValues["${key}"].editorValue must be string`).toBe("string");
+        }
+      }
+    }
+  });
 });
 
 describe("groupPresetsByCategory", () => {
@@ -182,5 +236,101 @@ describe("groupPresetsByCategory", () => {
   it("cn_official category is non-empty", () => {
     const groups = groupPresetsByCategory();
     expect(groups.cn_official.length).toBeGreaterThan(0);
+  });
+});
+
+describe("New P0 presets added", () => {
+  it("includes Kimi For Coding preset", () => {
+    const preset = PROVIDER_PRESETS.find((p) => p.name === "Kimi For Coding");
+    expect(preset).toBeTruthy();
+    expect(preset?.baseUrl).toContain("coding");
+    expect(preset?.icon).toBe("kimi");
+  });
+
+  it("includes Bailian For Coding preset", () => {
+    const preset = PROVIDER_PRESETS.find((p) => p.name === "Bailian For Coding");
+    expect(preset).toBeTruthy();
+    expect(preset?.baseUrl).toContain("coding");
+    expect(preset?.icon).toBe("bailian");
+  });
+
+  it("includes QwenCloud variants", () => {
+    const qwencloud = PROVIDER_PRESETS.find((p) => p.name === "QwenCloud");
+    const qwencloudCoding = PROVIDER_PRESETS.find((p) => p.name === "QwenCloud For Coding");
+    const qwencloudToken = PROVIDER_PRESETS.find((p) => p.name === "QwenCloud Token Plan");
+    expect(qwencloud).toBeTruthy();
+    expect(qwencloudCoding).toBeTruthy();
+    expect(qwencloudToken).toBeTruthy();
+  });
+
+  it("includes 火山 plans and BytePlus", () => {
+    const agentPlan = PROVIDER_PRESETS.find((p) => p.name === "火山 Agent Plan");
+    const codingPlan = PROVIDER_PRESETS.find((p) => p.name === "火山 Coding Plan");
+    const bytePlus = PROVIDER_PRESETS.find((p) => p.name === "BytePlus");
+    expect(agentPlan).toBeTruthy();
+    expect(codingPlan).toBeTruthy();
+    expect(bytePlus).toBeTruthy();
+  });
+
+  it("includes Tencent Token Plan variants", () => {
+    const tencent = PROVIDER_PRESETS.find((p) => p.name === "Tencent Token Plan");
+    const tencentIntl = PROVIDER_PRESETS.find((p) => p.name === "Tencent Token Plan (Intl)");
+    expect(tencent).toBeTruthy();
+    expect(tencentIntl).toBeTruthy();
+    expect(tencent?.modelsUrl).toBeTruthy();
+  });
+
+  it("includes Baidu Qianfan Coding and Token Plan", () => {
+    const coding = PROVIDER_PRESETS.find((p) => p.name === "Baidu Qianfan Coding Plan");
+    const token = PROVIDER_PRESETS.find((p) => p.name === "Baidu Qianfan Token Plan");
+    expect(coding).toBeTruthy();
+    expect(token).toBeTruthy();
+  });
+
+  it("includes Xiaomi MiMo Token Plan (China)", () => {
+    const preset = PROVIDER_PRESETS.find((p) => p.name === "Xiaomi MiMo Token Plan (China)");
+    expect(preset).toBeTruthy();
+    expect(preset?.baseUrl).toContain("token-plan");
+  });
+
+  it("includes Zhipu GLM en", () => {
+    const preset = PROVIDER_PRESETS.find((p) => p.name === "Zhipu GLM en");
+    expect(preset).toBeTruthy();
+    expect(preset?.baseUrl).toContain("z.ai");
+  });
+
+  it("includes MiniMax en", () => {
+    const preset = PROVIDER_PRESETS.find((p) => p.name === "MiniMax en");
+    expect(preset).toBeTruthy();
+    expect(preset?.baseUrl).toContain("minimax.io");
+  });
+
+  it("includes StepFun en", () => {
+    const preset = PROVIDER_PRESETS.find((p) => p.name === "StepFun en");
+    expect(preset).toBeTruthy();
+    expect(preset?.baseUrl).toContain("stepfun.ai");
+  });
+
+  it("includes Compshare Coding Plan", () => {
+    const preset = PROVIDER_PRESETS.find((p) => p.name === "Compshare Coding Plan");
+    expect(preset).toBeTruthy();
+    expect(preset?.baseUrl).toContain("cp.compshare");
+  });
+
+  it("includes AWS Bedrock variants", () => {
+    const aksk = PROVIDER_PRESETS.find((p) => p.name === "AWS Bedrock (AKSK)");
+    const apiKey = PROVIDER_PRESETS.find((p) => p.name === "AWS Bedrock (API Key)");
+    expect(aksk).toBeTruthy();
+    expect(apiKey).toBeTruthy();
+    expect(aksk?.templateValues).toBeTruthy();
+    expect(aksk?.templateValues?.AWS_REGION).toBeTruthy();
+  });
+
+  it("includes KAT-Coder with template values", () => {
+    const preset = PROVIDER_PRESETS.find((p) => p.name === "KAT-Coder");
+    expect(preset).toBeTruthy();
+    expect(preset?.templateValues).toBeTruthy();
+    expect(preset?.templateValues?.ENDPOINT_ID).toBeTruthy();
+    expect(preset?.baseUrl).toContain("${ENDPOINT_ID}");
   });
 });
