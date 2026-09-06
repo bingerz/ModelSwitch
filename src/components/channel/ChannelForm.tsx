@@ -49,6 +49,7 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
   const [apiFormat, setApiFormat] = useState<ApiFormat>("anthropic");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [fetchedModels, setFetchedModels] = useState<string[] | null>(null);
   // ponytail: ChannelForm delegates inputs to FormFields, so field-level error UI
   // would require prop-drilling. Surface Zod errors via the existing error banner;
   // the schema still drives the actual validation logic.
@@ -241,9 +242,10 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
       <FormFields
         values={form}
         onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
-        presetModels={activePreset?.models ?? []}
+        presetModels={fetchedModels ?? (activePreset?.models ?? [])}
         apiKeyUrl={activePreset?.apiKeyUrl}
         websiteUrl={activePreset?.websiteUrl}
+        modelsUrl={activePreset?.modelsUrl}
         defaultModel={activePreset?.defaultModel}
         showCredential={true}
         onWebViewLogin={isTauri ? handleWebViewLogin : undefined}
@@ -252,6 +254,7 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
         apiFormat={apiFormat}
         apiFormats={activePreset ? getAvailableFormats(activePreset) : ["openai"]}
         onApiFormatChange={handleApiFormatChange}
+        onRefreshModels={(models) => setFetchedModels(models)}
       />
       {error && <div className="form-error">{error}</div>}
       <button type="submit" className="btn btn-primary" disabled={submitting}>

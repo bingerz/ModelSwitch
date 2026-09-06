@@ -26,8 +26,11 @@ import { quota, redemptionCodesApi } from "./quota";
 import { reportsFlatApi, reportsApi, logs } from "./reports";
 import { guardrailsApi } from "./guardrails";
 import { configApi } from "./config";
+import { modelsApi } from "./models";
 
 import { isMockMode } from "../mock-flag";
+
+export { fetchProviderModels, type FetchedModel, type FetchModelsParams } from "./models";
 
 export interface Api {
   // Channels (flat)
@@ -89,6 +92,7 @@ export interface Api {
 
   // Nested namespaces
   mcp: typeof mcpApi;
+  models: typeof modelsApi;
   virtualKeys: typeof virtualKeysApi;
   redemptionCodes: typeof redemptionCodesApi;
   reports: typeof reportsApi;
@@ -104,6 +108,7 @@ export const api: Api = {
   ...configApi,
   mcpHealth,
   mcp: mcpApi,
+  models: modelsApi,
   virtualKeys: virtualKeysApi,
   redemptionCodes: redemptionCodesApi,
   reports: reportsApi,

@@ -45,6 +45,7 @@ export interface FormFieldsProps {
   presetModels: string[];
   apiKeyUrl?: string;
   websiteUrl?: string;
+  modelsUrl?: string;
   defaultModel?: string;
   showCredential: boolean;
   onWebViewLogin?: () => void;
@@ -54,6 +55,7 @@ export interface FormFieldsProps {
   apiFormat?: ApiFormat;
   apiFormats?: ApiFormat[];
   onApiFormatChange?: (format: ApiFormat) => void;
+  onRefreshModels?: (models: string[]) => void;
 }
 
 export function FormFields({
@@ -62,6 +64,7 @@ export function FormFields({
   presetModels,
   apiKeyUrl,
   websiteUrl,
+  modelsUrl,
   defaultModel,
   showCredential,
   onWebViewLogin,
@@ -71,14 +74,38 @@ export function FormFields({
   apiFormat,
   apiFormats,
   onApiFormatChange,
+  onRefreshModels,
 }: FormFieldsProps) {
   const { t } = useTranslation();
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [refreshingModels, setRefreshingModels] = useState(false);
 
   const formatLabel = (fmt: ApiFormat): string => {
     if (fmt === "openai") return t("channels.openaiChat");
     if (fmt === "anthropic") return t("channels.anthropic");
     return t("channels.geminiFormat");
+  };
+
+  const handleRefreshModels = async () => {
+    if (!values.baseUrl || !values.credentialValue || !onRefreshModels) return;
+    
+    setRefreshingModels(true);
+    try {
+      const { fetchProviderModels } = await import("../../lib/api");
+      const models = await fetchProviderModels({
+        baseUrl: values.baseUrl,
+        apiKey: values.credentialValue,
+        modelsUrl,
+        apiFormat: apiFormat || "openai",
+      });
+      const modelIds = models.map((m) => m.id);
+      onRefreshModels(modelIds);
+    } catch (err) {
+      console.error("Failed to refresh models:", err);
+      alert(t("channels.modelRefreshFailed", { error: err instanceof Error ? err.message : String(err) }));
+    } finally {
+      setRefreshingModels(false);
+    }
   };
 
   const credentialType = values.credentialType;
@@ -240,12 +267,26 @@ export function FormFields({
         )}
         <label className="form-field">
           <span>{t("channels.baseUrl")}</span>
-          <input
-            value={values.baseUrl}
-            onChange={(e) => onChange({ baseUrl: e.target.value })}
-            placeholder="https://api.openai.com"
-            required
-          />
+          <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
+            <input
+              value={values.baseUrl}
+              onChange={(e) => onChange({ baseUrl: e.target.value })}
+              placeholder="https://api.openai.com"
+              required
+              style={{ flex: 1 }}
+            />
+            {onRefreshModels && values.credentialValue && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={handleRefreshModels}
+                disabled={refreshingModels || !values.baseUrl}
+                title={t("channels.refreshModels", { defaultValue: "刷新模型列表" })}
+              >
+                {refreshingModels ? "⟳" : "↻"}
+              </button>
+            )}
+          </div>
         </label>
         <div className="form-field span-2">
           <span>{t("channels.models")}</span>
