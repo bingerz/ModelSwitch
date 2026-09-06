@@ -62,25 +62,36 @@ describe("PROVIDER_PRESETS data integrity", () => {
     }
   });
 
-  it("every preset has a non-empty models array", () => {
+  it("every preset has a models array (can be empty for P2 relays that use model refresh)", () => {
     for (const p of PROVIDER_PRESETS) {
-      expect(p.models.length, `${p.name} has empty models`).toBeGreaterThan(0);
+      expect(Array.isArray(p.models)).toBe(true);
+      // P2 relay presets may have empty models array that gets populated via refresh
+      if (p.models.length === 0) {
+        expect(p.category, `${p.name} has empty models but wrong category`).toMatch(/aggregator|third_party/);
+        expect(p.apiFormat, `${p.name} has empty models but wrong apiFormat`).toBe("anthropic");
+      }
     }
   });
 
-  it("defaultModel exists in models array", () => {
+  it("defaultModel exists in models array when models array is non-empty", () => {
     for (const p of PROVIDER_PRESETS) {
-      expect(
-        p.models.includes(p.defaultModel),
-        `${p.name}: defaultModel "${p.defaultModel}" not in models [${p.models.join(", ")}]`,
-      ).toBe(true);
+      if (p.models.length > 0) {
+        expect(
+          p.models.includes(p.defaultModel),
+          `${p.name}: defaultModel "${p.defaultModel}" not in models [${p.models.join(", ")}]`,
+        ).toBe(true);
+      }
+      // For empty models arrays (P2 relays), defaultModel is still defined for fallback
+      if (p.models.length === 0 && p.category.match(/aggregator|third_party/)) {
+        expect(p.defaultModel, `${p.name} has no defaultModel`).toBeTruthy();
+      }
     }
   });
 
-  it("every preset has priority between 1 and 3", () => {
+  it("every preset has priority between 1 and 5", () => {
     for (const p of PROVIDER_PRESETS) {
       expect(p.priority, `${p.name} has priority ${p.priority}`).toBeGreaterThanOrEqual(1);
-      expect(p.priority).toBeLessThanOrEqual(3);
+      expect(p.priority, `${p.name} has priority ${p.priority}`).toBeLessThanOrEqual(5);
     }
   });
 
@@ -239,8 +250,71 @@ describe("groupPresetsByCategory", () => {
   });
 });
 
-describe("New P0 presets added", () => {
-  it("includes Kimi For Coding preset", () => {
+  describe("P2 relay presets added", () => {
+    it("includes priority multi-endpoint relays", () => {
+      const multiEndpointRelays = [
+        "9527CODE",
+        "APIKEY.FUN",
+        "Qiniu",
+        "RunAPI",
+        "SudoCode.us",
+        "TeamoRouter",
+        "XycAi",
+      ];
+      for (const name of multiEndpointRelays) {
+        const preset = PROVIDER_PRESETS.find((p) => p.name === name);
+        expect(preset, `${name} should exist`).toBeDefined();
+        expect(preset?.endpointCandidates?.length).toBeGreaterThanOrEqual(2);
+        expect(preset?.apiFormat).toBe("anthropic");
+        expect(preset?.category).toMatch(/aggregator|third_party/);
+      }
+    });
+
+    it("includes single-endpoint P2 relays", () => {
+      const singleEndpointRelays = [
+        "A6API",
+        "CCSub",
+        "ClaudeAPI",
+        "ClaudeCN",
+        "Code0",
+        "ETok.ai",
+        "FennoAI",
+        "PatewayAI",
+        "RelaxyCode",
+        "SubRouter",
+        "ZetaAPI",
+      ];
+      for (const name of singleEndpointRelays) {
+        const preset = PROVIDER_PRESETS.find((p) => p.name === name);
+        expect(preset, `${name} should exist`).toBeDefined();
+        expect(preset?.apiFormat).toBe("anthropic");
+        expect(preset?.category).toMatch(/aggregator|third_party/);
+        expect(preset?.websiteUrl).toBeTruthy();
+        expect(preset?.apiKeyUrl).toBeTruthy();
+      }
+    });
+
+    it("includes additional P2 relays with endpointCandidates", () => {
+      const withCandidates = [
+        "APINebula",
+        "AtlasCloud",
+        "OpenCode Go",
+        "PPIO",
+        "SudoCode.chat",
+        "CherryIN",
+        "JieKou AI",
+        "AICodeWith",
+      ];
+      for (const name of withCandidates) {
+        const preset = PROVIDER_PRESETS.find((p) => p.name === name);
+        expect(preset, `${name} should exist`).toBeDefined();
+        expect(preset?.endpointCandidates?.length).toBeGreaterThanOrEqual(1);
+      }
+    });
+  });
+
+  describe("New P0 presets added", () => {
+    it("includes Kimi For Coding preset", () => {
     const preset = PROVIDER_PRESETS.find((p) => p.name === "Kimi For Coding");
     expect(preset).toBeTruthy();
     expect(preset?.baseUrl).toContain("coding");
