@@ -30,7 +30,13 @@ import { modelsApi } from "./models";
 
 import { isMockMode } from "../mock-flag";
 
-export { fetchProviderModels, type FetchedModel, type FetchModelsParams } from "./models";
+export { 
+  fetchProviderModels, 
+  probeEndpoints,
+  type FetchedModel, 
+  type FetchModelsParams,
+  type ProbeResult,
+} from "./models";
 
 export interface Api {
   // Channels (flat)

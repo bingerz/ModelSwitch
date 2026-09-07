@@ -317,7 +317,11 @@
     "moveUp": "Move to higher priority tier",
     "moveDown": "Move to lower priority tier",
     "priorityBoundary": "Cannot move beyond priority boundaries",
-    "priorityUpdated": "Channel priority updated"
+    "priorityUpdated": "Channel priority updated",
+    "refreshModels": "Refresh Models",
+    "modelRefreshFailed": "Failed to refresh models: {{error}}",
+    "speedTest": "Speed Test",
+    "probeEndpointsFailed": "Failed to probe endpoints: {{error}}"
   },
   "virtualKeys": {
     "title": "Virtual Keys",

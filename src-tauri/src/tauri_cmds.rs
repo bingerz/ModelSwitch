@@ -308,3 +308,12 @@ pub(crate) async fn fetch_provider_models(
     )
     .await
 }
+
+// -- Endpoint Probing Commands ----------------------------------------------
+
+#[tauri::command]
+pub(crate) async fn probe_endpoints(
+    urls: Vec<String>,
+) -> Result<Vec<crate::endpoint_probe::ProbeResult>, String> {
+    Ok(crate::endpoint_probe::probe_endpoints(urls).await)
+}

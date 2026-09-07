@@ -1,4 +1,4 @@
-// Model fetching API: fetch available models from provider endpoints
+// Model fetching and endpoint probing API
 
 import { invokeTauri } from "./client";
 
@@ -13,6 +13,15 @@ export interface FetchModelsParams {
   isFullUrl?: boolean;
   modelsUrl?: string;
   apiFormat?: string;
+}
+
+export interface ProbeResult {
+  url: string;
+  ok: boolean;
+  status?: number;
+  latencyMs?: number;
+  error?: string;
+  reachable: boolean;
 }
 
 /**
@@ -30,6 +39,15 @@ export async function fetchProviderModels(params: FetchModelsParams): Promise<Fe
   });
 }
 
+/**
+ * Probe multiple endpoints to measure latency and reachability.
+ * Used for endpointCandidates speed-test UI.
+ */
+export async function probeEndpoints(urls: string[]): Promise<ProbeResult[]> {
+  return invokeTauri<ProbeResult[]>("probe_endpoints", { urls });
+}
+
 export const modelsApi = {
   fetchProviderModels,
+  probeEndpoints,
 };

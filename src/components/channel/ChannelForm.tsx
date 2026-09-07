@@ -246,6 +246,7 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
         apiKeyUrl={activePreset?.apiKeyUrl}
         websiteUrl={activePreset?.websiteUrl}
         modelsUrl={activePreset?.modelsUrl}
+        endpointCandidates={activePreset?.endpointCandidates}
         defaultModel={activePreset?.defaultModel}
         showCredential={true}
         onWebViewLogin={isTauri ? handleWebViewLogin : undefined}
