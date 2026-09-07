@@ -317,7 +317,11 @@
     "moveUp": "移至更高优先级",
     "moveDown": "移至更低优先级",
     "priorityBoundary": "无法超出优先级边界",
-    "priorityUpdated": "渠道优先级已更新"
+    "priorityUpdated": "渠道优先级已更新",
+    "refreshModels": "刷新模型列表",
+    "modelRefreshFailed": "刷新模型失败: {{error}}",
+    "speedTest": "测速",
+    "probeEndpointsFailed": "探测端点失败: {{error}}"
   },
   "virtualKeys": {
     "title": "虚拟密钥",

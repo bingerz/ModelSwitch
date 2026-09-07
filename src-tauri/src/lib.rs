@@ -11,6 +11,8 @@ mod mcp;
 pub mod metrics;
 mod middleware;
 pub mod migration;
+pub mod endpoint_probe;
+pub mod model_fetch;
 pub mod model_registry;
 pub mod notification;
 pub mod persisted_store;
@@ -110,8 +112,9 @@ pub fn run() {
     use channel::ChannelStatus;
     use tauri::Manager;
     use tauri_cmds::{
-        app_hide, app_quit, gateway_restart, gateway_start, gateway_status, gateway_stop,
-        mcp_list_servers, mcp_list_tools, mcp_start_server, mcp_stop_server, GatewayManager,
+        app_hide, app_quit, fetch_provider_models, gateway_restart, gateway_start, gateway_status,
+        gateway_stop, mcp_list_servers, mcp_list_tools, mcp_start_server, mcp_stop_server,
+        probe_endpoints, GatewayManager,
     };
 
     tauri::Builder::default()
@@ -129,6 +132,8 @@ pub fn run() {
             mcp_start_server,
             mcp_stop_server,
             mcp_list_tools,
+            fetch_provider_models,
+            probe_endpoints,
         ])
         .setup(|app| {
             let handles = server::start_gateway_services(None);
