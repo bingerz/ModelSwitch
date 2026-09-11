@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Settings } from "lucide-react";
-import { SectionHeader } from "./ui/SectionHeader";
+import { PanelLayout } from "./ui/PanelLayout";
+import { LoadingState } from "./ui/LoadingState";
 import {
   api,
   type CacheStats,
@@ -52,16 +53,20 @@ export function SettingsPanel() {
     await refetch();
   };
 
-  if (loading) return <div className="panel-loading">{t("settings.loading")}</div>;
+  if (loading) {
+    return (
+      <PanelLayout title={t("settings.title")} icon={Settings}>
+        <LoadingState message={t("settings.loading")} icon={Settings} />
+      </PanelLayout>
+    );
+  }
 
   return (
-    <section>
-      <SectionHeader
-        title={t("settings.title")}
-        icon={Settings}
-        onRefresh={refresh}
-        refreshing={false}
-      />
+    <PanelLayout
+      title={t("settings.title")}
+      icon={Settings}
+      onRefresh={refresh}
+    >
 
       <GeneralSettings onRefresh={refresh} />
       <AppearanceSettings />
@@ -105,6 +110,6 @@ export function SettingsPanel() {
         </h3>
         <p className="settings-hint">{t("settings.advancedFeaturesHint")}</p>
       </div>
-    </section>
+    </PanelLayout>
   );
 }

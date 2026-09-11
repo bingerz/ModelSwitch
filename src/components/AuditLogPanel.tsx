@@ -11,6 +11,8 @@ const PAGE_SIZE = 50;
 export function AuditLogPanel() {
   const { t } = useTranslation();
   const [page, setPage] = useState(1);
+  const [actionFilter, setActionFilter] = useState<string>("");
+  const [actorFilter, setActorFilter] = useState<string>("");
 
   const { data: entries = [], isLoading: loading, isError, refetch } = useQuery({
     queryKey: ["audit-log"],
@@ -24,15 +26,84 @@ export function AuditLogPanel() {
     await refetch();
   };
 
-  const totalPages = Math.ceil(entries.length / PAGE_SIZE);
-  const pageEntries = entries.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // Extract unique actions and actors for filter dropdowns
+  const uniqueActions = [...new Set(entries.map(e => e.action))].sort();
+  const uniqueActors = [...new Set(entries.map(e => e.actor))].sort();
 
-  // Reset page if entries shrink (e.g. after refresh)
+  // Apply filters
+  const filteredEntries = entries.filter(entry => {
+    if (actionFilter && entry.action !== actionFilter) return false;
+    if (actorFilter && entry.actor !== actorFilter) return false;
+    return true;
+  });
+
+  const totalPages = Math.ceil(filteredEntries.length / PAGE_SIZE);
+  const pageEntries = filteredEntries.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // Reset page if entries shrink (e.g. after refresh or filter change)
   if (page > totalPages && totalPages > 0) setPage(1);
 
   return (
     <section>
       <SectionHeader title={t("audit.title")} icon={ScrollText} onRefresh={refresh} refreshing={loading} />
+
+      {/* Filters */}
+      {entries.length > 0 && (
+        <div style={{
+          display: "flex",
+          gap: "var(--space-2)",
+          marginBottom: "var(--space-3)",
+          flexWrap: "wrap"
+        }}>
+          {uniqueActions.length > 1 && (
+            <select
+              className="log-channel-select"
+              value={actionFilter}
+              onChange={(e) => {
+                setActionFilter(e.target.value);
+                setPage(1);
+              }}
+              aria-label={t("audit.filterByAction")}
+              style={{ minWidth: "150px" }}
+            >
+              <option value="">{t("audit.allActions")}</option>
+              {uniqueActions.map((action) => (
+                <option key={action} value={action}>{action}</option>
+              ))}
+            </select>
+          )}
+          {uniqueActors.length > 1 && (
+            <select
+              className="log-channel-select"
+              value={actorFilter}
+              onChange={(e) => {
+                setActorFilter(e.target.value);
+                setPage(1);
+              }}
+              aria-label={t("audit.filterByActor")}
+              style={{ minWidth: "150px" }}
+            >
+              <option value="">{t("audit.allActors")}</option>
+              {uniqueActors.map((actor) => (
+                <option key={actor} value={actor}>{actor}</option>
+              ))}
+            </select>
+          )}
+          {(actionFilter || actorFilter) && (
+            <button
+              className="btn btn-sm"
+              onClick={() => {
+                setActionFilter("");
+                setActorFilter("");
+                setPage(1);
+              }}
+              title={t("common.clear")}
+            >
+              {t("common.clear")}
+            </button>
+          )}
+        </div>
+      )}
 
       {entries.length === 0 ? (
         <div className="empty-state">
@@ -90,7 +161,8 @@ export function AuditLogPanel() {
           {totalPages > 1 && (
             <div className="vk-pagination" style={{ marginTop: "0.75rem", display: "flex", alignItems: "center", gap: "0.5rem", justifyContent: "flex-end" }}>
               <span style={{ fontSize: "var(--text-xs)", color: "var(--color-text-secondary)" }}>
-                {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, entries.length)} / {entries.length}
+                {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filteredEntries.length)} / {filteredEntries.length}
+                {filteredEntries.length < entries.length && ` (${t("audit.filtered", { total: entries.length })})`}
               </span>
               <button
                 className="btn btn-sm"

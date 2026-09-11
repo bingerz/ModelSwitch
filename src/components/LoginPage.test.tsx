@@ -130,4 +130,16 @@ describe("LoginPage", () => {
       expect(localStorage.getItem("admin_token")).toBe("my-secret-token");
     });
   });
+
+  it("renders_admin_portal_mode_explanation", () => {
+    render(<LoginPage onSuccess={() => {}} />);
+    expect(screen.getByText("login.modeTitle")).toBeTruthy();
+    expect(screen.getByText("login.modeExplanation")).toBeTruthy();
+    // Mode labels appear in <strong> tags and repeated in containing <li>
+    // Use getAllByText to handle multiple matches
+    expect(screen.getAllByText(/login\.adminMode/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/login\.adminModeDesc/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/login\.portalMode/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/login\.portalModeDesc/).length).toBeGreaterThan(0);
+  });
 });

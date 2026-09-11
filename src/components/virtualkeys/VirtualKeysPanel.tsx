@@ -10,7 +10,8 @@ import {
 import { formatCents } from "../../lib/format";
 import { useToast } from "../Toast";
 import { StatTile } from "../ui/StatTile";
-import { SectionHeader } from "../ui/SectionHeader";
+import { PanelLayout } from "../ui/PanelLayout";
+import { LoadingState } from "../ui/LoadingState";
 import { EmptyState } from "../ui/EmptyState";
 import "../../styles/pages-enhanced.css";
 import { PlaintextBanner } from "./PlaintextBanner";
@@ -176,45 +177,109 @@ export function VirtualKeysPanel() {
 
   if (loading) {
     return (
-      <div className="panel-loading-enhanced">
-        <div className="spinner" />
-        <span>{t("virtualKeys.loading")}</span>
-      </div>
+      <PanelLayout title={t("virtualKeys.title")} icon={KeyRound}>
+        <LoadingState message={t("virtualKeys.loading")} icon={KeyRound} />
+      </PanelLayout>
     );
   }
 
+  const panelActions = (
+    <>
+      <button
+        className="btn"
+        onClick={() => setShowCsvModal(true)}
+        title={t("virtualKeys.csv.buttonHint")}
+      >
+        <FileUp size={14} />
+        {t("virtualKeys.csv.button")}
+      </button>
+      <button
+        className="btn"
+        onClick={() => setShowBatchModal(true)}
+        title={t("virtualKeys.batch.buttonHint")}
+      >
+        <Layers size={14} />
+        {t("virtualKeys.batch.button")}
+      </button>
+      <button
+        className="btn btn-primary"
+        onClick={() => setShowAddForm(!showAddForm)}
+      >
+        {showAddForm ? t("common.cancel") : t("virtualKeys.create")}
+      </button>
+    </>
+  );
+
+  const panelToolbar = (
+    <>
+      <div className="vk-search">
+        <Search size={14} className="vk-search-icon" />
+        <input
+          type="text"
+          className="vk-search-input"
+          placeholder={t("virtualKeys.searchPlaceholder")}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+        />
+        {searchInput && (
+          <button
+            className="vk-search-clear"
+            onClick={() => setSearchInput("")}
+            title={t("common.clear")}
+          >
+            {"\u00D7"}
+          </button>
+        )}
+      </div>
+      {groups.length > 0 && (
+        <select
+          className="vk-group-filter"
+          value={selectedGroup}
+          onChange={(e) => setSelectedGroup(e.target.value)}
+          aria-label={t("virtualKeys.groupFilterLabel")}
+          title={t("virtualKeys.groupFilterLabel")}
+        >
+          <option value="">{t("virtualKeys.groupFilterAll")}</option>
+          {groups.map((g) => (
+            <option key={g} value={g}>
+              {g}
+            </option>
+          ))}
+        </select>
+      )}
+      {totalPages > 1 && (
+        <div className="vk-pagination">
+          <button
+            className="btn btn-sm"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            title={t("common.previous")}
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <span className="vk-page-info">
+            {page} / {totalPages}
+          </span>
+          <button
+            className="btn btn-sm"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            title={t("common.next")}
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      )}
+    </>
+  );
+
   return (
-    <section className="vk-panel">
-      <SectionHeader
-        title={t("virtualKeys.title")}
-        icon={KeyRound}
-        action={
-          <div style={{ display: "flex", gap: "var(--space-2)" }}>
-            <button
-              className="btn"
-              onClick={() => setShowCsvModal(true)}
-              title={t("virtualKeys.csv.buttonHint")}
-            >
-              <FileUp size={14} />
-              {t("virtualKeys.csv.button")}
-            </button>
-            <button
-              className="btn"
-              onClick={() => setShowBatchModal(true)}
-              title={t("virtualKeys.batch.buttonHint")}
-            >
-              <Layers size={14} />
-              {t("virtualKeys.batch.button")}
-            </button>
-            <button
-              className="btn btn-primary"
-              onClick={() => setShowAddForm(!showAddForm)}
-            >
-              {showAddForm ? t("common.cancel") : t("virtualKeys.create")}
-            </button>
-          </div>
-        }
-      />
+    <PanelLayout
+      title={t("virtualKeys.title")}
+      icon={KeyRound}
+      actions={panelActions}
+      toolbar={panelToolbar}
+    >
 
       {createdResponse && (
         <PlaintextBanner
@@ -251,68 +316,6 @@ export function VirtualKeysPanel() {
           onClose={() => setShowCsvModal(false)}
         />
       )}
-
-      {/* Search + pagination toolbar */}
-      <div className="vk-toolbar">
-        <div className="vk-search">
-          <Search size={14} className="vk-search-icon" />
-          <input
-            type="text"
-            className="vk-search-input"
-            placeholder={t("virtualKeys.searchPlaceholder")}
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
-          {searchInput && (
-            <button
-              className="vk-search-clear"
-              onClick={() => setSearchInput("")}
-              title={t("common.clear")}
-            >
-              {"\u00D7"}
-            </button>
-          )}
-        </div>
-        {groups.length > 0 && (
-          <select
-            className="vk-group-filter"
-            value={selectedGroup}
-            onChange={(e) => setSelectedGroup(e.target.value)}
-            aria-label={t("virtualKeys.groupFilterLabel")}
-            title={t("virtualKeys.groupFilterLabel")}
-          >
-            <option value="">{t("virtualKeys.groupFilterAll")}</option>
-            {groups.map((g) => (
-              <option key={g} value={g}>
-                {g}
-              </option>
-            ))}
-          </select>
-        )}
-        {totalPages > 1 && (
-          <div className="vk-pagination">
-            <button
-              className="btn btn-sm"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              title={t("common.previous")}
-            >
-              <ChevronLeft size={16} />
-            </button>
-            <span className="vk-page-info">
-              {page} / {totalPages}
-            </span>
-            <button
-              className="btn btn-sm"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              title={t("common.next")}
-            >
-              <ChevronRight size={16} />
-            </button>
-          </div>
-        )}
-      </div>
 
       {/* Summary stat cards */}
       {keys.length > 0 && (
@@ -375,6 +378,6 @@ export function VirtualKeysPanel() {
           })}
         </div>
       )}
-    </section>
+    </PanelLayout>
   );
 }

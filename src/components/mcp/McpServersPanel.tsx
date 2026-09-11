@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { Server } from "lucide-react";
 import { api } from "../../lib/api";
 import { useToast } from "../Toast";
+import { PanelLayout } from "../ui/PanelLayout";
+import { LoadingState } from "../ui/LoadingState";
+import { EmptyState } from "../ui/EmptyState";
 import "../../styles/pages-enhanced.css";
 import type { McpServer, McpToolDetail } from "./types";
 import { statusIsRunning } from "./types";
@@ -127,27 +131,34 @@ export function McpServersPanel() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="panel-loading-enhanced">
-        <div className="spinner" />
-        <span>{t("mcp.loading")}</span>
-      </div>
-    );
-  }
-
   const healthValues = Object.values(healthMap);
   const healthyCount = healthValues.filter((h) => h.healthy).length;
   const showHealthSummary = healthValues.length > 0;
 
+  if (loading) {
+    return (
+      <PanelLayout title={t("mcp.title")} icon={Server}>
+        <LoadingState message={t("mcp.loading")} icon={Server} />
+      </PanelLayout>
+    );
+  }
+
+  const panelActions = (
+    <button
+      className="btn btn-primary"
+      onClick={() => setShowAddForm(!showAddForm)}
+    >
+      {showAddForm ? t("common.cancel") : t("mcp.create")}
+    </button>
+  );
+
   return (
-    <section>
-      <div className="panel-header">
-        <h2 className="panel-title">{t("mcp.title")}</h2>
-        <button className="btn btn-primary" onClick={() => setShowAddForm(!showAddForm)}>
-          {showAddForm ? t("common.cancel") : t("mcp.create")}
-        </button>
-      </div>
+    <PanelLayout
+      title={t("mcp.title")}
+      icon={Server}
+      actions={panelActions}
+      onRefresh={refresh}
+    >
 
       {showHealthSummary && (
         <div
@@ -205,13 +216,11 @@ export function McpServersPanel() {
       )}
 
       {servers.length === 0 && !showAddForm ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">🔌</div>
-          <div className="empty-state-title">{t("mcp.empty")}</div>
-          <div className="empty-state-description">
-            {t("mcp.emptyHint")}
-          </div>
-        </div>
+        <EmptyState
+          icon={Server}
+          title={t("mcp.empty")}
+          description={t("mcp.emptyHint")}
+        />
       ) : (
         <div className="mcp-server-list">
           {servers.map((server) => {
@@ -247,6 +256,6 @@ export function McpServersPanel() {
           })}
         </div>
       )}
-    </section>
+    </PanelLayout>
   );
 }

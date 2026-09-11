@@ -44,6 +44,9 @@ export interface FormFieldsProps {
   // Non-form-field props kept as individuals
   presetModels: string[];
   apiKeyUrl?: string;
+  websiteUrl?: string;
+  modelsUrl?: string;
+  endpointCandidates?: string[];
   defaultModel?: string;
   showCredential: boolean;
   onWebViewLogin?: () => void;
@@ -53,6 +56,7 @@ export interface FormFieldsProps {
   apiFormat?: ApiFormat;
   apiFormats?: ApiFormat[];
   onApiFormatChange?: (format: ApiFormat) => void;
+  onRefreshModels?: (models: string[]) => void;
 }
 
 export function FormFields({
@@ -60,6 +64,9 @@ export function FormFields({
   onChange,
   presetModels,
   apiKeyUrl,
+  websiteUrl,
+  modelsUrl,
+  endpointCandidates,
   defaultModel,
   showCredential,
   onWebViewLogin,
@@ -69,15 +76,96 @@ export function FormFields({
   apiFormat,
   apiFormats,
   onApiFormatChange,
+  onRefreshModels,
 }: FormFieldsProps) {
   const { t } = useTranslation();
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [refreshingModels, setRefreshingModels] = useState(false);
+  const [probingEndpoints, setProbingEndpoints] = useState(false);
+  const [probeResults, setProbeResults] = useState<Record<string, { latencyMs?: number; error?: string; reachable: boolean }>>({});
 
   const formatLabel = (fmt: ApiFormat): string => {
     if (fmt === "openai") return t("channels.openaiChat");
     if (fmt === "anthropic") return t("channels.anthropic");
     return t("channels.geminiFormat");
   };
+
+  const handleRefreshModels = async () => {
+    if (!values.baseUrl || !values.credentialValue || !onRefreshModels) return;
+    
+    setRefreshingModels(true);
+    try {
+      const { fetchProviderModels } = await import("../../lib/api");
+      const models = await fetchProviderModels({
+        baseUrl: values.baseUrl,
+        apiKey: values.credentialValue,
+        modelsUrl,
+        apiFormat: apiFormat || "openai",
+      });
+      const modelIds = models.map((m) => m.id);
+      onRefreshModels(modelIds);
+    } catch (err) {
+      console.error("Failed to refresh models:", err);
+      alert(t("channels.modelRefreshFailed", { error: err instanceof Error ? err.message : String(err) }));
+    } finally {
+      setRefreshingModels(false);
+    }
+  };
+
+  const handleProbeEndpoints = async () => {
+    if (!endpointCandidates || endpointCandidates.length === 0) return;
+    
+    // Build full candidate list: endpointCandidates + current baseUrl if not already included
+    const candidateSet = new Set(endpointCandidates);
+    const allCandidates = [...candidateSet];
+    if (values.baseUrl && !candidateSet.has(values.baseUrl)) {
+      allCandidates.unshift(values.baseUrl);
+    }
+
+    setProbingEndpoints(true);
+    setProbeResults({});
+    
+    try {
+      const { probeEndpoints } = await import("../../lib/api");
+      const results = await probeEndpoints(allCandidates);
+      
+      const resultsMap: Record<string, { latencyMs?: number; error?: string; reachable: boolean }> = {};
+      for (const result of results) {
+        resultsMap[result.url] = {
+          latencyMs: result.latencyMs,
+          error: result.error,
+          reachable: result.reachable,
+        };
+      }
+      setProbeResults(resultsMap);
+    } catch (err) {
+      console.error("Failed to probe endpoints:", err);
+      alert(t("channels.probeEndpointsFailed", { 
+        defaultValue: "Failed to probe endpoints: {{error}}", 
+        error: err instanceof Error ? err.message : String(err) 
+      }));
+    } finally {
+      setProbingEndpoints(false);
+    }
+  };
+
+  const handleSwitchEndpoint = (url: string) => {
+    onChange({ baseUrl: url });
+    // Clear probe results when switching
+    setProbeResults({});
+  };
+
+  // Build full candidate list for display
+  const allEndpointCandidates = endpointCandidates && endpointCandidates.length > 0
+    ? (() => {
+        const candidateSet = new Set(endpointCandidates);
+        const all = [...candidateSet];
+        if (values.baseUrl && !candidateSet.has(values.baseUrl)) {
+          all.unshift(values.baseUrl);
+        }
+        return all;
+      })()
+    : null;
 
   const credentialType = values.credentialType;
 
@@ -189,6 +277,17 @@ export function FormFields({
                     {t("channels.getKey")}
                   </a>
                 )}
+                {websiteUrl && !apiKeyUrl && (
+                  <a
+                    href={websiteUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn btn-sm"
+                    title="Provider website"
+                  >
+                    →
+                  </a>
+                )}
                 {credentialType === "web_session" && onWebViewLogin && (
                   <button
                     type="button"
@@ -227,12 +326,105 @@ export function FormFields({
         )}
         <label className="form-field">
           <span>{t("channels.baseUrl")}</span>
-          <input
-            value={values.baseUrl}
-            onChange={(e) => onChange({ baseUrl: e.target.value })}
-            placeholder="https://api.openai.com"
-            required
-          />
+          <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "flex-start", flexDirection: "column" }}>
+            <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center", width: "100%" }}>
+              {allEndpointCandidates && allEndpointCandidates.length > 1 ? (
+                <select
+                  value={values.baseUrl}
+                  onChange={(e) => handleSwitchEndpoint(e.target.value)}
+                  style={{ flex: 1 }}
+                  disabled={presetLocked}
+                >
+                  {allEndpointCandidates.map((url) => (
+                    <option key={url} value={url}>
+                      {url}
+                      {probeResults[url]?.latencyMs !== undefined 
+                        ? ` (${probeResults[url].latencyMs}ms)` 
+                        : probeResults[url]?.error 
+                        ? ` (${probeResults[url].error})` 
+                        : ""}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={values.baseUrl}
+                  onChange={(e) => onChange({ baseUrl: e.target.value })}
+                  placeholder="https://api.openai.com"
+                  required
+                  style={{ flex: 1 }}
+                  disabled={presetLocked}
+                />
+              )}
+              {allEndpointCandidates && allEndpointCandidates.length > 1 && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={handleProbeEndpoints}
+                  disabled={probingEndpoints}
+                  title={t("channels.speedTest", { defaultValue: "测速" })}
+                >
+                  {probingEndpoints ? "⟳" : "⚡"}
+                </button>
+              )}
+              {onRefreshModels && values.credentialValue && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={handleRefreshModels}
+                  disabled={refreshingModels || !values.baseUrl}
+                  title={t("channels.refreshModels", { defaultValue: "刷新模型列表" })}
+                >
+                  {refreshingModels ? "⟳" : "↻"}
+                </button>
+              )}
+            </div>
+            {allEndpointCandidates && allEndpointCandidates.length > 1 && Object.keys(probeResults).length > 0 && (
+              <div style={{ fontSize: "0.85em", color: "var(--text-muted)", width: "100%" }}>
+                {allEndpointCandidates.map((url) => {
+                  const result = probeResults[url];
+                  if (!result) return null;
+                  const isCurrent = url === values.baseUrl;
+                  return (
+                    <div 
+                      key={url} 
+                      style={{ 
+                        padding: "4px 8px", 
+                        marginBottom: "2px",
+                        background: isCurrent ? "var(--bg-selected)" : "transparent",
+                        borderRadius: "4px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center"
+                      }}
+                    >
+                      <span style={{ 
+                        overflow: "hidden", 
+                        textOverflow: "ellipsis", 
+                        whiteSpace: "nowrap",
+                        flex: 1,
+                        marginRight: "8px"
+                      }}>
+                        {isCurrent && "→ "}{new URL(url).hostname}
+                      </span>
+                      <span style={{ 
+                        fontWeight: "500",
+                        color: result.latencyMs !== undefined 
+                          ? result.latencyMs < 200 ? "var(--success)" 
+                          : result.latencyMs < 500 ? "var(--warning)" 
+                          : "var(--text-muted)"
+                          : "var(--error)"
+                      }}>
+                        {result.latencyMs !== undefined 
+                          ? `${result.latencyMs}ms` 
+                          : result.error || "Failed"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </label>
         <div className="form-field span-2">
           <span>{t("channels.models")}</span>

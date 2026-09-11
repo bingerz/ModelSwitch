@@ -285,3 +285,35 @@ pub(crate) async fn mcp_list_tools(
         })
         .collect())
 }
+
+// -- Model Fetching Commands ------------------------------------------------
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn fetch_provider_models(
+    base_url: String,
+    api_key: String,
+    is_full_url: Option<bool>,
+    models_url: Option<String>,
+    api_format: Option<String>,
+) -> Result<Vec<crate::model_fetch::FetchedModel>, String> {
+    crate::model_fetch::fetch_models(
+        &base_url,
+        &api_key,
+        is_full_url.unwrap_or(false),
+        models_url.as_deref(),
+        None, // user_agent
+        api_format.as_deref(),
+        None, // request_headers
+    )
+    .await
+}
+
+// -- Endpoint Probing Commands ----------------------------------------------
+
+#[tauri::command]
+pub(crate) async fn probe_endpoints(
+    urls: Vec<String>,
+) -> Result<Vec<crate::endpoint_probe::ProbeResult>, String> {
+    Ok(crate::endpoint_probe::probe_endpoints(urls).await)
+}

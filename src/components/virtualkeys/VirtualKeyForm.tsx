@@ -169,7 +169,9 @@ export function VirtualKeyForm({
             onChange={(e) => setDailyBudget(e.target.value)}
             placeholder={t("virtualKeys.dailyBudgetPlaceholder")}
             inputMode="decimal"
+            title={t("virtualKeys.dailyBudgetTooltip")}
           />
+          <span className="field-hint">{t("virtualKeys.dailyBudgetTooltip")}</span>
           {fieldErrors.daily_budget_cents && (
             <span className="field-error">{fieldErrors.daily_budget_cents}</span>
           )}
@@ -181,7 +183,9 @@ export function VirtualKeyForm({
             onChange={(e) => setMonthlyBudget(e.target.value)}
             placeholder={t("virtualKeys.monthlyBudgetPlaceholder")}
             inputMode="decimal"
+            title={t("virtualKeys.monthlyBudgetTooltip")}
           />
+          <span className="field-hint">{t("virtualKeys.monthlyBudgetTooltip")}</span>
           {fieldErrors.monthly_budget_cents && (
             <span className="field-error">{fieldErrors.monthly_budget_cents}</span>
           )}
@@ -242,7 +246,9 @@ export function VirtualKeyForm({
                 onChange={(e) => setRpmLimit(e.target.value)}
                 placeholder={t("virtualKeys.rpmLimitPlaceholder")}
                 inputMode="numeric"
+                title={t("virtualKeys.rpmLimitTooltip")}
               />
+              <span className="field-hint">{t("virtualKeys.rpmLimitTooltip")}</span>
               {fieldErrors.rpm_limit && (
                 <span className="field-error">{fieldErrors.rpm_limit}</span>
               )}
@@ -254,7 +260,9 @@ export function VirtualKeyForm({
                 onChange={(e) => setTpmLimit(e.target.value)}
                 placeholder={t("virtualKeys.tpmLimitPlaceholder")}
                 inputMode="numeric"
+                title={t("virtualKeys.tpmLimitTooltip")}
               />
+              <span className="field-hint">{t("virtualKeys.tpmLimitTooltip")}</span>
               {fieldErrors.tpm_limit && (
                 <span className="field-error">{fieldErrors.tpm_limit}</span>
               )}

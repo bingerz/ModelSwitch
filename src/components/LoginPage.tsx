@@ -38,6 +38,29 @@ export function LoginPage({ onSuccess }: { onSuccess: () => void }) {
       <div className="login-card">
         <div className="login-brand">{t("login.brand")}</div>
         <div className="login-subtitle">{t("login.subtitle")}</div>
+        
+        <div className="login-mode-hint" style={{
+          padding: "var(--space-3)",
+          marginBottom: "var(--space-3)",
+          background: "var(--color-bg-secondary)",
+          borderRadius: "var(--radius-md)",
+          fontSize: "var(--text-sm)",
+          lineHeight: "1.5"
+        }}>
+          <strong>{t("login.modeTitle")}</strong>
+          <div style={{ marginTop: "var(--space-2)" }}>
+            {t("login.modeExplanation")}
+          </div>
+          <ul style={{ 
+            marginTop: "var(--space-2)", 
+            marginLeft: "var(--space-4)",
+            listStyle: "disc"
+          }}>
+            <li><strong>{t("login.adminMode")}:</strong> {t("login.adminModeDesc")}</li>
+            <li><strong>{t("login.portalMode")}:</strong> {t("login.portalModeDesc")}</li>
+          </ul>
+        </div>
+        
         <input
           className="login-input"
           type="password"

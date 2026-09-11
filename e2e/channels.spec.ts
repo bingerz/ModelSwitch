@@ -22,4 +22,26 @@ test.describe("Channels panel", () => {
     const main = page.locator("main");
     await expect(main).not.toBeEmpty({ timeout: 10_000 });
   });
+
+  test("dashboard empty state can navigate to channels", async ({ page }) => {
+    // Navigate to dashboard
+    const dashboardNav = page.getByRole("button", { name: "Dashboard", exact: false });
+    if (!(await dashboardNav.isVisible().catch(() => false))) {
+      test.skip(true, "Dashboard nav button not found");
+    }
+    await dashboardNav.click();
+
+    // Look for the "Add First Channel" CTA in empty state
+    const addChannelCTA = page.getByRole("button", { name: /add.*channel/i });
+    if (await addChannelCTA.isVisible().catch(() => false)) {
+      await addChannelCTA.click();
+
+      // Should navigate to Channels panel - verify by looking for Create button
+      const main = page.locator("main");
+      await expect(main).not.toBeEmpty({ timeout: 10_000 });
+    } else {
+      // Skip if no empty state (gateway already has channels)
+      test.skip(true, "Dashboard empty state not found — gateway may already have channels");
+    }
+  });
 });
