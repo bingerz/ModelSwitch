@@ -32,8 +32,6 @@ export interface ChannelCardProps {
   onTest?: () => void;
   onDiagnostics?: () => void;
   onResetCircuit?: () => void | Promise<void>;
-  onMovePriorityUp?: () => void | Promise<void>;
-  onMovePriorityDown?: () => void | Promise<void>;
 }
 
 export function ChannelCard({
@@ -55,12 +53,11 @@ export function ChannelCard({
   onTest,
   onDiagnostics,
   onResetCircuit,
-  onMovePriorityUp,
-  onMovePriorityDown,
 }: ChannelCardProps) {
   const { t } = useTranslation();
   const statusKey = (ch.status as ChannelStatus) ?? "disabled";
   const modelCount = Object.keys(ch.model_mapping).length;
+  const circuitOpen = ch.status === "circuit_open" || ch.status === "half_open";
 
   const [cooldown, setCooldown] = useState<{
     in_cooldown: boolean;
@@ -86,135 +83,106 @@ export function ChannelCard({
 
   return (
     <div
-      className={`channel-card ${ch.status === "circuit_open" ? "channel-card-warning" : ""} ${!ch.enabled ? "channel-card-disabled" : ""}`}
+      className={`channel-row ${circuitOpen && ch.status === "circuit_open" ? "channel-row-warning" : ""} ${!ch.enabled ? "channel-row-disabled" : ""}`}
       draggable
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
     >
-      <div className="channel-card-header">
-        <div className="channel-card-title">
-          {onToggleSelect && (
-            <input
-              type="checkbox"
-              checked={selected ?? false}
-              onChange={onToggleSelect}
-              onClick={(e) => e.stopPropagation()}
-              style={{ width: 16, height: 16, cursor: "pointer", marginRight: "var(--space-1)" }}
-            />
-          )}
-          <span
-            className={`status-dot ${ch.status === "healthy" ? "healthy" : ""}`}
-            style={{ background: STATUS_DOT[statusKey] }}
-            aria-hidden="true"
+      <div className="channel-row-main">
+        {onToggleSelect && (
+          <input
+            type="checkbox"
+            className="channel-row-check"
+            checked={selected ?? false}
+            onChange={onToggleSelect}
+            onClick={(e) => e.stopPropagation()}
+            aria-label={t("common.select")}
           />
-          <span className="status-label-text" aria-label={t(STATUS_LABEL_KEY[statusKey])}>
-            {t(STATUS_LABEL_KEY[statusKey])}
-          </span>
-          <strong>{ch.name}</strong>
-        </div>
+        )}
+
         <span
-          className="channel-provider channel-provider-badge"
-          style={providerBadgeStyle(ch.provider)}
-        >
-          {ch.provider}
-        </span>
-        {!ch.enabled && (
-          <span className="channel-disabled-tag">{t("common.disabled")}</span>
-        )}
-        {ch.status === "circuit_open" && (
-          <span className="channel-circuit-tag">
-            {t("channels.circuitOpen")}
-            {ch.circuit_open_until
-              ? ` \u00B7 ${formatRecoveryTime(ch.circuit_open_until)}`
-              : ""}
-          </span>
-        )}
-        {cooldown?.in_cooldown && (
-          <span
-            className="channel-circuit-tag"
-            style={{ background: "var(--color-warning)", color: "var(--color-text-primary)" }}
-            title={
-              cooldown.circuit_open_until
-                ? t("channels.circuitOpen")
-                : undefined
-            }
-          >
-            {t("channels.cooldownActive")}
-            {" \u00B7 "}
-            {t("channels.cooldownRemaining", {
-              secs: Math.ceil(cooldown.cooldown_remaining_secs),
-            })}
-          </span>
-        )}
-      </div>
-      <div className="channel-card-meta">
-        <span
-          className="api-format-card-badge"
-          style={{ color: API_FORMAT_COLORS[providerToFormat(ch.provider)] }}
-        >
-          {API_FORMAT_LABELS[providerToFormat(ch.provider)]}
-        </span>
-        <span className="meta-tag">{t("channels.weightShort", { weight: ch.weight })}</span>
-        {modelCount > 0 && (
-          <span className="meta-tag">
-            {t("common.modelsCount", { count: modelCount })}
-          </span>
-        )}
-        {ch.avg_latency_ms > 0 && (
-          <span className="meta-tag">
-            {Math.round(ch.avg_latency_ms)}ms
-          </span>
-        )}
-        <QuotaBadge quota={quota} />
-      </div>
-      {ch.tags && ch.tags.length > 0 && (
-        <div className="channel-card-tags" style={{ display: "flex", gap: "var(--space-1)", flexWrap: "wrap", marginBottom: "var(--space-1)" }}>
-          {ch.tags.map((tag) => (
+          className={`status-dot ${ch.status === "healthy" ? "healthy" : ""}`}
+          style={{ background: STATUS_DOT[statusKey] }}
+          aria-hidden="true"
+        />
+
+        <div className="channel-row-identity">
+          <div className="channel-row-title">
+            <strong>{ch.name}</strong>
             <span
-              key={tag}
-              className="meta-tag"
-              style={{ fontSize: "var(--text-xs)", background: "var(--color-bg-secondary)" }}
+              className="channel-provider channel-provider-badge"
+              style={providerBadgeStyle(ch.provider)}
             >
+              {ch.provider}
+            </span>
+            {!ch.enabled && (
+              <span className="channel-disabled-tag">{t("common.disabled")}</span>
+            )}
+          </div>
+          <div className="channel-row-status-line">
+            <span className="status-label-text" aria-label={t(STATUS_LABEL_KEY[statusKey])}>
+              {t(STATUS_LABEL_KEY[statusKey])}
+            </span>
+            {ch.status === "circuit_open" && (
+              <span className="channel-circuit-tag">
+                {t("channels.circuitOpen")}
+                {ch.circuit_open_until
+                  ? ` · ${formatRecoveryTime(ch.circuit_open_until)}`
+                  : ""}
+              </span>
+            )}
+            {cooldown?.in_cooldown && (
+              <span
+                className="channel-circuit-tag channel-circuit-tag-warn"
+                title={
+                  cooldown.circuit_open_until
+                    ? t("channels.circuitOpen")
+                    : undefined
+                }
+              >
+                {t("channels.cooldownActive")}
+                {" · "}
+                {t("channels.cooldownRemaining", {
+                  secs: Math.ceil(cooldown.cooldown_remaining_secs),
+                })}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="channel-row-meta">
+          <span
+            className="api-format-card-badge"
+            style={{ color: API_FORMAT_COLORS[providerToFormat(ch.provider)] }}
+          >
+            {API_FORMAT_LABELS[providerToFormat(ch.provider)]}
+          </span>
+          <span className="meta-tag">
+            {t("channels.weightShort", { weight: ch.weight })}
+          </span>
+          {modelCount > 0 && (
+            <span className="meta-tag">
+              {t("common.modelsCount", { count: modelCount })}
+            </span>
+          )}
+          {ch.avg_latency_ms > 0 && (
+            <span className="meta-tag mono">
+              {Math.round(ch.avg_latency_ms)}ms
+            </span>
+          )}
+          <QuotaBadge quota={quota} />
+          {ch.tags?.map((tag) => (
+            <span key={tag} className="meta-tag channel-tag-chip">
               {tag}
             </span>
           ))}
         </div>
-      )}
-      <div className="channel-card-actions">
-        {(onMovePriorityUp || onMovePriorityDown) && (
-          <div style={{ display: "flex", gap: "2px", marginRight: "var(--space-1)" }}>
-            {onMovePriorityUp && (
-              <button
-                className="btn btn-sm"
-                onClick={onMovePriorityUp}
-                title={t("channels.moveUp")}
-                aria-label={t("channels.moveUp")}
-                style={{ padding: "4px 8px", minWidth: "auto" }}
-              >
-                ↑
-              </button>
-            )}
-            {onMovePriorityDown && (
-              <button
-                className="btn btn-sm"
-                onClick={onMovePriorityDown}
-                title={t("channels.moveDown")}
-                aria-label={t("channels.moveDown")}
-                style={{ padding: "4px 8px", minWidth: "auto" }}
-              >
-                ↓
-              </button>
-            )}
-          </div>
-        )}
-        <button className="btn btn-sm" onClick={onEdit}>
-          {t("common.edit")}
-        </button>
-        <button className="btn btn-sm" onClick={onToggle}>
-          {ch.enabled ? t("common.disable") : t("common.enable")}
-        </button>
-        {onResetCircuit &&
-          (ch.status === "circuit_open" || ch.status === "half_open") && (
+
+        <div className="channel-row-actions">
+          <button className="btn btn-sm" onClick={onEdit}>
+            {t("common.edit")}
+          </button>
+          {onResetCircuit && circuitOpen && (
             <button
               className="btn btn-sm"
               onClick={handleResetCircuit}
@@ -223,84 +191,90 @@ export function ChannelCard({
             >
               <RotateCcw
                 size={14}
+                className={resetting ? "ui-spin" : ""}
                 style={{
                   display: "inline",
                   verticalAlign: "middle",
                   marginRight: "var(--space-1)",
                 }}
-                className={resetting ? "ui-spin" : ""}
               />
               {t("channels.resetCircuit")}
             </button>
           )}
-        <div className="channel-actions-overflow-wrapper">
-          <button
-            className="btn btn-sm btn-overflow"
-            onClick={onToggleOverflow}
-            title={t("common.moreActions")}
-          >
-            {"\u22EF"}
-          </button>
-          {overflowOpen && (
-            <>
-              <div
-                className="channel-overflow-backdrop"
-                onClick={onCloseOverflow}
-              />
-              <div className="channel-overflow-menu">
-                <button
-                  className="channel-overflow-item"
-                  onClick={() => {
-                    onCloseOverflow();
-                    onPing();
-                  }}
-                >
-                  {t("channels.ping")}
-                </button>
-                {onTest && (
+          <div className="channel-actions-overflow-wrapper">
+            <button
+              className="btn btn-sm btn-overflow"
+              onClick={onToggleOverflow}
+              title={t("common.moreActions")}
+              aria-expanded={overflowOpen}
+            >
+              {"\u22EF"}
+            </button>
+            {overflowOpen && (
+              <>
+                <div
+                  className="channel-overflow-backdrop"
+                  onClick={onCloseOverflow}
+                />
+                <div className="channel-overflow-menu" role="menu">
                   <button
                     className="channel-overflow-item"
+                    role="menuitem"
                     onClick={() => {
                       onCloseOverflow();
-                      onTest();
+                      onToggle();
                     }}
                   >
-                    {t("channels.testAll")}
+                    {ch.enabled ? t("common.disable") : t("common.enable")}
                   </button>
-                )}
-                {onDiagnostics && (
                   <button
                     className="channel-overflow-item"
+                    role="menuitem"
                     onClick={() => {
                       onCloseOverflow();
-                      onDiagnostics();
+                      onPing();
                     }}
                   >
-                    {t("diagnostics.button")}
+                    {t("channels.ping")}
                   </button>
-                )}
-                {onResetCircuit &&
-                  (ch.status === "circuit_open" || ch.status === "half_open") && (
+                  {onTest && (
                     <button
                       className="channel-overflow-item"
+                      role="menuitem"
                       onClick={() => {
                         onCloseOverflow();
-                        onResetCircuit();
+                        onTest();
                       }}
                     >
-                      {t("channels.resetCircuit")}
+                      {t("channels.testConnection")}
                     </button>
                   )}
-                <button
-                  className={`channel-overflow-item ${confirmDelete ? "danger-confirm" : "danger"}`}
-                  onClick={onDelete}
-                  onBlur={onCancelDelete}
-                >
-                  {confirmDelete ? t("common.confirmDelete") : t("common.delete")}
-                </button>
-              </div>
-            </>
-          )}
+                  {onDiagnostics && (
+                    <button
+                      className="channel-overflow-item"
+                      role="menuitem"
+                      onClick={() => {
+                        onCloseOverflow();
+                        onDiagnostics();
+                      }}
+                    >
+                      {t("diagnostics.button")}
+                    </button>
+                  )}
+                  <button
+                    className={`channel-overflow-item ${confirmDelete ? "danger-confirm" : "danger"}`}
+                    role="menuitem"
+                    onClick={onDelete}
+                    onBlur={onCancelDelete}
+                  >
+                    {confirmDelete
+                      ? t("common.confirmDelete")
+                      : t("common.delete")}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>

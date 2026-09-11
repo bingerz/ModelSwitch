@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api, type Channel, type QuotaInfo, type UsageHistory } from "../lib/api";
 import {
   computeTotalBalance,
@@ -24,6 +24,10 @@ interface QuotaContextValue {
   fetchError: string | null;
   /** Whether the first fetch is still in progress */
   loading: boolean;
+  /** Channels list initial load only (ignores quota polling) */
+  channelsLoading: boolean;
+  /** Background refresh in progress while stale data is shown */
+  isRefetching: boolean;
   /** Number of channels that have quota errors */
   errorCount: number;
   /** Total number of configured channels */
@@ -40,6 +44,8 @@ const QuotaContext = createContext<QuotaContextValue>({
   channelsWithData: 0,
   fetchError: null,
   loading: true,
+  channelsLoading: true,
+  isRefetching: false,
   lowBalanceCount: 0,
   errorCount: 0,
   totalChannels: 0,
@@ -56,12 +62,16 @@ export function QuotaProvider({ children }: { children: React.ReactNode }) {
     queryKey: ["quota"],
     queryFn: () => api.quota(),
     refetchInterval: 10_000,
+    placeholderData: keepPreviousData,
+    retry: 1,
   });
 
   const channelsQuery = useQuery({
     queryKey: ["channels"],
     queryFn: () => api.listChannels(),
     refetchInterval: 10_000,
+    placeholderData: keepPreviousData,
+    retry: 1,
   });
 
   const usageQuery = useQuery({
@@ -92,7 +102,11 @@ export function QuotaProvider({ children }: { children: React.ReactNode }) {
 
   const fetchError =
     quotasQuery.error?.message ?? channelsQuery.error?.message ?? null;
-  const loading = quotasQuery.isLoading || channelsQuery.isLoading;
+  const channelsLoading = channelsQuery.isLoading;
+  const loading = channelsQuery.isLoading || quotasQuery.isLoading;
+  const isRefetching =
+    (channelsQuery.isFetching && !channelsQuery.isLoading) ||
+    (quotasQuery.isFetching && !quotasQuery.isLoading);
 
   const value = useMemo(
     () => ({
@@ -107,9 +121,11 @@ export function QuotaProvider({ children }: { children: React.ReactNode }) {
       errorCount,
       fetchError,
       loading,
+      channelsLoading,
+      isRefetching,
       totalChannels: channels.length,
     }),
-    [quotas, channels, usageHistory, refresh, fetchUsageHistory, totalBalance, channelsWithData, lowBalanceCount, errorCount, fetchError, loading],
+    [quotas, channels, usageHistory, refresh, fetchUsageHistory, totalBalance, channelsWithData, lowBalanceCount, errorCount, fetchError, loading, channelsLoading, isRefetching],
   );
 
   return (

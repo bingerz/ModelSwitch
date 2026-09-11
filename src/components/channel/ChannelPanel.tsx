@@ -7,6 +7,8 @@ import type { QuotaInfo } from "../../lib/api";
 import { useToast } from "../Toast";
 import { PanelLayout } from "../ui/PanelLayout";
 import { LoadingState } from "../ui/LoadingState";
+import { EmptyState } from "../ui/EmptyState";
+import { ErrorState } from "../ui/ErrorState";
 import { ChannelCard } from "./ChannelCard";
 import { ChannelForm } from "./ChannelForm";
 import { EditChannelForm } from "./EditChannelForm";
@@ -50,7 +52,7 @@ export function ChannelPanel() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
-  const { quotas, channels, refresh, loading } = useQuota();
+  const { quotas, channels, refresh, channelsLoading, fetchError } = useQuota();
 
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [overflowOpenId, setOverflowOpenId] = useState<string | null>(null);
@@ -181,6 +183,30 @@ export function ChannelPanel() {
     setDragId(null);
   };
 
+  if (channelsLoading && channels.length === 0) {
+    return (
+      <PanelLayout title={t("channels.title")} icon={Radio}>
+        <LoadingState message={t("channels.loadingChannels")} icon={Radio} />
+      </PanelLayout>
+    );
+  }
+
+  if (fetchError && channels.length === 0) {
+    return (
+      <PanelLayout title={t("channels.title")} icon={Radio}>
+        <ErrorState
+          title={t("channels.gatewayUnreachable")}
+          description={fetchError}
+          action={
+            <button type="button" className="btn btn-primary" onClick={() => void refresh()}>
+              {t("common.retry")}
+            </button>
+          }
+        />
+      </PanelLayout>
+    );
+  }
+
   // Apply search and status filters
   const filteredChannels = channels.filter((ch) => {
     if (statusFilter !== "all") {
@@ -215,13 +241,27 @@ export function ChannelPanel() {
     quotaMap.set(q.channel_id, q);
   }
 
-  if (loading) {
+  if (channels.length === 0 && !showAddForm) {
     return (
       <PanelLayout title={t("channels.title")} icon={Radio}>
-        <LoadingState message={t("channels.loadingChannels")} icon={Radio} />
+        <EmptyState
+          icon={Radio}
+          title={t("channels.empty")}
+          description={t("channels.emptyHint")}
+          action={
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setShowAddForm(true)}
+            >
+              {t("channels.emptyCta")}
+            </button>
+          }
+        />
       </PanelLayout>
     );
   }
+
 
   const panelActions = (
     <>

@@ -67,6 +67,22 @@ export function OnboardingBanner({ onNavigate }: OnboardingBannerProps) {
           </li>
         ))}
       </ol>
+      <div className="onboarding-actions">
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => onNavigate("channels")}
+        >
+          {t("onboarding.ctaPrimary")}
+        </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => onNavigate("virtualKeys")}
+        >
+          {t("onboarding.ctaSecondary")}
+        </button>
+      </div>
     </section>
   );
 }

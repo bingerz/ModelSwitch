@@ -62,4 +62,11 @@ describe("OnboardingBanner", () => {
     fireEvent.click(screen.getByText("onboarding.steps.channels"));
     expect(onNavigate).toHaveBeenCalledWith("channels");
   });
+
+  it("navigates_from_primary_cta", () => {
+    const onNavigate = vi.fn();
+    render(<OnboardingBanner onNavigate={onNavigate} />);
+    fireEvent.click(screen.getByText("onboarding.ctaPrimary"));
+    expect(onNavigate).toHaveBeenCalledWith("channels");
+  });
 });

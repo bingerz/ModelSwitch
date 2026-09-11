@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, type DispatchStats, type GwStatus, invokeTauri } from "../lib/api";
 import { isTauri, API_BASE } from "../lib/runtime";
+import { probeGatewayHealth } from "../lib/gateway-probe";
 import { useQuota } from "../hooks/useQuota";
 import { useToast } from "./Toast";
 
@@ -26,15 +27,20 @@ export function StatusBar() {
         // Desktop mode: use Tauri IPC for gateway lifecycle
         try {
           const s = await invokeTauri<GwStatus>("gateway_status");
+          let running = s.running;
+          if (!running) {
+            running = await probeGatewayHealth();
+          }
+          const gw: GwStatus = { ...s, running };
           let stats: DispatchStats | null = null;
-          if (s.running) {
+          if (running) {
             try {
               stats = await api.stats();
             } catch {
               stats = null;
             }
           }
-          return { gw: s, stats, networkError: false };
+          return { gw, stats, networkError: false };
         } catch {
           return {
             gw: { running: false, host: "127.0.0.1", port: 8080 },
@@ -101,12 +107,35 @@ export function StatusBar() {
 
   const running = gw?.running ?? false;
   const addr = gw ? `${gw.host}:${gw.port}` : "127.0.0.1:8080";
+  const baseUrl = gw?.host
+    ? `http://${gw.host}:${gw.port}`
+    : `http://${addr}`;
+
+  const handleCopyBaseUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(baseUrl);
+      toast.success(t("status.baseUrlCopied"));
+    } catch {
+      toast.error(t("common.failed"));
+    }
+  };
 
   return (
     <footer className="status-bar">
       <div className="status-bar-left">
         <span className={`status-bar-indicator ${running ? "" : "status-bar-indicator-off"}`} />
         <span>{isTauri ? `${t("status.gateway")}: ${addr}` : t("status.webConsole")}</span>
+        {running && (
+          <button
+            type="button"
+            className="gw-btn status-bar-copy"
+            onClick={handleCopyBaseUrl}
+            title={t("status.copyBaseUrl")}
+            aria-label={t("status.copyBaseUrl")}
+          >
+            {t("common.copy")}
+          </button>
+        )}
       </div>
       {networkError && !isTauri && (
         <div className="status-bar-error">

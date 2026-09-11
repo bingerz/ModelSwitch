@@ -7,6 +7,8 @@ import { useToast } from "../Toast";
 export interface PlaintextBannerProps {
   response: CreateVirtualKeyResponse;
   onClose: () => void;
+  /** Optional: stash key and jump to Playground for an immediate smoke test. */
+  onTestInPlayground?: (plaintext: string) => void;
 }
 
 // ponytail: Q8 — modal (not toast/banner). No backdrop/escape close;
@@ -14,6 +16,7 @@ export interface PlaintextBannerProps {
 export function PlaintextBanner({
   response,
   onClose,
+  onTestInPlayground,
 }: PlaintextBannerProps) {
   const { t } = useTranslation();
   const toast = useToast();
@@ -32,6 +35,10 @@ export function PlaintextBanner({
     } catch {
       toast.error(t("common.failed"));
     }
+  };
+
+  const handleTestInPlayground = () => {
+    onTestInPlayground?.(response.plaintext);
   };
 
   return (
@@ -72,10 +79,19 @@ export function PlaintextBanner({
           </button>
         </div>
 
-        <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
+        <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-3)", flexWrap: "wrap" }}>
+          {onTestInPlayground && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleTestInPlayground}
+            >
+              {t("virtualKeys.testInPlayground")}
+            </button>
+          )}
           <button
             type="button"
-            className="btn btn-primary"
+            className={onTestInPlayground ? "btn" : "btn btn-primary"}
             onClick={onClose}
           >
             {t("virtualKeys.iHaveSavedIt")}

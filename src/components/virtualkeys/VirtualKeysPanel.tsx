@@ -19,10 +19,15 @@ import { VirtualKeyCard } from "./VirtualKeyCard";
 import { VirtualKeyForm } from "./VirtualKeyForm";
 import { BatchCreateModal } from "./BatchCreateModal";
 import { CsvImportModal } from "./CsvImportModal";
+import { stashPlaygroundVirtualKey } from "../../lib/playground";
 
 const PAGE_SIZE = 20;
 
-export function VirtualKeysPanel() {
+export interface VirtualKeysPanelProps {
+  onNavigate?: (tab: string) => void;
+}
+
+export function VirtualKeysPanel({ onNavigate }: VirtualKeysPanelProps = {}) {
   const { t } = useTranslation();
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -227,7 +232,7 @@ export function VirtualKeysPanel() {
             onClick={() => setSearchInput("")}
             title={t("common.clear")}
           >
-            {"\u00D7"}
+            {"×"}
           </button>
         )}
       </div>
@@ -285,6 +290,15 @@ export function VirtualKeysPanel() {
         <PlaintextBanner
           response={createdResponse}
           onClose={() => setCreatedResponse(null)}
+          onTestInPlayground={
+            onNavigate
+              ? (plaintext) => {
+                  stashPlaygroundVirtualKey(plaintext);
+                  setCreatedResponse(null);
+                  onNavigate("playground");
+                }
+              : undefined
+          }
         />
       )}
 
@@ -317,7 +331,7 @@ export function VirtualKeysPanel() {
         />
       )}
 
-      {/* Summary stat cards */}
+      {/* Summary stats — only use page-local aggregates when the full set is loaded */}
       {keys.length > 0 && (
         <div className="vk-summary-grid">
           <StatTile
@@ -326,18 +340,22 @@ export function VirtualKeysPanel() {
             label={t("virtualKeys.totalKeys")}
             accent="blue"
           />
-          <StatTile
-            icon={CheckCircle}
-            value={keys.filter((k) => k.enabled).length}
-            label={t("virtualKeys.activeKeys")}
-            accent="green"
-          />
-          <StatTile
-            icon={DollarSign}
-            value={formatCents(keys.reduce((sum, k) => sum + k.spend.this_month.cents, 0))}
-            label={t("virtualKeys.spendThisMonth")}
-            accent="amber"
-          />
+          {total <= keys.length && !activeSearch && (
+            <>
+              <StatTile
+                icon={CheckCircle}
+                value={keys.filter((k) => k.enabled).length}
+                label={t("virtualKeys.activeKeys")}
+                accent="green"
+              />
+              <StatTile
+                icon={DollarSign}
+                value={formatCents(keys.reduce((sum, k) => sum + k.spend.this_month.cents, 0))}
+                label={t("virtualKeys.spendThisMonth")}
+                accent="amber"
+              />
+            </>
+          )}
         </div>
       )}
 
@@ -346,36 +364,55 @@ export function VirtualKeysPanel() {
           icon={KeyRound}
           title={t("virtualKeys.empty")}
           description={t("virtualKeys.emptyHint")}
+          action={
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setShowAddForm(true)}
+            >
+              {t("virtualKeys.emptyCta")}
+            </button>
+          }
         />
       ) : (
-        <div className="vk-list">
-          {displayedKeys.map((vk) => {
-            if (editingId === vk.id) {
+        <div className="vk-table">
+          <div className="vk-table-header" aria-hidden="true">
+            <span>{t("virtualKeys.colName")}</span>
+            <span>{t("common.status")}</span>
+            <span>{t("virtualKeys.spendThisMonth")}</span>
+            <span>{t("virtualKeys.colLimits")}</span>
+            <span>{t("common.created")}</span>
+            <span>{t("common.actions")}</span>
+          </div>
+          <div className="vk-list">
+            {displayedKeys.map((vk) => {
+              if (editingId === vk.id) {
+                return (
+                  <VirtualKeyForm
+                    key={vk.id}
+                    mode="edit"
+                    existingKey={vk}
+                    onSave={() => {
+                      setEditingId(null);
+                      invalidateKeys();
+                    }}
+                    onCancel={() => setEditingId(null)}
+                  />
+                );
+              }
               return (
-                <VirtualKeyForm
+                <VirtualKeyCard
                   key={vk.id}
-                  mode="edit"
-                  existingKey={vk}
-                  onSave={() => {
-                    setEditingId(null);
-                    invalidateKeys();
-                  }}
-                  onCancel={() => setEditingId(null)}
+                  vk={vk}
+                  confirmDelete={confirmDeleteId === vk.id}
+                  actionLoading={actionLoading === vk.id}
+                  onEdit={() => setEditingId(vk.id)}
+                  onDelete={() => handleDelete(vk.id)}
+                  onToggleEnabled={() => handleToggleEnabled(vk)}
                 />
               );
-            }
-            return (
-              <VirtualKeyCard
-                key={vk.id}
-                vk={vk}
-                confirmDelete={confirmDeleteId === vk.id}
-                actionLoading={actionLoading === vk.id}
-                onEdit={() => setEditingId(vk.id)}
-                onDelete={() => handleDelete(vk.id)}
-                onToggleEnabled={() => handleToggleEnabled(vk)}
-              />
-            );
-          })}
+            })}
+          </div>
         </div>
       )}
     </PanelLayout>

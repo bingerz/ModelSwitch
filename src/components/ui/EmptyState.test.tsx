@@ -43,4 +43,16 @@ describe("EmptyState", () => {
     );
     expect(screen.getByTestId("mock-icon")).toBeTruthy();
   });
+
+  it("renders_optional_action", () => {
+    render(
+      <EmptyState
+        icon={MockIcon}
+        title="Empty"
+        description="No data"
+        action={<button type="button">Add item</button>}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Add item" })).toBeTruthy();
+  });
 });

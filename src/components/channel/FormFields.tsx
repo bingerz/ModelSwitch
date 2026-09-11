@@ -216,16 +216,6 @@ export function FormFields({
             <option value={3}>{t("channels.priority3Official")}</option>
           </select>
         </label>
-        <label className="form-field">
-          <span>{t("common.weight")}</span>
-          <input
-            type="number"
-            value={values.weight}
-            onChange={(e) => onChange({ weight: Number(e.target.value) })}
-            min={1}
-            max={1000}
-          />
-        </label>
         {showCredential && (
           <>
             <label className="form-field">
@@ -426,15 +416,6 @@ export function FormFields({
             )}
           </div>
         </label>
-        <div className="form-field span-2">
-          <span>{t("channels.models")}</span>
-          <ModelSelector
-            availableModels={presetModels}
-            modelMapping={values.modelMapping}
-            onModelMappingChange={(mm) => onChange({ modelMapping: mm })}
-            defaultModel={defaultModel}
-          />
-        </div>
       </div>
 
       <div className="form-advanced-toggle">
@@ -449,6 +430,25 @@ export function FormFields({
 
       {showAdvanced && (
         <div className="form-grid">
+          <div className="form-field span-2">
+            <span>{t("channels.models")}</span>
+            <ModelSelector
+              availableModels={presetModels}
+              modelMapping={values.modelMapping}
+              onModelMappingChange={(mm) => onChange({ modelMapping: mm })}
+              defaultModel={defaultModel}
+            />
+          </div>
+          <label className="form-field">
+            <span>{t("common.weight")}</span>
+            <input
+              type="number"
+              value={values.weight}
+              onChange={(e) => onChange({ weight: Number(e.target.value) })}
+              min={1}
+              max={1000}
+            />
+          </label>
           <label className="form-field">
             <span>{t("channels.costPerToken")}</span>
             <input

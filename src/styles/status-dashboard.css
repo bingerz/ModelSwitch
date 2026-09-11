@@ -14,11 +14,18 @@
 
 .dsh-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
   margin-bottom: var(--space-5);
   flex-wrap: wrap;
+}
+
+.dsh-header-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .dsh-title {
@@ -26,6 +33,13 @@
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--color-text);
+}
+
+.dsh-subtitle {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 .dsh-header-actions {
@@ -66,6 +80,107 @@
 }
 
 /* ─── Bento grid ─── */
+
+.dsh-metrics-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-bottom: var(--space-4);
+  background: var(--color-border);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.dsh-metric {
+  background: var(--color-surface-elevated);
+  padding: var(--space-4) var(--space-5);
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.dsh-metric-label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.dsh-metric-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.dsh-metric-suffix {
+  margin-left: 2px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.dsh-metric-hint {
+  margin-top: auto;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.dsh-quota-strip {
+  margin-bottom: var(--space-4);
+}
+
+.dsh-quota-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.dsh-quota-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.dsh-quota-card .dsh-card-title-row {
+  margin-bottom: 0;
+}
+
+.dsh-quota-card .dsh-quota-balance {
+  margin: 0;
+}
+
+.dsh-quota-card .dsh-quota-balance-value {
+  font-size: 1.25rem;
+}
+
+.dsh-quota-card .dsh-quota-secondary {
+  margin: 0;
+  align-items: flex-end;
+  text-align: right;
+}
+
+.dsh-quota-tone-warn {
+  border-color: color-mix(in srgb, var(--color-warning) 35%, var(--color-border));
+}
+
+.dsh-quota-tone-error {
+  border-color: color-mix(in srgb, var(--color-danger) 35%, var(--color-border));
+}
 
 .dashboard-grid {
   display: grid;
@@ -114,6 +229,10 @@
 }
 
 @media (max-width: 1200px) {
+  .dsh-metrics-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .dashboard-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -129,6 +248,10 @@
 }
 
 @media (max-width: 768px) {
+  .dsh-metrics-strip {
+    grid-template-columns: 1fr;
+  }
+
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
@@ -159,9 +282,8 @@
 }
 
 .dsh-card-hover:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--dsh-shadow-hover);
   border-color: var(--color-border-hover);
+  background: color-mix(in srgb, var(--color-surface-hover) 40%, var(--color-surface-elevated));
 }
 
 .dsh-card-hero {
@@ -374,10 +496,6 @@
 }
 
 /* ─── QuotaSummary ─── */
-
-.dsh-quota-card {
-  min-height: 100%;
-}
 
 .dsh-quota-tone-badge {
   font-size: var(--text-xs);

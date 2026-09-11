@@ -21,27 +21,33 @@ export function QuotaSummary({
   if (totalChannels === 0) return null;
 
   const tone = errors > 0 ? "error" : lowBalance > 0 ? "warn" : "healthy";
-  const toneClass = `dsh-quota-card dsh-quota-tone-${tone}`;
 
   return (
-    <div className={toneClass}>
-      <div className="dsh-card-title-row">
-        <span className="dsh-card-title">{t("dashboard.quotaTitle")}</span>
-        <span className={`dsh-quota-tone-badge dsh-quota-tone-badge-${tone}`}>
-          {tone === "healthy" ? t("dashboard.quotaHealthy") : tone === "warn" ? t("dashboard.quotaLow") : t("dashboard.quotaErrors")}
-        </span>
-      </div>
-      <div className="dsh-quota-balance">
-        <span className="dsh-quota-balance-icon">
-          <DollarSign size={20} />
-        </span>
-        <span className="dsh-quota-balance-value">
-          {formatCost(totalBalance)}
-        </span>
+    <div className={`dsh-quota-card dsh-quota-tone-${tone}`}>
+      <div className="dsh-quota-main">
+        <div className="dsh-card-title-row">
+          <span className="dsh-card-title">{t("dashboard.quotaTitle")}</span>
+          <span className={`dsh-quota-tone-badge dsh-quota-tone-badge-${tone}`}>
+            {tone === "healthy"
+              ? t("dashboard.quotaHealthy")
+              : tone === "warn"
+                ? t("dashboard.quotaLow")
+                : t("dashboard.quotaErrors")}
+          </span>
+        </div>
+        <div className="dsh-quota-balance">
+          <span className="dsh-quota-balance-icon">
+            <DollarSign size={18} />
+          </span>
+          <span className="dsh-quota-balance-value">{formatCost(totalBalance)}</span>
+        </div>
       </div>
       <div className="dsh-quota-secondary">
         <span className="dsh-quota-secondary-item">
-          {t("quota.channelsReporting", { withData: channelsWithData, total: totalChannels })}
+          {t("quota.channelsReporting", {
+            withData: channelsWithData,
+            total: totalChannels,
+          })}
         </span>
         {lowBalance > 0 && (
           <span className="dsh-quota-warn">
@@ -54,7 +60,6 @@ export function QuotaSummary({
           </span>
         )}
       </div>
-      <p className="dsh-quota-hint">{t("dashboard.quotaHint")}</p>
     </div>
   );
 }

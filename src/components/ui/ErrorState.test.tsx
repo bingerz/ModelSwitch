@@ -1,65 +1,39 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ErrorState } from "./ErrorState";
-import { AlertCircle } from "lucide-react";
 
 describe("ErrorState", () => {
-  it("renders title and message", () => {
-    render(
-      <ErrorState
-        title="Error occurred"
-        message="Something went wrong"
-      />
-    );
+  it("renders title", () => {
+    render(<ErrorState title="Error occurred" />);
     expect(screen.getByText("Error occurred")).toBeInTheDocument();
+  });
+
+  it("has alert role", () => {
+    render(<ErrorState title="Error occurred" />);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+
+  it("renders description when provided", () => {
+    render(<ErrorState title="Error" description="Something went wrong" />);
     expect(screen.getByText("Something went wrong")).toBeInTheDocument();
   });
 
-  it("renders custom icon", () => {
-    const { container } = render(
-      <ErrorState
-        icon={AlertCircle}
-        title="Error"
-        message="Test"
-      />
-    );
-    expect(container.querySelector(".ui-error-icon")).toBeInTheDocument();
-  });
-
-  it("renders retry button when onRetry provided", () => {
+  it("renders action when provided", () => {
     const handleRetry = vi.fn();
     render(
       <ErrorState
         title="Error"
-        message="Test"
-        onRetry={handleRetry}
-      />
+        action={<button onClick={handleRetry}>Retry</button>}
+      />,
     );
-    const retryButton = screen.getByText("Retry");
-    expect(retryButton).toBeInTheDocument();
-    fireEvent.click(retryButton);
+    const button = screen.getByText("Retry");
+    fireEvent.click(button);
     expect(handleRetry).toHaveBeenCalledTimes(1);
   });
 
-  it("uses custom retry label", () => {
-    render(
-      <ErrorState
-        title="Error"
-        message="Test"
-        onRetry={() => {}}
-        retryLabel="Try Again"
-      />
-    );
-    expect(screen.getByText("Try Again")).toBeInTheDocument();
-  });
-
-  it("does not render retry button when onRetry not provided", () => {
-    render(
-      <ErrorState
-        title="Error"
-        message="Test"
-      />
-    );
-    expect(screen.queryByText("Retry")).not.toBeInTheDocument();
+  it("does not render description or action when omitted", () => {
+    const { container } = render(<ErrorState title="Error" />);
+    expect(container.querySelector(".ui-error-state-desc")).not.toBeInTheDocument();
+    expect(container.querySelector(".ui-error-state-action")).not.toBeInTheDocument();
   });
 });

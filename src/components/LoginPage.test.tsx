@@ -66,6 +66,7 @@ describe("LoginPage", () => {
   it("renders_brand_and_input", () => {
     render(<LoginPage onSuccess={() => {}} />);
     expect(screen.getByText("login.brand")).toBeTruthy();
+    expect(screen.getByLabelText("login.tokenLabel")).toBeTruthy();
     expect(screen.getByPlaceholderText("login.tokenPlaceholder")).toBeTruthy();
     expect(screen.getByText("login.button")).toBeTruthy();
   });

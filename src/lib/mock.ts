@@ -771,4 +771,21 @@ export const mockApi: typeof api = {
       // Real implementation opens a download window; mock is a no-op.
     },
   },
+
+  models: {
+    fetchProviderModels: async () => {
+      await simDelay();
+      return [{ id: "gpt-4" }, { id: "gpt-3.5-turbo" }];
+    },
+    probeEndpoints: async (urls: string[]) => {
+      await simDelay();
+      return urls.map((url) => ({
+        url,
+        ok: true,
+        status: 200,
+        latencyMs: 120,
+        reachable: true,
+      }));
+    },
+  },
 };

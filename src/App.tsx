@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "rea
 import { useTranslation } from "react-i18next";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { type GwStatus, invokeTauri, isTauri } from "./lib/api";
+import { probeGatewayHealth } from "./lib/gateway-probe";
 import { ToastProvider, useToast } from "./components/Toast";
 import { LoginPage } from "./components/LoginPage";
 import { Portal } from "./components/Portal";
@@ -67,7 +68,50 @@ const ModelRoutingPanel = lazy(() =>
   import("./components/ModelRoutingPanel").then((m) => ({ default: m.ModelRoutingPanel }))
 );
 
-import { getTabGroups, ALL_TAB_IDS, type TabId } from "./app/navigation";
+import { type TabId } from "./app/navigation";
+
+const PRIMARY_TABS: TabId[] = [
+  "dashboard",
+  "channels",
+  "virtualKeys",
+  "playground",
+  "logs",
+  "settings",
+];
+
+const ADVANCED_TABS: TabId[] = [
+  "mcp",
+  "modelRouting",
+  "cost",
+  "quota",
+  "metrics",
+  "reports",
+  "registry",
+  "audit",
+  "guardrails",
+  "notifications",
+  "redemption",
+];
+
+const TAB_LABEL_KEYS: Record<TabId, string> = {
+  dashboard: "nav.dashboard",
+  channels: "nav.channels",
+  virtualKeys: "nav.virtualKeys",
+  playground: "nav.playground",
+  logs: "nav.logs",
+  settings: "nav.settings",
+  mcp: "nav.mcp",
+  modelRouting: "nav.modelRouting",
+  cost: "nav.cost",
+  quota: "nav.quota",
+  metrics: "nav.metrics",
+  reports: "nav.reports",
+  registry: "nav.registry",
+  audit: "nav.audit",
+  guardrails: "nav.guardrails",
+  notifications: "nav.notifications",
+  redemption: "nav.redemption",
+};
 
 // React Query client — sensible defaults for a management console.
 // Created at module scope so it is stable across renders, regardless of mock mode.
@@ -117,9 +161,16 @@ function PanelErrorFallback({ name }: { name: string }) {
  * affects this panel, not the sidebar or status bar.
  */
 function PanelBoundary({ name, children }: { name: string; children: ReactNode }) {
+  const { t } = useTranslation();
   return (
     <ErrorBoundary fallback={<PanelErrorFallback name={name} />}>
-      <Suspense fallback={<div className="panel-loading">Loading…</div>}>
+      <Suspense
+        fallback={
+          <div className="panel-loading" role="status">
+            {t("common.loading")}
+          </div>
+        }
+      >
         {children}
       </Suspense>
     </ErrorBoundary>
@@ -131,14 +182,13 @@ function AppInner() {
   const toast = useToast();
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const logoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [authed, setAuthed] = useState(() => {
     if (isTauri) return true;
     return !!localStorage.getItem("admin_token");
   });
-
-  const TAB_GROUPS = getTabGroups(t);
 
   // Cleanup logout confirmation timer on unmount
   useEffect(() => {
@@ -147,14 +197,24 @@ function AppInner() {
     };
   }, []);
 
-  // Web mode keyboard shortcuts: Cmd/Ctrl+1..8 to switch tabs
+  useEffect(() => {
+    if (ADVANCED_TABS.includes(activeTab)) {
+      setAdvancedOpen(true);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    document.title = `${t(TAB_LABEL_KEYS[activeTab])} · ModelSwitch`;
+  }, [activeTab, t]);
+
+  // Keyboard shortcuts: Cmd/Ctrl+1..6 for primary tabs
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key >= "1" && e.key <= "9") {
+      if ((e.ctrlKey || e.metaKey) && e.key >= "1" && e.key <= "6") {
         e.preventDefault();
         const idx = parseInt(e.key, 10) - 1;
-        if (ALL_TAB_IDS[idx]) {
-          setActiveTab(ALL_TAB_IDS[idx]);
+        if (PRIMARY_TABS[idx]) {
+          setActiveTab(PRIMARY_TABS[idx]);
           setMenuOpen(false);
         }
       }
@@ -176,6 +236,15 @@ function AppInner() {
     return () => window.removeEventListener("navigate-to-tab", handler);
   }, []);
 
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [menuOpen]);
+
   // On mount: check if gateway is running, auto-start if not
   useEffect(() => {
     if (!isTauri) return; // Web mode: gateway is already running
@@ -184,6 +253,14 @@ function AppInner() {
       try {
         const status: GwStatus = await invokeTauri("gateway_status");
         if (status.running) return; // Already running, no toast needed
+
+        // Another process may already own the port (zombie gateway from a prior run).
+        if (await probeGatewayHealth()) {
+          if (!cancelled) {
+            toast.error(t("toast.gatewayPortInUse"));
+          }
+          return;
+        }
 
         // Attempt to start, with one retry after 2s if bind fails
         try {
@@ -263,29 +340,66 @@ function AppInner() {
         <span className={`hamburger-icon ${menuOpen ? "hamburger-icon-open" : ""}`} />
       </button>
       {menuOpen && (
-        <div className="sidebar-backdrop" onClick={() => setMenuOpen(false)} />
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setMenuOpen(false)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") setMenuOpen(false);
+          }}
+          role="button"
+          tabIndex={0}
+          aria-label={t("common.toggleMenu")}
+        />
       )}
       <div className="layout-body">
-        <nav className={`sidebar ${menuOpen ? "sidebar-open" : ""}`}>
-          <div className="sidebar-brand">ModelSwitch</div>
+        <nav className={`sidebar ${menuOpen ? "sidebar-open" : ""}`} aria-label="Main">
+          <div className="sidebar-brand">
+            <div className="sidebar-brand-name">ModelSwitch</div>
+            <div className="sidebar-brand-tagline">{t("nav.tagline")}</div>
+          </div>
           <div className="sidebar-nav">
-            {TAB_GROUPS.map((group) => (
-              <div key={group.title} className="sidebar-group">
-                <div className="sidebar-group-title">{group.title}</div>
-                {group.tabs.map((tab) => (
+            <div className="sidebar-group">
+              {PRIMARY_TABS.map((tab) => (
+                <button
+                  key={tab}
+                  className={`nav-item ${activeTab === tab ? "active" : ""}`}
+                  onClick={() => {
+                    setActiveTab(tab);
+                    setMenuOpen(false);
+                  }}
+                  aria-current={activeTab === tab ? "page" : undefined}
+                >
+                  {t(TAB_LABEL_KEYS[tab])}
+                </button>
+              ))}
+            </div>
+            <div className="sidebar-group sidebar-group-advanced">
+              <button
+                type="button"
+                className="sidebar-advanced-toggle"
+                aria-expanded={advancedOpen}
+                onClick={() => setAdvancedOpen((o) => !o)}
+              >
+                <span>{t("nav.advanced")}</span>
+                <span className="sidebar-advanced-chevron" aria-hidden="true">
+                  {advancedOpen ? "▾" : "▸"}
+                </span>
+              </button>
+              {advancedOpen &&
+                ADVANCED_TABS.map((tab) => (
                   <button
-                    key={tab.id}
-                    className={`nav-item ${activeTab === tab.id ? "active" : ""}`}
+                    key={tab}
+                    className={`nav-item ${activeTab === tab ? "active" : ""}`}
                     onClick={() => {
-                      setActiveTab(tab.id);
+                      setActiveTab(tab);
                       setMenuOpen(false);
                     }}
+                    aria-current={activeTab === tab ? "page" : undefined}
                   >
-                    {tab.label}
+                    {t(TAB_LABEL_KEYS[tab])}
                   </button>
                 ))}
-              </div>
-            ))}
+            </div>
           </div>
           {!isTauri && (
             <button
@@ -316,7 +430,7 @@ function AppInner() {
           )}
           {activeTab === "dashboard" && (
             <PanelBoundary name="Dashboard">
-              <StatusDashboard />
+              <StatusDashboard onNavigate={(tab) => setActiveTab(tab as TabId)} />
             </PanelBoundary>
           )}
           {activeTab === "channels" && (
@@ -326,7 +440,7 @@ function AppInner() {
           )}
           {activeTab === "virtualKeys" && (
             <PanelBoundary name="Virtual Keys">
-              <VirtualKeysPanel />
+              <VirtualKeysPanel onNavigate={(tab) => setActiveTab(tab as TabId)} />
             </PanelBoundary>
           )}
           {activeTab === "mcp" && (
@@ -396,7 +510,7 @@ function AppInner() {
           )}
           {activeTab === "playground" && (
             <PanelBoundary name="Playground">
-              <Playground />
+              <Playground onNavigate={(tab) => setActiveTab(tab as TabId)} />
             </PanelBoundary>
           )}
         </main>

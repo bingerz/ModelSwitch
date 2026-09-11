@@ -1,32 +1,34 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import { Radio } from "lucide-react";
 import { api, type Channel, type DispatchLog, type DispatchStats, type UsageHistory } from "../../lib/api";
 import { useQuota } from "../../hooks/useQuota";
 import "../../styles/status-dashboard.css";
+import { EmptyState } from "../ui/EmptyState";
+import { LoadingState } from "../ui/LoadingState";
+import { ErrorState } from "../ui/ErrorState";
 import { ActivityChart } from "./ActivityChart";
 import { ChannelHealth } from "./ChannelHealth";
 import { LiveBadge } from "./LiveBadge";
-import { PerformanceCard } from "./PerformanceCard";
 import { QuotaSummary } from "./QuotaSummary";
 import { SmartInsights } from "./SmartInsights";
-import { StatCard } from "./StatCard";
 import { TopEntities } from "./TopEntities";
-import { RefreshCw, TriangleAlert, Zap } from "./icons";
+import { RefreshCw } from "./icons";
 import {
   aggregateByChannel,
-  aggregateByHour,
   aggregateByModel,
-  buildFailureSpark,
-  buildLatencySpark,
-  buildSuccessSpark,
   buildUsageByChannelMap,
   formatNumber,
 } from "./helpers";
 
 const LOG_LIMIT = 50;
 
-export function StatusDashboard() {
+interface StatusDashboardProps {
+  onNavigate?: (tab: string) => void;
+}
+
+export function StatusDashboard({ onNavigate }: StatusDashboardProps) {
   const { t } = useTranslation();
   const { totalBalance, channelsWithData, lowBalanceCount, errorCount, totalChannels } =
     useQuota();
@@ -69,17 +71,13 @@ export function StatusDashboard() {
   const logs: DispatchLog[] = logsQuery.data ?? [];
   const usage: UsageHistory | null = usageQuery.data ?? null;
 
-  // Show loading spinner until all critical queries have delivered data.
+  // Initial load only — background refetches must not replace the panel with a spinner.
   const loading =
-    channelsQuery.data === undefined ||
-    statsQuery.data === undefined ||
-    logsQuery.data === undefined;
+    channelsQuery.isPending || statsQuery.isPending || logsQuery.isPending;
 
-  // Only show error if we previously had data (connection lost).
-  // During initial gateway startup, keep showing the loading spinner.
-  const error = loading
-    ? null
-    : channelsQuery.isError || statsQuery.isError || logsQuery.isError
+  const error =
+    !loading &&
+    (channelsQuery.isError || statsQuery.isError || logsQuery.isError)
       ? t("dashboard.connectionLost")
       : null;
 
@@ -122,10 +120,6 @@ export function StatusDashboard() {
     ]);
   };
 
-  const hourPoints = useMemo(
-    () => (usage ? aggregateByHour(usage.buckets) : []),
-    [usage]
-  );
   const channelStats = useMemo(
     () => (usage ? aggregateByChannel(usage.buckets) : []),
     [usage]
@@ -139,31 +133,13 @@ export function StatusDashboard() {
     [usage]
   );
 
-  const requestSpark = useMemo(() => hourPoints.map((h) => h.requests), [hourPoints]);
-  const costSpark = useMemo(() => hourPoints.map((h) => h.cost), [hourPoints]);
-  const successSpark = useMemo(
-    () => buildSuccessSpark(logs),
-    [logs]
-  );
-  const failureSpark = useMemo(
-    () => buildFailureSpark(logs),
-    [logs]
-  );
-  const latencySpark = useMemo(
-    () => buildLatencySpark(logs),
-    [logs]
-  );
-
   if (loading) {
     return (
       <section>
         <div className="panel-header">
           <h2 className="panel-title">{t("dashboard.title")}</h2>
         </div>
-        <div className="dsh-loading">
-          <div className="dsh-loading-spinner" />
-          <span className="dsh-loading-text">{t("dashboard.connecting")}</span>
-        </div>
+        <LoadingState message={t("dashboard.connecting")} />
       </section>
     );
   }
@@ -174,15 +150,14 @@ export function StatusDashboard() {
         <div className="panel-header">
           <h2 className="panel-title">{t("dashboard.title")}</h2>
         </div>
-        <div className="dsh-error">
-          <span className="dsh-error-icon">
-            <TriangleAlert size={24} />
-          </span>
-          <div className="dsh-error-text">{error}</div>
-          <button className="dsh-error-btn" onClick={handleRetry}>
-            {t("common.retry")}
-          </button>
-        </div>
+        <ErrorState
+          title={error}
+          action={
+            <button className="btn btn-primary" onClick={handleRetry}>
+              {t("common.retry")}
+            </button>
+          }
+        />
       </section>
     );
   }
@@ -193,21 +168,28 @@ export function StatusDashboard() {
         <div className="panel-header">
           <h2 className="panel-title">{t("dashboard.title")}</h2>
         </div>
-        <div className="empty-state">
-          <div className="empty-state-icon">🚀</div>
-          <div className="empty-state-title">{t("dashboard.emptyTitle")}</div>
-          <div className="empty-state-description">{t("dashboard.emptyHint")}</div>
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              const event = new CustomEvent("navigate-to-tab", { detail: "channels" });
-              window.dispatchEvent(event);
-            }}
-            style={{ marginTop: "var(--space-3)" }}
-          >
-            {t("dashboard.addFirstChannel")}
-          </button>
-        </div>
+        <EmptyState
+          icon={Radio}
+          title={t("dashboard.emptyTitle")}
+          description={t("dashboard.emptyHint")}
+          action={
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                if (onNavigate) {
+                  onNavigate("channels");
+                } else {
+                  window.dispatchEvent(
+                    new CustomEvent("navigate-to-tab", { detail: "channels" })
+                  );
+                }
+              }}
+            >
+              {t("dashboard.addFirstChannel")}
+            </button>
+          }
+        />
       </section>
     );
   }
@@ -216,39 +198,86 @@ const healthyCount = channels.filter((c) => c.status === "healthy").length;
   const circuitOpenCount = channels.filter((c) => c.status === "circuit_open").length;
   const disabledCount = channels.filter((c) => c.status === "disabled").length;
   const totalCost = usage?.total_cost ?? 0;
+  const totalRequests = stats?.total_requests ?? 0;
+  const successes = stats?.successes ?? 0;
+  const failures = stats?.failures ?? 0;
+  const successRate =
+    totalRequests > 0 ? Math.round((successes / totalRequests) * 1000) / 10 : null;
+  const brokenCount = circuitOpenCount + disabledCount;
 
   return (
     <section className="dsh-root">
       <div className="dsh-header">
-        <h2 className="dsh-title">{t("dashboard.title")}</h2>
+        <div className="dsh-header-copy">
+          <h2 className="dsh-title">{t("dashboard.title")}</h2>
+          <p className="dsh-subtitle">
+            {t("common.healthyCount", { count: healthyCount })}
+            {" · "}
+            {t("common.brokenCount", { count: brokenCount })}
+          </p>
+        </div>
         <div className="dsh-header-actions">
           <LiveBadge lastUpdated={lastUpdated} />
           <button
             className="dsh-refresh-btn"
             onClick={handleRefresh}
             disabled={refreshing}
+            aria-busy={refreshing}
             title={t("common.refreshNow")}
           >
             <RefreshCw size={14} className={refreshing ? "dsh-spin" : ""} />
-            <span>{t("common.refresh")}</span>
+            <span>{refreshing ? t("common.refreshing") : t("common.refresh")}</span>
           </button>
         </div>
       </div>
 
-      <div className="dashboard-grid">
-        {/* Hero row: total requests (3 cols) + quota (1 col) */}
-        <div className="dsh-hero-cell">
-          <StatCard
-            icon={Zap}
-            value={stats ? formatNumber(stats.total_requests) : "0"}
-            label={t("dashboard.totalRequests")}
-            accent="blue"
-            size="mega"
-            sparkline={requestSpark}
-            subtitle={`${t("common.healthyCount", { count: healthyCount })} \u00B7 ${t("common.brokenCount", { count: circuitOpenCount + disabledCount })}`}
-          />
+      <div className="dsh-metrics-strip" role="list">
+        <div className="dsh-metric" role="listitem">
+          <div className="dsh-metric-label">{t("dashboard.activeChannels")}</div>
+          <div className="dsh-metric-value">
+            {healthyCount}
+            <span className="dsh-metric-suffix">/{channels.length}</span>
+          </div>
+          <div className="dsh-metric-hint">
+            {brokenCount > 0
+              ? t("common.brokenCount", { count: brokenCount })
+              : t("dashboard.quotaHealthy")}
+          </div>
         </div>
-        <div className="dsh-quota-cell">
+        <div className="dsh-metric" role="listitem">
+          <div className="dsh-metric-label">{t("dashboard.successRateLabel")}</div>
+          <div className="dsh-metric-value">
+            {successRate != null ? `${successRate}%` : "—"}
+          </div>
+          <div className="dsh-metric-hint">
+            {t("dashboard.successRate", { count: successes, total: totalRequests })}
+          </div>
+        </div>
+        <div className="dsh-metric" role="listitem">
+          <div className="dsh-metric-label">{t("dashboard.avgLatency")}</div>
+          <div className="dsh-metric-value">
+            {stats?.avg_latency_ms != null
+              ? `${Math.round(stats.avg_latency_ms)}`
+              : "—"}
+            {stats?.avg_latency_ms != null && (
+              <span className="dsh-metric-suffix">ms</span>
+            )}
+          </div>
+          <div className="dsh-metric-hint">
+            {t("dashboard.failures")}: {formatNumber(failures)}
+          </div>
+        </div>
+        <div className="dsh-metric" role="listitem">
+          <div className="dsh-metric-label">{t("dashboard.totalRequests")}</div>
+          <div className="dsh-metric-value">{formatNumber(totalRequests)}</div>
+          <div className="dsh-metric-hint">
+            {t("dashboard.estCost24h")}: ${totalCost.toFixed(2)}
+          </div>
+        </div>
+      </div>
+
+      {(channelsWithData > 0 || lowBalanceCount > 0 || errorCount > 0) && (
+        <div className="dsh-quota-strip">
           <QuotaSummary
             totalBalance={totalBalance}
             channelsWithData={channelsWithData}
@@ -257,23 +286,13 @@ const healthyCount = channels.filter((c) => c.status === "healthy").length;
             errors={errorCount}
           />
         </div>
+      )}
 
-        {/* Performance consolidation: 4 metrics in one card */}
-        <div className="dsh-performance-cell">
-          <PerformanceCard
-            successes={stats?.successes ?? 0}
-            failures={stats?.failures ?? 0}
-            avgLatencyMs={stats?.avg_latency_ms ?? null}
-            totalCost={totalCost}
-            totalTokens={(usage?.total_input_tokens ?? 0) + (usage?.total_output_tokens ?? 0)}
-            successSpark={successSpark}
-            failureSpark={failureSpark}
-            latencySpark={latencySpark}
-            costSpark={costSpark}
-          />
+      <div className="dashboard-grid">
+        <div className="dsh-activity-cell">
+          <ActivityChart logs={logs} />
         </div>
 
-        {/* Health + Top entities row */}
         <div className="dsh-health-cell">
           <ChannelHealth
             channels={channels}
@@ -286,11 +305,6 @@ const healthyCount = channels.filter((c) => c.status === "healthy").length;
         </div>
         <div className="dsh-top-cell">
           <TopEntities channels={channelStats} models={modelStats} />
-        </div>
-
-        {/* Activity row (full width) */}
-        <div className="dsh-activity-cell">
-          <ActivityChart logs={logs} />
         </div>
       </div>
 

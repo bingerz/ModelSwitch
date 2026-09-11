@@ -24,7 +24,7 @@ vi.mock("../../lib/api", () => ({
     testAllChannels: vi.fn(),
     testChannel: vi.fn(),
     updateChannel: vi.fn(),
-    channelCooldown: vi.fn(),
+    channelCooldown: vi.fn().mockResolvedValue(null),
     resetCircuit: vi.fn(),
   },
 }));
@@ -63,6 +63,8 @@ function mockQuota(
     errorCount: 0,
     fetchError: null,
     loading: false,
+    channelsLoading: false,
+    isRefetching: false,
     totalChannels: 0,
     ...overrides,
   };
@@ -76,29 +78,65 @@ describe("ChannelPanel", () => {
   });
 
   it("renders_loading_state_when_quota_loading", () => {
-    mockQuota({ loading: true });
+    mockQuota({ channelsLoading: true });
     renderWithProviders(<ChannelPanel />);
     expect(screen.getByText("channels.loadingChannels")).toBeTruthy();
   });
 
-  it("renders_panel_header_and_controls_when_loaded", () => {
+  it("renders_empty_state_when_no_channels", () => {
     mockQuota({ loading: false, channels: [], totalChannels: 0 });
     renderWithProviders(<ChannelPanel />);
     expect(screen.getByText("channels.title")).toBeTruthy();
-    expect(screen.getByText("channels.create")).toBeTruthy();
-    expect(screen.getByText("channels.testAll")).toBeTruthy();
-    expect(
-      screen.getByPlaceholderText("channels.searchPlaceholder"),
-    ).toBeTruthy();
+    expect(screen.getByText("channels.empty")).toBeTruthy();
+    expect(screen.getByText("channels.emptyHint")).toBeTruthy();
+    expect(screen.getByText("channels.emptyCta")).toBeTruthy();
+    expect(screen.queryByText("channels.testAll")).toBeNull();
   });
 
-  it("renders_priority_tier_labels_when_loaded", () => {
-    mockQuota({ loading: false, channels: [], totalChannels: 0 });
+  it("renders_priority_tier_labels_when_channels_exist", () => {
+    mockQuota({
+      loading: false,
+      totalChannels: 1,
+      channels: [
+        {
+          id: "ch1",
+          name: "Test",
+          provider: "openai",
+          priority: 1,
+          weight: 1,
+          cost_per_token: null,
+          input_cost_per_mtok: null,
+          output_cost_per_mtok: null,
+          enabled: true,
+          status: "healthy",
+          circuit_open_until: null,
+          base_url: "https://api.openai.com/v1",
+          model_mapping: {},
+          created_at: "2024-01-01T00:00:00Z",
+          updated_at: "2024-01-01T00:00:00Z",
+          avg_latency_ms: 100,
+          consecutive_failures: 0,
+          cooldown_minutes: null,
+          rpm_limit: null,
+          tpm_limit: null,
+          tags: [],
+          account_group: null,
+          max_concurrent: null,
+          excluded_models: [],
+          api_keys: [],
+          proxy_url: null,
+          headers: {},
+          max_retries: null,
+          models_endpoint: null,
+          models_refresh_interval_secs: 3600,
+        },
+      ],
+    });
     renderWithProviders(<ChannelPanel />);
-    // Three priority tiers render with i18n keys (mock returns the key text).
     expect(screen.getByText("channels.priority1Label")).toBeTruthy();
     expect(screen.getByText("channels.priority2Label")).toBeTruthy();
     expect(screen.getByText("channels.priority3Label")).toBeTruthy();
+    expect(screen.getByText("channels.testAll")).toBeTruthy();
   });
 
   it("updates_priority_via_api_on_move_up", async () => {
@@ -119,14 +157,14 @@ describe("ChannelPanel", () => {
         updated_at: "2024-01-01T00:00:00Z",
       },
     ];
-    mockQuota({ loading: false, channels: mockChannels, totalChannels: 1 });
-    
-    vi.mocked(api.updateChannel).mockResolvedValue(undefined);
+    mockQuota({ loading: false, channels: mockChannels as never, totalChannels: 1 });
+
+    vi.mocked(api.updateChannel).mockResolvedValue(undefined as never);
     vi.mocked(api.channelCooldown).mockResolvedValue({
       in_cooldown: false,
       cooldown_remaining_secs: 0,
       circuit_open_until: null,
-    });
+    } as never);
 
     renderWithProviders(<ChannelPanel />);
 

@@ -50,6 +50,7 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<string[] | null>(null);
+  const [testing, setTesting] = useState(false);
   // ponytail: ChannelForm delegates inputs to FormFields, so field-level error UI
   // would require prop-drilling. Surface Zod errors via the existing error banner;
   // the schema still drives the actual validation logic.
@@ -177,7 +178,7 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
           parsedHeaders = {};
         }
       }
-      await api.createChannel({
+      const created = await api.createChannel({
         name: form.name,
         provider: form.provider,
         priority: form.priority,
@@ -220,7 +221,30 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
           .filter(Boolean),
         headers: parsedHeaders,
       });
+
       toast.success(t("channels.created"));
+
+      // Auto connectivity check so users know the channel works immediately.
+      try {
+        setTesting(true);
+        const result = await api.testChannel(created.id);
+        if (result.healthy) {
+          toast.success(
+            t("channels.testOk", { latency: result.latency_ms ?? "—" }),
+          );
+        } else {
+          toast.error(
+            t("channels.testFailed", {
+              error: result.error || t("channels.testError"),
+            }),
+          );
+        }
+      } catch {
+        toast.error(t("channels.createdButTestFailed"));
+      } finally {
+        setTesting(false);
+      }
+
       onSave();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : t("channels.createFailed");
@@ -258,8 +282,16 @@ export function ChannelForm({ onSave }: { onSave: () => void }) {
         onRefreshModels={(models) => setFetchedModels(models)}
       />
       {error && <div className="form-error">{error}</div>}
-      <button type="submit" className="btn btn-primary" disabled={submitting}>
-        {submitting ? t("channels.creating") : t("channels.createChannel")}
+      <button
+        type="submit"
+        className="btn btn-primary"
+        disabled={submitting || testing}
+      >
+        {testing
+          ? t("channels.testingConnection")
+          : submitting
+            ? t("channels.creating")
+            : t("channels.createChannel")}
       </button>
     </form>
   );

@@ -1,33 +1,23 @@
-import type { ComponentType } from "react";
-import { TriangleAlert } from "lucide-react";
+import type { ReactNode } from "react";
+import { AlertTriangle } from "lucide-react";
 
 interface ErrorStateProps {
-  icon?: ComponentType<{ size?: number; className?: string }>;
   title: string;
-  message: string;
-  onRetry?: () => void;
-  retryLabel?: string;
+  description?: string;
+  action?: ReactNode;
 }
 
-export function ErrorState({
-  icon: Icon = TriangleAlert,
-  title,
-  message,
-  onRetry,
-  retryLabel = "Retry",
-}: ErrorStateProps) {
+export function ErrorState({ title, description, action }: ErrorStateProps) {
   return (
-    <div className="ui-error-state">
-      <div className="ui-error-icon">
-        <Icon size={32} />
+    <div className="ui-error-state" role="alert">
+      <div className="ui-error-state-icon" aria-hidden="true">
+        <AlertTriangle size={24} />
       </div>
-      <div className="ui-error-title">{title}</div>
-      <div className="ui-error-message">{message}</div>
-      {onRetry && (
-        <button className="btn btn-primary ui-error-retry" onClick={onRetry}>
-          {retryLabel}
-        </button>
-      )}
+      <div className="ui-error-state-title">{title}</div>
+      {description ? (
+        <div className="ui-error-state-desc">{description}</div>
+      ) : null}
+      {action ? <div className="ui-error-state-action">{action}</div> : null}
     </div>
   );
 }
